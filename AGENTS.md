@@ -255,7 +255,23 @@ much of #9 is left.
 
 - **tRPC is being retired (#9).** The 17 routers under `src/server/api/routers` are the old
   world and are deleted area by area. Do not add a procedure to one. A new server-side call is
-  a TanStack Start server function in `src/server/functions/<area>.ts`.
+  a TanStack Start server function in `src/server/functions/<area>.ts`, and the queries in it
+  get a `queryOptions` factory in `src/queries/<area>.ts`. Mutations do not — components call
+  those directly. `<area>Keys.all` must be a prefix of every other key in the module, because
+  that is what `api.useUtils().<router>.invalidate()` used to be.
+- **Start chains validators; a middleware's `z.object()` therefore strips the function's own
+  input.** Each validator in the chain is fed the *previous* one's output, so a resource loader
+  in `server/functions/middleware.ts` that parsed strictly would delete the fields the server
+  function declared for itself before that function's validator ever ran — silently, with no
+  error. All six loaders are `.passthrough()` for this reason and
+  `middleware.unit.test.ts` fails if one stops being. The mirror image cannot be fixed and is
+  the rule at the call site: the function's own validator strips the loader's field, so
+  **read the resource from `context`** (`context.domain.id`), never from `data`, even though
+  the inferred type of `data` claims the field is there.
+- **A server function's return type is checked for serialisability.** Drizzle types a `jsonb`
+  column as `unknown`, which Start rejects; coerce it at the seam
+  (`contacts.ts`'s `withStringProperties`) rather than in the component. superjson is gone with
+  tRPC, so `Date` travels natively but a `Map`, a `Set` or a `BigInt` does not.
 - **Do not add work to the SES event pipeline to learn something we already
   know.** Every subscribed SES event costs an SNS POST, a queue message and a
   consumer invocation per email, and the pipeline is the single largest line in
