@@ -1,6 +1,9 @@
 import { WebhookCallStatus, WebhookStatus } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { db } from "~/server/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam, createUser } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -52,13 +55,11 @@ describeIntegration("webhook-service", () => {
       isLimitReached: false,
     });
 
-    const team = await db.team.create({ data: { name: "wh-team" } });
+    const team = await createTeam({ name: "wh-team" });
     teamId = team.id;
 
     // createdByUserId has a real foreign key, which the mocked tests never hit.
-    const user = await db.user.create({
-      data: { email: "wh@example.com", name: "wh" },
-    });
+    const user = await createUser({ email: "wh@example.com", name: "wh" });
     userId = user.id;
   });
 
@@ -67,31 +68,41 @@ describeIntegration("webhook-service", () => {
   });
 
   async function makeWebhook(overrides: Record<string, unknown> = {}) {
-    return db.webhook.create({
-      data: {
-        id: `wh_${Math.random().toString(36).slice(2, 10)}`,
-        teamId,
-        url: "https://example.com/webhook",
-        secret: "whsec_test",
-        eventTypes: ["email.delivered"],
-        status: WebhookStatus.ACTIVE,
-        ...overrides,
-      },
-    });
+    const [webhook] = await drizzleDb
+      .insert(schema.webhook)
+      .values(
+        withUpdatedAt({
+          id: `wh_${Math.random().toString(36).slice(2, 10)}`,
+          teamId,
+          url: "https://example.com/webhook",
+          secret: "whsec_test",
+          eventTypes: ["email.delivered"],
+          status: WebhookStatus.ACTIVE,
+          ...overrides,
+        }),
+      )
+      .returning();
+
+    return webhook!;
   }
 
   async function makeCall(webhookId: string) {
-    return db.webhookCall.create({
-      data: {
-        id: `call_${Math.random().toString(36).slice(2, 10)}`,
-        webhookId,
-        teamId,
-        type: "email.delivered",
-        payload: JSON.stringify({ id: "email_123" }),
-        status: WebhookCallStatus.PENDING,
-        attempt: 0,
-      },
-    });
+    const [call] = await drizzleDb
+      .insert(schema.webhookCall)
+      .values(
+        withUpdatedAt({
+          id: `call_${Math.random().toString(36).slice(2, 10)}`,
+          webhookId,
+          teamId,
+          type: "email.delivered",
+          payload: JSON.stringify({ id: "email_123" }),
+          status: WebhookCallStatus.PENDING,
+          attempt: 0,
+        }),
+      )
+      .returning();
+
+    return call!;
   }
 
   function mockFetchOk() {
@@ -140,13 +151,19 @@ describeIntegration("webhook-service", () => {
 
       await runCall(call.id, teamId, 0);
 
-      const stored = await db.webhookCall.findUnique({ where: { id: call.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.id, call.id))
+        .limit(1);
       expect(stored?.status).toBe(WebhookCallStatus.DELIVERED);
       expect(stored?.responseStatus).toBe(200);
 
-      const storedWebhook = await db.webhook.findUnique({
-        where: { id: webhook.id },
-      });
+      const [storedWebhook] = await drizzleDb
+        .select()
+        .from(schema.webhook)
+        .where(eq(schema.webhook.id, webhook.id))
+        .limit(1);
       expect(storedWebhook?.consecutiveFailures).toBe(0);
       expect(storedWebhook?.lastSuccessAt).toBeInstanceOf(Date);
     });
@@ -160,7 +177,11 @@ describeIntegration("webhook-service", () => {
 
       await expect(runCall(call.id, teamId, 5)).rejects.toThrow("network down");
 
-      const stored = await db.webhookCall.findUnique({ where: { id: call.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.id, call.id))
+        .limit(1);
       expect(stored?.status).toBe(WebhookCallStatus.FAILED);
       expect(stored?.attempt).toBe(6);
       expect(stored?.nextAttemptAt).toBeNull();
@@ -173,13 +194,19 @@ describeIntegration("webhook-service", () => {
 
       await expect(runCall(call.id, teamId, 0)).rejects.toThrow("network down");
 
-      const storedWebhook = await db.webhook.findUnique({
-        where: { id: webhook.id },
-      });
+      const [storedWebhook] = await drizzleDb
+        .select()
+        .from(schema.webhook)
+        .where(eq(schema.webhook.id, webhook.id))
+        .limit(1);
       expect(storedWebhook?.consecutiveFailures).toBe(0);
       expect(storedWebhook?.lastFailureAt).toBeInstanceOf(Date);
 
-      const stored = await db.webhookCall.findUnique({ where: { id: call.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.id, call.id))
+        .limit(1);
       expect(stored?.status).toBe(WebhookCallStatus.PENDING);
       expect(stored?.attempt).toBe(1);
       expect(stored?.nextAttemptAt).toBeInstanceOf(Date);
@@ -192,9 +219,11 @@ describeIntegration("webhook-service", () => {
 
       await expect(runCall(call.id, teamId, 5)).rejects.toThrow("network down");
 
-      const storedWebhook = await db.webhook.findUnique({
-        where: { id: webhook.id },
-      });
+      const [storedWebhook] = await drizzleDb
+        .select()
+        .from(schema.webhook)
+        .where(eq(schema.webhook.id, webhook.id))
+        .limit(1);
       expect(storedWebhook?.consecutiveFailures).toBe(4);
       expect(storedWebhook?.status).toBe(WebhookStatus.ACTIVE);
     });
@@ -207,9 +236,11 @@ describeIntegration("webhook-service", () => {
       // Auto-disabled calls stop throwing — there is nothing left to retry.
       await expect(runCall(call.id, teamId, 5)).resolves.toBeUndefined();
 
-      const storedWebhook = await db.webhook.findUnique({
-        where: { id: webhook.id },
-      });
+      const [storedWebhook] = await drizzleDb
+        .select()
+        .from(schema.webhook)
+        .where(eq(schema.webhook.id, webhook.id))
+        .limit(1);
       expect(storedWebhook?.consecutiveFailures).toBe(30);
       expect(storedWebhook?.status).toBe(WebhookStatus.AUTO_DISABLED);
     });
@@ -221,9 +252,11 @@ describeIntegration("webhook-service", () => {
 
       await expect(runCall(call.id, teamId, 5)).rejects.toThrow("endpoint 500");
 
-      const storedWebhook = await db.webhook.findUnique({
-        where: { id: webhook.id },
-      });
+      const [storedWebhook] = await drizzleDb
+        .select()
+        .from(schema.webhook)
+        .where(eq(schema.webhook.id, webhook.id))
+        .limit(1);
       expect(storedWebhook?.consecutiveFailures).toBe(29);
       expect(storedWebhook?.status).toBe(WebhookStatus.ACTIVE);
     });
@@ -235,7 +268,11 @@ describeIntegration("webhook-service", () => {
 
       await runCall(call.id, teamId, 0);
 
-      const stored = await db.webhookCall.findUnique({ where: { id: call.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.id, call.id))
+        .limit(1);
       expect(stored?.status).toBe(WebhookCallStatus.DISCARDED);
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -271,15 +308,20 @@ describeIntegration("webhook-service", () => {
 
   describe("domainIds validation", () => {
     async function makeDomain(name: string, ownerTeamId = teamId) {
-      return db.domain.create({
-        data: {
-          name,
-          teamId: ownerTeamId,
-          publicKey: "pk",
-          region: "us-east-1",
-          dkimSelector: "usesend",
-        },
-      });
+      const [domain] = await drizzleDb
+        .insert(schema.domain)
+        .values(
+          withUpdatedAt({
+            name,
+            teamId: ownerTeamId,
+            publicKey: "pk",
+            region: "us-east-1",
+            dkimSelector: "usesend",
+          }),
+        )
+        .returning();
+
+      return domain!;
     }
 
     it("dedupes domainIds on creation", async () => {
@@ -302,7 +344,7 @@ describeIntegration("webhook-service", () => {
 
     it("rejects creation when a domain belongs to another team", async () => {
       const mine = await makeDomain("mine.example.com");
-      const otherTeam = await db.team.create({ data: { name: "other" } });
+      const otherTeam = await createTeam({ name: "other" });
       const theirs = await makeDomain("theirs.example.com", otherTeam.id);
 
       await expect(
@@ -316,7 +358,9 @@ describeIntegration("webhook-service", () => {
         }),
       ).rejects.toThrow("One or more domains were not found");
 
-      expect(await db.webhook.count({ where: { teamId } })).toBe(0);
+      expect(await drizzleDb.$count(schema.webhook, eq(schema.webhook.teamId, teamId))).toBe(
+        0,
+      );
     });
 
     it("preserves existing domainIds when omitted on update", async () => {
@@ -335,7 +379,7 @@ describeIntegration("webhook-service", () => {
 
     it("rejects an update naming another team's domain", async () => {
       const webhook = await makeWebhook();
-      const otherTeam = await db.team.create({ data: { name: "other2" } });
+      const otherTeam = await createTeam({ name: "other2" });
       const theirs = await makeDomain("nope.example.com", otherTeam.id);
 
       await expect(
@@ -368,7 +412,10 @@ describeIntegration("webhook-service", () => {
 
       await WebhookService.emit(teamId, "email.delivered", payload as never);
 
-      const calls = await db.webhookCall.findMany({ where: { teamId } });
+      const calls = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.teamId, teamId));
       const targets = calls.map((c) => c.webhookId).sort();
       expect(targets).toEqual([subscribed.id, catchAll.id].sort());
       expect(targets).not.toContain(unrelated.id);
@@ -384,7 +431,10 @@ describeIntegration("webhook-service", () => {
         domainId: 42,
       });
 
-      const calls = await db.webhookCall.findMany({ where: { teamId } });
+      const calls = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.teamId, teamId));
       const targets = calls.map((c) => c.webhookId).sort();
       expect(targets).toEqual([global_.id, scopedMatch.id].sort());
       expect(targets).not.toContain(scopedOther.id);
@@ -398,7 +448,10 @@ describeIntegration("webhook-service", () => {
         domainId: null,
       });
 
-      const calls = await db.webhookCall.findMany({ where: { teamId } });
+      const calls = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.teamId, teamId));
       expect(calls.map((c) => c.webhookId).sort()).toEqual(
         [global_.id, scoped.id].sort(),
       );
@@ -411,27 +464,30 @@ describeIntegration("webhook-service", () => {
 
       await WebhookService.emit(teamId, "email.delivered", payload as never);
 
-      const calls = await db.webhookCall.findMany({ where: { teamId } });
+      const calls = await drizzleDb
+        .select()
+        .from(schema.webhookCall)
+        .where(eq(schema.webhookCall.teamId, teamId));
       expect(calls.map((c) => c.webhookId)).toEqual([active.id]);
     });
 
     it("does not deliver to another team's webhooks", async () => {
       const mine = await makeWebhook();
-      const otherTeam = await db.team.create({ data: { name: "other3" } });
-      await db.webhook.create({
-        data: {
+      const otherTeam = await createTeam({ name: "other3" });
+      await drizzleDb.insert(schema.webhook).values(
+        withUpdatedAt({
           id: "wh_other",
           teamId: otherTeam.id,
           url: "https://other.example.com/webhook",
           secret: "s",
           eventTypes: ["email.delivered"],
           status: WebhookStatus.ACTIVE,
-        },
-      });
+        }),
+      );
 
       await WebhookService.emit(teamId, "email.delivered", payload as never);
 
-      const calls = await db.webhookCall.findMany({});
+      const calls = await drizzleDb.select().from(schema.webhookCall);
       expect(calls.map((c) => c.webhookId)).toEqual([mine.id]);
     });
   });
@@ -441,8 +497,8 @@ describeIntegration("webhook-service", () => {
       const webhook = await makeWebhook();
       const base = Date.now();
       for (let i = 0; i < 5; i++) {
-        await db.webhookCall.create({
-          data: {
+        await drizzleDb.insert(schema.webhookCall).values(
+          withUpdatedAt({
             id: `call_page_${i}`,
             webhookId: webhook.id,
             teamId,
@@ -452,8 +508,8 @@ describeIntegration("webhook-service", () => {
             attempt: 0,
             // Identical timestamps, so the tie-break has to carry ordering.
             createdAt: new Date(base),
-          },
-        });
+          }),
+        );
       }
 
       const first = await WebhookService.listWebhookCalls({ teamId, limit: 2 });
@@ -486,7 +542,7 @@ describeIntegration("webhook-service", () => {
     it("will not return another team's call", async () => {
       const webhook = await makeWebhook();
       const call = await makeCall(webhook.id);
-      const otherTeam = await db.team.create({ data: { name: "other4" } });
+      const otherTeam = await createTeam({ name: "other4" });
 
       await expect(
         WebhookService.getWebhookCall({ id: call.id, teamId: otherTeam.id }),

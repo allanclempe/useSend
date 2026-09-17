@@ -1,7 +1,10 @@
 import { EmailStatus } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SesEvent } from "~/types/aws-types";
-import { db } from "~/server/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -109,18 +112,21 @@ describeIntegration("ses-hook-parser", () => {
     vi.clearAllMocks();
     mockWebhookEmit.mockResolvedValue(undefined);
 
-    const team = await db.team.create({ data: { name: "ses-team" } });
+    const team = await createTeam({ name: "ses-team" });
     teamId = team.id;
-    const domain = await db.domain.create({
-      data: {
-        name: "ses.example.com",
-        teamId,
-        publicKey: "pk",
-        region: "us-east-1",
-        dkimSelector: "usesend",
-      },
-    });
-    domainId = domain.id;
+    const [domain] = await drizzleDb
+      .insert(schema.domain)
+      .values(
+        withUpdatedAt({
+          name: "ses.example.com",
+          teamId,
+          publicKey: "pk",
+          region: "us-east-1",
+          dkimSelector: "usesend",
+        }),
+      )
+      .returning();
+    domainId = domain!.id;
   });
 
   afterAll(async () => {
@@ -128,23 +134,31 @@ describeIntegration("ses-hook-parser", () => {
   });
 
   async function makeEmail(overrides: Record<string, unknown> = {}) {
-    return db.email.create({
-      data: {
-        id: `em_${Math.random().toString(36).slice(2, 10)}`,
-        teamId,
-        domainId,
-        to: ["recipient@example.com"],
-        from: "sender@example.com",
-        subject: "Hello",
-        latestStatus: "DELIVERED",
-        sesEmailId: `ses_${Math.random().toString(36).slice(2, 10)}`,
-        ...overrides,
-      },
-    });
+    const [email] = await drizzleDb
+      .insert(schema.email)
+      .values(
+        withUpdatedAt({
+          id: `em_${Math.random().toString(36).slice(2, 10)}`,
+          teamId,
+          domainId,
+          to: ["recipient@example.com"],
+          from: "sender@example.com",
+          subject: "Hello",
+          latestStatus: "DELIVERED" as const,
+          sesEmailId: `ses_${Math.random().toString(36).slice(2, 10)}`,
+          ...overrides,
+        }),
+      )
+      .returning();
+
+    return email!;
   }
 
   async function usageRow() {
-    const rows = await db.dailyEmailUsage.findMany({ where: { teamId } });
+    const rows = await drizzleDb
+      .select()
+      .from(schema.dailyEmailUsage)
+      .where(eq(schema.dailyEmailUsage.teamId, teamId));
     return rows[0];
   }
 
@@ -162,9 +176,15 @@ describeIntegration("ses-hook-parser", () => {
         await parseSesHook(event);
 
         // Both events are recorded, but usage is counted once.
-        const events = await db.emailEvent.findMany({
-          where: { emailId: email.id, status },
-        });
+        const events = await drizzleDb
+          .select()
+          .from(schema.emailEvent)
+          .where(
+            and(
+              eq(schema.emailEvent.emailId, email.id),
+              eq(schema.emailEvent.status, status),
+            ),
+          );
         expect(events).toHaveLength(2);
 
         const usage = await usageRow();
@@ -193,7 +213,11 @@ describeIntegration("ses-hook-parser", () => {
 
       // SES events arrive out of order; the raw SQL CASE keeps the status
       // monotonic rather than letting a late event overwrite a later one.
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.latestStatus).toBe("DELIVERED");
     });
 
@@ -202,7 +226,11 @@ describeIntegration("ses-hook-parser", () => {
 
       await parseSesHook(buildEvent("Delivery", email.sesEmailId!));
 
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.latestStatus).toBe("DELIVERED");
     });
 
@@ -211,7 +239,11 @@ describeIntegration("ses-hook-parser", () => {
 
       await parseSesHook(buildEvent("Send", email.sesEmailId!));
 
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.latestStatus).toBe("SENT");
     });
   });
@@ -227,7 +259,11 @@ describeIntegration("ses-hook-parser", () => {
       );
 
       // The race-condition path also backfills sesEmailId.
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.sesEmailId).toBe("unknown_ses_id");
       expect(stored?.latestStatus).toBe("DELIVERED");
     });
@@ -260,7 +296,10 @@ describeIntegration("ses-hook-parser", () => {
       await parseSesHook(buildEvent("Delivery", a.sesEmailId!));
       await parseSesHook(buildEvent("Delivery", b.sesEmailId!));
 
-      const metrics = await db.cumulatedMetrics.findMany({ where: { teamId } });
+      const metrics = await drizzleDb
+        .select()
+        .from(schema.cumulatedMetrics)
+        .where(eq(schema.cumulatedMetrics.teamId, teamId));
       expect(metrics).toHaveLength(1);
       // bigint column, read back as a number by the generated schema.
       expect(Number(metrics[0]?.delivered)).toBe(2);

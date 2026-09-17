@@ -1,7 +1,10 @@
 import { UnsubscribeReason } from "@prisma/client";
 import { createHash } from "crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { db } from "~/server/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -55,24 +58,30 @@ describeIntegration("campaign lifecycle", () => {
     await resetDatabase();
     vi.clearAllMocks();
 
-    const team = await db.team.create({ data: { name: "camp-team" } });
+    const team = await createTeam({ name: "camp-team" });
     teamId = team.id;
 
-    const book = await db.contactBook.create({
-      data: { id: "book_1", name: "book", teamId, properties: {} },
-    });
-    contactBookId = book.id;
+    const [book] = await drizzleDb
+      .insert(schema.contactBook)
+      .values(
+        withUpdatedAt({ id: "book_1", name: "book", teamId, properties: {} }),
+      )
+      .returning();
+    contactBookId = book!.id;
 
-    const domain = await db.domain.create({
-      data: {
-        name: "example.com",
-        teamId,
-        publicKey: "pk",
-        region: "us-east-1",
-        dkimSelector: "usesend",
-      },
-    });
-    domainId = domain.id;
+    const [domain] = await drizzleDb
+      .insert(schema.domain)
+      .values(
+        withUpdatedAt({
+          name: "example.com",
+          teamId,
+          publicKey: "pk",
+          region: "us-east-1",
+          dkimSelector: "usesend",
+        }),
+      )
+      .returning();
+    domainId = domain!.id;
   });
 
   afterAll(async () => {
@@ -80,31 +89,41 @@ describeIntegration("campaign lifecycle", () => {
   });
 
   async function makeCampaign(overrides: Record<string, unknown> = {}) {
-    return db.campaign.create({
-      data: {
-        id: `camp_${Math.random().toString(36).slice(2, 10)}`,
-        name: "camp",
-        teamId,
-        from: "hi@example.com",
-        subject: "hello",
-        contactBookId,
-        domainId,
-        html: `<p>hi <a href="{{usesend_unsubscribe_url}}">unsub</a></p>`,
-        ...overrides,
-      },
-    });
+    const [campaign] = await drizzleDb
+      .insert(schema.campaign)
+      .values(
+        withUpdatedAt({
+          id: `camp_${Math.random().toString(36).slice(2, 10)}`,
+          name: "camp",
+          teamId,
+          from: "hi@example.com",
+          subject: "hello",
+          contactBookId,
+          domainId,
+          html: `<p>hi <a href="{{usesend_unsubscribe_url}}">unsub</a></p>`,
+          ...overrides,
+        }),
+      )
+      .returning();
+
+    return campaign!;
   }
 
   async function makeContact(id: string, subscribed = true) {
-    return db.contact.create({
-      data: {
-        id,
-        contactBookId,
-        email: `${id}@example.com`,
-        properties: {},
-        subscribed,
-      },
-    });
+    const [contact] = await drizzleDb
+      .insert(schema.contact)
+      .values(
+        withUpdatedAt({
+          id,
+          contactBookId,
+          email: `${id}@example.com`,
+          properties: {},
+          subscribed,
+        }),
+      )
+      .returning();
+
+    return contact!;
   }
 
   describe("subscription counters", () => {
@@ -129,9 +148,11 @@ describeIntegration("campaign lifecycle", () => {
       });
       expect(result.subscribed).toBe(false);
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.unsubscribed).toBe(1);
     });
 
@@ -146,9 +167,11 @@ describeIntegration("campaign lifecycle", () => {
       });
 
       expect(mockUpdateContactSubscription).not.toHaveBeenCalled();
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.unsubscribed).toBe(3);
     });
 
@@ -173,9 +196,11 @@ describeIntegration("campaign lifecycle", () => {
         unsubscribeReason: null,
       });
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.unsubscribed).toBe(1);
     });
 
@@ -203,9 +228,11 @@ describeIntegration("campaign lifecycle", () => {
         ),
       );
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.unsubscribed).toBe(5);
     });
 
@@ -228,9 +255,11 @@ describeIntegration("campaign lifecycle", () => {
 
       await scheduleCampaign({ campaignId: campaign.id, teamId });
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.status).toBe("SCHEDULED");
       // Only subscribed contacts count toward the total.
       expect(stored?.total).toBe(2);
@@ -247,7 +276,7 @@ describeIntegration("campaign lifecycle", () => {
 
     it("refuses to schedule another team's campaign", async () => {
       const campaign = await makeCampaign();
-      const other = await db.team.create({ data: { name: "other" } });
+      const other = await createTeam({ name: "other" });
 
       await expect(
         scheduleCampaign({ campaignId: campaign.id, teamId: other.id }),
@@ -259,12 +288,24 @@ describeIntegration("campaign lifecycle", () => {
 
       await pauseCampaign({ campaignId: campaign.id, teamId });
       expect(
-        (await db.campaign.findUnique({ where: { id: campaign.id } }))?.status,
+        (
+          await drizzleDb
+            .select()
+            .from(schema.campaign)
+            .where(eq(schema.campaign.id, campaign.id))
+            .limit(1)
+        )[0]?.status,
       ).toBe("PAUSED");
 
       await resumeCampaign({ campaignId: campaign.id, teamId });
       expect(
-        (await db.campaign.findUnique({ where: { id: campaign.id } }))?.status,
+        (
+          await drizzleDb
+            .select()
+            .from(schema.campaign)
+            .where(eq(schema.campaign.id, campaign.id))
+            .limit(1)
+        )[0]?.status,
       ).toBe("RUNNING");
     });
 
@@ -277,7 +318,13 @@ describeIntegration("campaign lifecycle", () => {
       await resumeCampaign({ campaignId: campaign.id, teamId });
 
       expect(
-        (await db.campaign.findUnique({ where: { id: campaign.id } }))?.status,
+        (
+          await drizzleDb
+            .select()
+            .from(schema.campaign)
+            .where(eq(schema.campaign.id, campaign.id))
+            .limit(1)
+        )[0]?.status,
       ).toBe("SCHEDULED");
     });
   });
@@ -285,7 +332,7 @@ describeIntegration("campaign lifecycle", () => {
   describe("reads and deletes", () => {
     it("returns a campaign for its own team only", async () => {
       const campaign = await makeCampaign();
-      const other = await db.team.create({ data: { name: "other2" } });
+      const other = await createTeam({ name: "other2" });
 
       const found = await getCampaignForTeam({
         campaignId: campaign.id,
@@ -306,35 +353,40 @@ describeIntegration("campaign lifecycle", () => {
     it("deletes a campaign and its emails together", async () => {
       const campaign = await makeCampaign();
       const contact = await makeContact("d_1");
-      const email = await db.email.create({
-        data: {
-          id: "em_1",
-          teamId,
-          to: [contact.email],
-          from: "hi@example.com",
-          subject: "s",
-          domainId,
-        },
-      });
-      await db.campaignEmail.create({
-        data: { campaignId: campaign.id, contactId: contact.id, emailId: email.id },
+      const [email] = await drizzleDb
+        .insert(schema.email)
+        .values(
+          withUpdatedAt({
+            id: "em_1",
+            teamId,
+            to: [contact.email],
+            from: "hi@example.com",
+            subject: "s",
+            domainId,
+          }),
+        )
+        .returning();
+      await drizzleDb.insert(schema.campaignEmail).values({
+        campaignId: campaign.id,
+        contactId: contact.id,
+        emailId: email!.id,
       });
 
       const deleted = await deleteCampaign(campaign.id, teamId);
 
       expect(deleted.id).toBe(campaign.id);
-      expect(await db.campaignEmail.count()).toBe(0);
-      expect(await db.campaign.count()).toBe(0);
+      expect(await drizzleDb.$count(schema.campaignEmail)).toBe(0);
+      expect(await drizzleDb.$count(schema.campaign)).toBe(0);
     });
 
     it("refuses to delete another team's campaign", async () => {
       const campaign = await makeCampaign();
-      const other = await db.team.create({ data: { name: "other3" } });
+      const other = await createTeam({ name: "other3" });
 
       await expect(deleteCampaign(campaign.id, other.id)).rejects.toThrow(
         "Campaign not found",
       );
-      expect(await db.campaign.count()).toBe(1);
+      expect(await drizzleDb.$count(schema.campaign)).toBe(1);
     });
   });
 });
