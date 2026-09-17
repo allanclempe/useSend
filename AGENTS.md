@@ -108,3 +108,12 @@
 - Track the issue number as the commit scope: `feat(#42): …`, `refactor(#3): …`. Applies to PR titles too, since a squash merge uses the title as the subject. Still put `Closes #nnn` in the body — the scope alone does not close the issue.
 - PRs must include: clear description, linked issues, screenshots for UI changes, migration notes, and verification steps.
 - never run build,migration commands unless asked for
+
+## Stacked Pull Requests
+
+- Long changes ship as a stack of small PRs, managed with the `github/gh-stack` extension (`gh extension install github/gh-stack`). Install it before touching a stack.
+- Append a new PR to the chain with `gh stack link <stack-number> <branch-or-pr>`. The stack number is the one in the GitHub stack UI, and it is not a PR number — passing it first appends to that stack without re-listing the PRs already in it.
+- The payoff is `gh stack merge`: it merges the whole stack atomically, all-or-nothing. Only the owner runs it — never merge a stack yourself.
+- **A stack is linear: two PRs must never share a base.** Branch from the current top of the stack, not from the tip you happened to start on. When several agents open PRs against the same tip concurrently they fork the stack, and someone has to rebase afterwards to straighten it out.
+- **`gh stack checkout` switches branches in the current working tree** (and pulls down stack branches, which can move local refs). Agents share this checkout, so run it — and any other stack command that moves branches — from your own `git worktree`, never in a tree someone else is using.
+- `gh stack view` reads local tracking state only; a stack that was assembled with `gh stack link` is invisible to it until you `gh stack checkout` it. To inspect a stack without moving any branch, read it straight from the API: `gh api repos/allanclempe/useSend/stacks`.
