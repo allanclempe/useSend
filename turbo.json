@@ -28,6 +28,7 @@
         "AWS_SNS_ENDPOINT",
         "NEXTAUTH_SECRET",
         "NODE_ENV",
+        "LOG_LEVEL",
         "VERCEL_URL",
         "VERCEL",
         "SKIP_ENV_VALIDATION",
