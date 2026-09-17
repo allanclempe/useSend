@@ -23,6 +23,7 @@ import { getSessionState } from "~/server/functions/session";
 import { AppSidebar } from "./_dashboard/-app-sidebar";
 import { CreateTeam } from "./_dashboard/-create-team";
 import { TeamProvider } from "./_dashboard/-team-context";
+import { UpgradeModal } from "./_dashboard/-upgrade-modal";
 
 /**
  * Everything behind the sign-in gate (#9).
@@ -129,6 +130,7 @@ function DashboardChrome() {
           </main>
         </SidebarInset>
       </SidebarProvider>
+      <UpgradeModal />
     </div>
   );
 }
