@@ -37,7 +37,16 @@ const driver = bullmqDriver;
  * another key on the message body, which any backend can carry.
  *
  * It is stripped again before the handler sees the job, so nothing downstream
- * has to know it was ever there (#18).
+ * has to know it was ever there (#18). Two places can still see it:
+ *
+ * - A message enqueued inside a trace carries one extra key. Nothing validates
+ *   job payloads strictly and nothing derives identity from them — dedup is
+ *   `options.jobId`, never the body — but a test that mocks the *driver* and
+ *   asserts an exact payload will see the field if the enqueue ran inside a
+ *   trace, and none do today only because they run outside one.
+ * - Messages in flight across a deploy. Either direction is safe: an old
+ *   message simply has no field to extract, and an old consumer ignores a key
+ *   it does not destructure.
  */
 const TRACEPARENT_FIELD = "__traceparent";
 
