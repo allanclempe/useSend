@@ -181,6 +181,16 @@ own `wrangler.*.jsonc` and are never deployed.
   an auth setting despite having been called `NEXTAUTH_*` until issue #59. Do not
   reintroduce a `BETTER_AUTH_URL`-style second name for either: better-auth takes
   `baseURL: env.APP_URL`.
+- **Input limits belong at the service seam, not in a request schema.**
+  `sendEmail`/`sendBulkEmails` in `service/email-service.ts` is what every path
+  that can produce an email goes through — public API, batch, SMTP, the
+  dashboard's test send, double-opt-in — so a limit enforced there cannot be
+  walked around by a second entry point, and is stated once. The public API's Zod
+  schema *documents* the attachment limits (they reach the OpenAPI document and
+  the SDK types from there) but does not enforce them; see
+  `service/attachment-limits.ts`. Regenerate the SDK types with
+  `pnpm --filter=usesend-js openapi-typegen` after touching
+  `apps/docs/api-reference/openapi.json`.
 - **`APP_SECRET` cannot be rotated.** It keys the SHA-256 hashes in campaign
   unsubscribe, one-click-unsubscribe and double-opt-in links, which are already
   sitting in delivered inboxes. A new value invalidates all of them, and one-click

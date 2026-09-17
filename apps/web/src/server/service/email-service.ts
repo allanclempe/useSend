@@ -4,6 +4,7 @@ import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";
 import { withUpdatedAt } from "../drizzle/touch";
 import { UnsendApiError } from "~/server/public-api/api-error";
+import { assertAttachmentsWithinLimit } from "./attachment-limits";
 import { EmailQueueService } from "./email-queue-service";
 import {
   validateDomainFromEmail,
@@ -82,6 +83,11 @@ export async function sendEmail(
   } = emailContent;
   let subject = subjectFromApiCall;
   let html = htmlFromApiCall;
+
+  // Before the domain lookup: this is the cheapest check here and the one most
+  // likely to be hit by a caller who got it wrong, so it should not cost a
+  // round trip to fail.
+  assertAttachmentsWithinLimit(attachments);
 
   let domain: Awaited<ReturnType<typeof validateDomainFromEmail>>;
 
@@ -441,6 +447,14 @@ export async function sendBulkEmails(
       code: "BAD_REQUEST",
       message: "Cannot send more than 100 emails in a single bulk request",
     });
+  }
+
+  // Per message, not per batch: SES's ceiling applies to each message it is
+  // handed, and a batch becomes 100 separate messages. Checked up front so one
+  // oversized member fails the request rather than surfacing later, halfway
+  // through a partially-enqueued batch.
+  for (const content of emailContents) {
+    assertAttachmentsWithinLimit(content.attachments);
   }
 
   // Filter out suppressed emails

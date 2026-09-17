@@ -872,11 +872,16 @@
                       "type": "object",
                       "properties": {
                         "filename": { "type": "string", "minLength": 1 },
-                        "content": { "type": "string", "minLength": 1 }
+                        "content": {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "File contents, base64-encoded"
+                        }
                       },
                       "required": ["filename", "content"]
                     },
-                    "maxItems": 10
+                    "maxItems": 10,
+                    "description": "Up to 10 attachments totalling at most 25 MB once decoded. The ceiling comes from SES, which rejects any message over 40 MB after base64 encoding."
                   },
                   "scheduledAt": { "type": "string", "format": "date-time" },
                   "inReplyToId": { "type": "string", "nullable": true }
@@ -987,11 +992,16 @@
                         "type": "object",
                         "properties": {
                           "filename": { "type": "string", "minLength": 1 },
-                          "content": { "type": "string", "minLength": 1 }
+                          "content": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "File contents, base64-encoded"
+                          }
                         },
                         "required": ["filename", "content"]
                       },
-                      "maxItems": 10
+                      "maxItems": 10,
+                      "description": "Up to 10 attachments totalling at most 25 MB once decoded. The ceiling comes from SES, which rejects any message over 40 MB after base64 encoding."
                     },
                     "scheduledAt": { "type": "string", "format": "date-time" },
                     "inReplyToId": { "type": "string", "nullable": true }
