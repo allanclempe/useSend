@@ -288,12 +288,13 @@ describeIntegration("email-service", () => {
         { ...base, to: "c@example.com", teamId },
       ]);
 
-      expect(emails.map((e) => e.to[0])).toEqual([
+      // Email.to is a nullable array column, so Drizzle types it `string[] | null`.
+      expect(emails.map((e) => e.to?.[0])).toEqual([
         "a@example.com",
         "b@example.com",
         "c@example.com",
       ]);
-      const suppressed = emails.find((e) => e.to[0] === "b@example.com");
+      const suppressed = emails.find((e) => e.to?.[0] === "b@example.com");
       expect(suppressed?.latestStatus).toBe("SUPPRESSED");
     });
 
