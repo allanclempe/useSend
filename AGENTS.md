@@ -26,6 +26,23 @@
 - Paths (web): use alias `~/` for src imports (e.g., `import { x } from "~/utils/x"`).
 - NEVER USE DYNAMIC IMPORTS. ALWAYS IMPORT ON THE TOP
 
+## Dependencies
+
+- pnpm settings live in `pnpm-workspace.yaml` — `overrides`, `packageExtensions`, `allowBuilds`. The
+  `"pnpm"` field in root `package.json` is a duplicate that pnpm 11 ignores (issue #55); edit the
+  workspace file, and mirror into `package.json` only while that issue is open.
+- **A package that imports something it never declared resolves it by hoist order, so adding an
+  unrelated dependency can silently change which version it gets.** `@hookform/resolvers` imports
+  `zod` with neither a dependency nor a peer on it. It got zod 3 until `better-auth` put zod 4 in the
+  tree and won the hoist — which retyped every `zodResolver(...)` call against the wrong major and
+  broke `typecheck` in six components nobody had edited.
+- Fix that by declaring the missing dependency in `packageExtensions`, not by casting at the call
+  sites. A cast hides a real version mismatch and has to be repeated; the declaration states what the
+  package actually needs and survives the next install.
+- After adding any dependency, run `pnpm --filter=web typecheck` before assuming the change is
+  contained. A new transitive major of a shared library — zod, react, drizzle — surfaces as type
+  errors in files the change never touched.
+
 ## Rules
 
 - Prefer to use trpc alway unless asked otherwise
