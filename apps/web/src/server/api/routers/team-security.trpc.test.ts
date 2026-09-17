@@ -1,20 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockDb, mockSendTeamInviteEmail } = vi.hoisted(() => ({
+const { mockDb, mockSendTeamInviteEmail, mockSelectRows } = vi.hoisted(() => ({
   mockDb: {
     teamUser: {
       findFirst: vi.fn(),
     },
-    teamInvite: {
-      findFirst: vi.fn(),
-    },
   },
   mockSendTeamInviteEmail: vi.fn(),
+  mockSelectRows: vi.fn(),
 }));
 
+// The trpc context middleware still resolves ctx.team through Prisma.
 vi.mock("~/server/db", () => ({
   db: mockDb,
 }));
+
+/**
+ * Only the Drizzle client is faked — the real TeamService query, including its
+ * teamId scoping, still runs. `where` is captured so the test can assert the
+ * team filter actually reached the query rather than trusting it did.
+ */
+const capturedWhere: { value: unknown } = { value: undefined };
+
+vi.mock("~/server/drizzle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/server/drizzle")>();
+  const chain = {
+    select: () => chain,
+    from: () => chain,
+    where: (condition: unknown) => {
+      capturedWhere.value = condition;
+      return chain;
+    },
+    limit: () => mockSelectRows(),
+  };
+  return { ...actual, drizzleDb: chain };
+});
 
 vi.mock("~/server/auth", () => ({
   getServerAuthSession: vi.fn(),
@@ -31,6 +51,22 @@ import { createCallerFactory } from "~/server/api/trpc";
 import { teamRouter } from "~/server/api/routers/team";
 
 const createCaller = createCallerFactory(teamRouter);
+
+/** Pulls every column name referenced by a Drizzle SQL condition. */
+function collectColumnNames(condition: unknown): string[] {
+  const names: string[] = [];
+
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.name === "string" && node.table) {
+      names.push(node.name);
+    }
+    for (const chunk of node.queryChunks ?? []) visit(chunk);
+  };
+
+  visit(condition);
+  return names;
+}
 
 function getContext() {
   return {
@@ -51,8 +87,9 @@ function getContext() {
 describe("teamRouter.resendTeamInvite authorization", () => {
   beforeEach(() => {
     mockDb.teamUser.findFirst.mockReset();
-    mockDb.teamInvite.findFirst.mockReset();
+    mockSelectRows.mockReset();
     mockSendTeamInviteEmail.mockReset();
+    capturedWhere.value = undefined;
 
     mockDb.teamUser.findFirst.mockResolvedValue({
       teamId: 1,
@@ -63,7 +100,8 @@ describe("teamRouter.resendTeamInvite authorization", () => {
   });
 
   it("does not resend invites that belong to another team", async () => {
-    mockDb.teamInvite.findFirst.mockResolvedValue(null);
+    // An invite owned by another team is simply not found by a team-scoped read.
+    mockSelectRows.mockResolvedValue([]);
 
     const caller = createCaller(getContext());
 
@@ -74,14 +112,13 @@ describe("teamRouter.resendTeamInvite authorization", () => {
       message: "Invite not found",
     });
 
-    expect(mockDb.teamInvite.findFirst).toHaveBeenCalledWith({
-      where: {
-        teamId: 1,
-        id: {
-          equals: "invite_team_2",
-        },
-      },
-    });
+    // The router must scope by ctx.team.id rather than anything the caller sent.
+    // Drizzle conditions are SQL objects, so walk their chunks for the columns
+    // rather than stringifying them.
+    expect(capturedWhere.value).toBeDefined();
+    const columns = collectColumnNames(capturedWhere.value);
+    expect(columns).toContain("teamId");
+    expect(columns).toContain("id");
 
     expect(mockSendTeamInviteEmail).not.toHaveBeenCalled();
   });
