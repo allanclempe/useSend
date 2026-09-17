@@ -1,5 +1,6 @@
 import { subDays } from "date-fns";
-import { db } from "~/server/db";
+import { lt } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { createQueue, createWorker, WEBHOOK_CLEANUP_QUEUE } from "../queue";
 import { logger } from "../logger/log";
 
@@ -11,16 +12,13 @@ createWorker(
   WEBHOOK_CLEANUP_QUEUE,
   async () => {
     const cutoff = subDays(new Date(), WEBHOOK_RETENTION_DAYS);
-    const result = await db.webhookCall.deleteMany({
-      where: {
-        createdAt: {
-          lt: cutoff,
-        },
-      },
-    });
+    const deleted = await drizzleDb
+      .delete(schema.webhookCall)
+      .where(lt(schema.webhookCall.createdAt, cutoff))
+      .returning({ id: schema.webhookCall.id });
 
     logger.info(
-      { deleted: result.count, cutoff: cutoff.toISOString() },
+      { deleted: deleted.length, cutoff: cutoff.toISOString() },
       "[WebhookCleanupJob]: Deleted old webhook calls",
     );
   },

@@ -1,17 +1,20 @@
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockDb } = vi.hoisted(() => ({
-  mockDb: {
-    teamUser: {
-      findFirst: vi.fn(),
-    },
-  },
+const { mockTeamUserFindFirst } = vi.hoisted(() => ({
+  mockTeamUserFindFirst: vi.fn(),
 }));
 
-vi.mock("~/server/db", () => ({
-  db: mockDb,
-}));
+vi.mock("~/server/drizzle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/server/drizzle")>();
+
+  return {
+    ...actual,
+    drizzleDb: {
+      query: { teamUser: { findFirst: mockTeamUserFindFirst } },
+    },
+  };
+});
 
 vi.mock("~/server/auth", () => ({
   getServerAuthSession: vi.fn(),
@@ -43,7 +46,6 @@ const createCaller = createCallerFactory(testRouter);
 
 function getContext(session: Record<string, unknown> | null) {
   return {
-    db: mockDb,
     session,
     headers: new Headers(),
   } as any;
@@ -59,7 +61,7 @@ const baseUser = {
 
 describe("tRPC middleware procedures", () => {
   beforeEach(() => {
-    mockDb.teamUser.findFirst.mockReset();
+    mockTeamUserFindFirst.mockReset();
   });
 
   it("blocks authed procedure without session", async () => {
@@ -83,7 +85,7 @@ describe("tRPC middleware procedures", () => {
   });
 
   it("loads team context for team procedure", async () => {
-    mockDb.teamUser.findFirst.mockResolvedValue({
+    mockTeamUserFindFirst.mockResolvedValue({
       teamId: 10,
       userId: 1,
       role: "ADMIN",
@@ -100,7 +102,7 @@ describe("tRPC middleware procedures", () => {
   });
 
   it("blocks team admin procedure for non-admin team users", async () => {
-    mockDb.teamUser.findFirst.mockResolvedValue({
+    mockTeamUserFindFirst.mockResolvedValue({
       teamId: 10,
       userId: 1,
       role: "MEMBER",
@@ -119,7 +121,7 @@ describe("tRPC middleware procedures", () => {
   });
 
   it("fails team procedure when user has no team", async () => {
-    mockDb.teamUser.findFirst.mockResolvedValue(null);
+    mockTeamUserFindFirst.mockResolvedValue(null);
 
     const caller = createCaller(
       getContext({

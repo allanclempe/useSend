@@ -6,7 +6,8 @@ import {
   type TeamJob,
 } from "../queue";
 import { CampaignBatchService } from "../service/campaign-service";
-import { db } from "../db";
+import { and, inArray, isNull, lte, or } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
 import { logger } from "../logger/log";
 
 const SCHEDULER_TICK_MS = 1500;
@@ -23,18 +24,23 @@ export class CampaignSchedulerService {
     createWorkerHandler(async (_job: SchedulerJob) => {
       try {
         const now = new Date();
-        const campaigns = await db.campaign.findMany({
-          where: {
-            status: { in: ["SCHEDULED", "RUNNING"] },
-            OR: [{ scheduledAt: null }, { scheduledAt: { lte: now } }],
-          },
-          select: {
-            id: true,
-            teamId: true,
-            lastSentAt: true,
-            batchWindowMinutes: true,
-          },
-        });
+        const campaigns = await drizzleDb
+          .select({
+            id: schema.campaign.id,
+            teamId: schema.campaign.teamId,
+            lastSentAt: schema.campaign.lastSentAt,
+            batchWindowMinutes: schema.campaign.batchWindowMinutes,
+          })
+          .from(schema.campaign)
+          .where(
+            and(
+              inArray(schema.campaign.status, ["SCHEDULED", "RUNNING"]),
+              or(
+                isNull(schema.campaign.scheduledAt),
+                lte(schema.campaign.scheduledAt, now),
+              ),
+            ),
+          );
 
         const enqueuePromises: Promise<any>[] = [];
         for (const c of campaigns) {

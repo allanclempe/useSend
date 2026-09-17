@@ -1,4 +1,5 @@
-import { db } from "~/server/db";
+import { eq, isNotNull } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { env } from "~/env";
 import { getUsageDate, getUsageUnits } from "~/lib/usage";
 import { sendUsageToStripe } from "~/server/billing/usage";
@@ -13,20 +14,12 @@ createWorker(
   USAGE_QUEUE_NAME,
   async () => {
     // Get all teams with stripe customer IDs
-    const teams = await db.team.findMany({
-      where: {
-        stripeCustomerId: {
-          not: null,
-        },
-      },
-      include: {
+    const teams = await drizzleDb.query.team.findMany({
+      where: isNotNull(schema.team.stripeCustomerId),
+      with: {
         dailyEmailUsages: {
-          where: {
-            // Get yesterday's date by subtracting 1 day from today
-            date: {
-              equals: getUsageDate(),
-            },
-          },
+          // Get yesterday's date by subtracting 1 day from today
+          where: eq(schema.dailyEmailUsage.date, getUsageDate()),
         },
       },
     });

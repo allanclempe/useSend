@@ -1,19 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockDb, mockSendTeamInviteEmail, mockSelectRows } = vi.hoisted(() => ({
-  mockDb: {
-    teamUser: {
-      findFirst: vi.fn(),
-    },
-  },
-  mockSendTeamInviteEmail: vi.fn(),
-  mockSelectRows: vi.fn(),
-}));
-
-// The trpc context middleware still resolves ctx.team through Prisma.
-vi.mock("~/server/db", () => ({
-  db: mockDb,
-}));
+const { mockTeamUserFindFirst, mockSendTeamInviteEmail, mockSelectRows } =
+  vi.hoisted(() => ({
+    mockTeamUserFindFirst: vi.fn(),
+    mockSendTeamInviteEmail: vi.fn(),
+    mockSelectRows: vi.fn(),
+  }));
 
 /**
  * Only the Drizzle client is faked — the real TeamService query, including its
@@ -32,6 +24,8 @@ vi.mock("~/server/drizzle", async (importOriginal) => {
       return chain;
     },
     limit: () => mockSelectRows(),
+    // teamProcedure resolves ctx.team through the same client.
+    query: { teamUser: { findFirst: mockTeamUserFindFirst } },
   };
   return { ...actual, drizzleDb: chain };
 });
@@ -70,7 +64,6 @@ function collectColumnNames(condition: unknown): string[] {
 
 function getContext() {
   return {
-    db: mockDb,
     headers: new Headers(),
     session: {
       user: {
@@ -86,12 +79,12 @@ function getContext() {
 
 describe("teamRouter.resendTeamInvite authorization", () => {
   beforeEach(() => {
-    mockDb.teamUser.findFirst.mockReset();
+    mockTeamUserFindFirst.mockReset();
     mockSelectRows.mockReset();
     mockSendTeamInviteEmail.mockReset();
     capturedWhere.value = undefined;
 
-    mockDb.teamUser.findFirst.mockResolvedValue({
+    mockTeamUserFindFirst.mockResolvedValue({
       teamId: 1,
       userId: 1,
       role: "ADMIN",

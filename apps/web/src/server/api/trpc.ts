@@ -13,7 +13,8 @@ import { z, ZodError } from "zod";
 import { env } from "~/env";
 
 import { getServerAuthSession } from "~/server/auth";
-import { db } from "~/server/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { getChildLogger, logger, withLogger } from "../logger/log";
 import { randomUUID } from "crypto";
 
@@ -32,8 +33,10 @@ import { randomUUID } from "crypto";
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const session = await getServerAuthSession();
 
+  // The database client is deliberately *not* on the context: nothing reads
+  // `ctx.db`, and Drizzle's client type is large enough that including it makes
+  // tsc give up serialising the inferred AppRouter type (TS7056).
   return {
-    db,
     session,
     ...opts,
   };
@@ -125,9 +128,9 @@ export const protectedProcedure = authedProcedure.use(({ ctx, next }) => {
 });
 
 export const teamProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const teamUser = await db.teamUser.findFirst({
-    where: { userId: ctx.session.user.id },
-    include: { team: true },
+  const teamUser = await drizzleDb.query.teamUser.findFirst({
+    where: eq(schema.teamUser.userId, ctx.session.user.id),
+    with: { team: true },
   });
 
   if (!teamUser) {
@@ -165,9 +168,16 @@ export const teamAdminProcedure = teamProcedure.use(async ({ ctx, next }) => {
 export const domainProcedure = teamProcedure
   .input(z.object({ id: z.number() }))
   .use(async ({ ctx, next, input }) => {
-    const domain = await db.domain.findUnique({
-      where: { id: input.id, teamId: ctx.team.id },
-    });
+    const [domain] = await drizzleDb
+      .select()
+      .from(schema.domain)
+      .where(
+        and(
+          eq(schema.domain.id, input.id),
+          eq(schema.domain.teamId, ctx.team.id),
+        ),
+      )
+      .limit(1);
     if (!domain) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Domain not found" });
     }
@@ -178,9 +188,16 @@ export const domainProcedure = teamProcedure
 export const emailProcedure = teamProcedure
   .input(z.object({ id: z.string() }))
   .use(async ({ ctx, next, input }) => {
-    const email = await db.email.findUnique({
-      where: { id: input.id, teamId: ctx.team.id },
-    });
+    const [email] = await drizzleDb
+      .select()
+      .from(schema.email)
+      .where(
+        and(
+          eq(schema.email.id, input.id),
+          eq(schema.email.teamId, ctx.team.id),
+        ),
+      )
+      .limit(1);
     if (!email) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Email not found" });
     }
@@ -191,9 +208,16 @@ export const emailProcedure = teamProcedure
 export const apiKeyProcedure = teamProcedure
   .input(z.object({ id: z.number() }))
   .use(async ({ ctx, next, input }) => {
-    const apiKey = await db.apiKey.findUnique({
-      where: { id: input.id, teamId: ctx.team.id },
-    });
+    const [apiKey] = await drizzleDb
+      .select()
+      .from(schema.apiKey)
+      .where(
+        and(
+          eq(schema.apiKey.id, input.id),
+          eq(schema.apiKey.teamId, ctx.team.id),
+        ),
+      )
+      .limit(1);
     if (!apiKey) {
       throw new TRPCError({ code: "NOT_FOUND", message: "API key not found" });
     }
@@ -208,9 +232,16 @@ export const contactBookProcedure = teamProcedure
     })
   )
   .use(async ({ ctx, next, input }) => {
-    const contactBook = await db.contactBook.findUnique({
-      where: { id: input.contactBookId, teamId: ctx.team.id },
-    });
+    const [contactBook] = await drizzleDb
+      .select()
+      .from(schema.contactBook)
+      .where(
+        and(
+          eq(schema.contactBook.id, input.contactBookId),
+          eq(schema.contactBook.teamId, ctx.team.id),
+        ),
+      )
+      .limit(1);
     if (!contactBook) {
       throw new TRPCError({
         code: "NOT_FOUND",
@@ -228,9 +259,16 @@ export const campaignProcedure = teamProcedure
     })
   )
   .use(async ({ ctx, next, input }) => {
-    const campaign = await db.campaign.findUnique({
-      where: { id: input.campaignId, teamId: ctx.team.id },
-    });
+    const [campaign] = await drizzleDb
+      .select()
+      .from(schema.campaign)
+      .where(
+        and(
+          eq(schema.campaign.id, input.campaignId),
+          eq(schema.campaign.teamId, ctx.team.id),
+        ),
+      )
+      .limit(1);
     if (!campaign) {
       throw new TRPCError({
         code: "NOT_FOUND",
@@ -248,9 +286,16 @@ export const templateProcedure = teamProcedure
     })
   )
   .use(async ({ ctx, next, input }) => {
-    const template = await db.template.findUnique({
-      where: { id: input.templateId, teamId: ctx.team.id },
-    });
+    const [template] = await drizzleDb
+      .select()
+      .from(schema.template)
+      .where(
+        and(
+          eq(schema.template.id, input.templateId),
+          eq(schema.template.teamId, ctx.team.id),
+        ),
+      )
+      .limit(1);
     if (!template) {
       throw new TRPCError({
         code: "NOT_FOUND",

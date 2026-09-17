@@ -1,4 +1,6 @@
-import {db} from "~/server/db";
+import {and, isNotNull, lt, or} from "drizzle-orm";
+import {drizzleDb, schema} from "~/server/drizzle";
+import {withUpdatedAt} from "~/server/drizzle/touch";
 import {logger} from "../logger/log";
 import {createQueue, createWorker} from "../queue";
 import {env} from "~/env";
@@ -25,25 +27,31 @@ if (isSelfHosted() && isEmailCleanupEnabled()) {
             const cutoffDate = new Date();
             cutoffDate.setDate(cutoffDate.getDate() - CLEANUP_DAYS);
 
-            const result = await db.email.updateMany({
-                where: {
-                    createdAt: {lt: cutoffDate},
-                    OR: [
-                        {text: {not: null}},
-                        {html: {not: null}},
-                        {attachments: {not: null}},
-                        {headers: {not: null}},
-                    ],
-                },
-                data: {
-                    text: null,
-                    html: null,
-                    attachments: null,
-                    headers: null,
-                },
-            });
+            const cleaned = await drizzleDb
+                .update(schema.email)
+                .set(
+                    withUpdatedAt({
+                        text: null,
+                        html: null,
+                        attachments: null,
+                        headers: null,
+                    })
+                )
+                .where(
+                    and(
+                        lt(schema.email.createdAt, cutoffDate),
+                        // Skip rows that are already stripped.
+                        or(
+                            isNotNull(schema.email.text),
+                            isNotNull(schema.email.html),
+                            isNotNull(schema.email.attachments),
+                            isNotNull(schema.email.headers)
+                        )
+                    )
+                )
+                .returning({id: schema.email.id});
 
-            logger.info(`[Cleanup] Emails cleaned: ${result.count}`);
+            logger.info(`[Cleanup] Emails cleaned: ${cleaned.length}`);
         },
         {
             onCompleted: (job) => {

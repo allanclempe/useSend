@@ -1,24 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockDb, mockValidateDomainFromEmail, mockSelectRows, mockInsertRows } =
-  vi.hoisted(() => ({
-    mockDb: {
-      teamUser: {
-        findFirst: vi.fn(),
-      },
-      campaign: {
-        findUnique: vi.fn(),
-      },
-    },
-    mockValidateDomainFromEmail: vi.fn(),
-    mockSelectRows: vi.fn(),
-    mockInsertRows: vi.fn(),
-  }));
-
-// The trpc context middleware still resolves ctx.team and ctx.campaign through
-// Prisma; only the router's own queries have moved.
-vi.mock("~/server/db", () => ({
-  db: mockDb,
+const {
+  mockTeamUserFindFirst,
+  mockCampaignSelect,
+  mockValidateDomainFromEmail,
+  mockSelectRows,
+  mockInsertRows,
+} = vi.hoisted(() => ({
+  mockTeamUserFindFirst: vi.fn(),
+  mockCampaignSelect: vi.fn(),
+  mockValidateDomainFromEmail: vi.fn(),
+  mockSelectRows: vi.fn(),
+  mockInsertRows: vi.fn(),
 }));
 
 /**
@@ -34,14 +27,21 @@ const captured: { where: unknown; values: unknown } = {
 vi.mock("~/server/drizzle", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/server/drizzle")>();
   const drizzleDb = {
+    // campaignProcedure loads ctx.campaign through the same client, so the
+    // campaign table gets its own answer and is kept out of `captured.where` —
+    // otherwise its condition would clobber the router's.
     select: () => ({
-      from: () => ({
-        where: (condition: unknown) => {
-          captured.where = condition;
-          return { limit: () => mockSelectRows() };
-        },
-      }),
+      from: (table: unknown) =>
+        table === actual.schema.campaign
+          ? { where: () => ({ limit: () => mockCampaignSelect() }) }
+          : {
+              where: (condition: unknown) => {
+                captured.where = condition;
+                return { limit: () => mockSelectRows() };
+              },
+            },
     }),
+    query: { teamUser: { findFirst: mockTeamUserFindFirst } },
     insert: () => ({
       values: (values: unknown) => {
         captured.values = values;
@@ -81,7 +81,6 @@ const createCaller = createCallerFactory(campaignRouter);
 
 function getContext() {
   return {
-    db: mockDb,
     headers: new Headers(),
     session: {
       user: {
@@ -97,25 +96,27 @@ function getContext() {
 
 describe("campaignRouter.updateCampaign authorization", () => {
   beforeEach(() => {
-    mockDb.teamUser.findFirst.mockReset();
-    mockDb.campaign.findUnique.mockReset();
+    mockTeamUserFindFirst.mockReset();
+    mockCampaignSelect.mockReset();
     mockSelectRows.mockReset();
     mockInsertRows.mockReset();
     captured.where = undefined;
     captured.values = undefined;
 
-    mockDb.teamUser.findFirst.mockResolvedValue({
+    mockTeamUserFindFirst.mockResolvedValue({
       teamId: 10,
       userId: 1,
       role: "ADMIN",
       team: { id: 10, name: "Acme" },
     });
 
-    mockDb.campaign.findUnique.mockResolvedValue({
-      id: "camp_1",
-      teamId: 10,
-      domainId: 2,
-    });
+    mockCampaignSelect.mockResolvedValue([
+      {
+        id: "camp_1",
+        teamId: 10,
+        domainId: 2,
+      },
+    ]);
 
     mockInsertRows.mockResolvedValue([{ id: "camp_copy", teamId: 10 }]);
   });
@@ -147,33 +148,35 @@ describe("campaignRouter.updateCampaign authorization", () => {
 
 describe("campaignRouter.duplicateCampaign", () => {
   beforeEach(() => {
-    mockDb.teamUser.findFirst.mockReset();
-    mockDb.campaign.findUnique.mockReset();
+    mockTeamUserFindFirst.mockReset();
+    mockCampaignSelect.mockReset();
     mockInsertRows.mockReset();
     captured.values = undefined;
 
-    mockDb.teamUser.findFirst.mockResolvedValue({
+    mockTeamUserFindFirst.mockResolvedValue({
       teamId: 10,
       userId: 1,
       role: "ADMIN",
       team: { id: 10, name: "Acme" },
     });
 
-    mockDb.campaign.findUnique.mockResolvedValue({
-      id: "camp_1",
-      teamId: 10,
-      name: "Weekly update",
-      from: "Team <hello@example.com>",
-      replyTo: ["support@example.com"],
-      cc: ["ops@example.com"],
-      bcc: ["audit@example.com"],
-      subject: "This week",
-      previewText: "Quick overview",
-      content: '{"root":{}}',
-      html: "<p>This week</p>",
-      domainId: 2,
-      contactBookId: "cb_1",
-    });
+    mockCampaignSelect.mockResolvedValue([
+      {
+        id: "camp_1",
+        teamId: 10,
+        name: "Weekly update",
+        from: "Team <hello@example.com>",
+        replyTo: ["support@example.com"],
+        cc: ["ops@example.com"],
+        bcc: ["audit@example.com"],
+        subject: "This week",
+        previewText: "Quick overview",
+        content: '{"root":{}}',
+        html: "<p>This week</p>",
+        domainId: 2,
+        contactBookId: "cb_1",
+      },
+    ]);
 
     mockInsertRows.mockResolvedValue([{ id: "camp_copy", teamId: 10 }]);
   });
