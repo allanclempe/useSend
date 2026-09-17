@@ -9,14 +9,14 @@ import {
   UnsubscribeReason,
 } from "@prisma/client";
 import { EmailQueueService } from "./email-queue-service";
-import { Queue, Worker } from "bullmq";
-import { getRedis, BULL_PREFIX } from "../redis";
 import {
   CAMPAIGN_BATCH_QUEUE,
-  DEFAULT_QUEUE_OPTIONS,
-} from "../queue/queue-constants";
+  createQueue,
+  createWorker,
+  createWorkerHandler,
+  type TeamJob,
+} from "../queue";
 import { logger } from "../logger/log";
-import { createWorkerHandler, TeamJob } from "../queue/bullmq-context";
 import { SuppressionService } from "./suppression-service";
 import { UnsendApiError } from "../public-api/api-error";
 import {
@@ -1059,16 +1059,11 @@ export async function updateCampaignAnalytics(
 type CampaignBatchJob = TeamJob<{ campaignId: string }>;
 
 export class CampaignBatchService {
-  private static batchQueue = new Queue<CampaignBatchJob>(
+  private static batchQueue = createQueue<CampaignBatchJob["data"]>(
     CAMPAIGN_BATCH_QUEUE,
-    {
-      connection: getRedis(),
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
-    },
   );
 
-  static worker = new Worker(
+  static worker = createWorker(
     CAMPAIGN_BATCH_QUEUE,
     createWorkerHandler(async (job: CampaignBatchJob) => {
       const { campaignId } = job.data;
@@ -1204,12 +1199,7 @@ export class CampaignBatchService {
         data: { lastCursor: newCursor, lastSentAt: new Date() },
       });
     }),
-    {
-      connection: getRedis(),
-      concurrency: 20,
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
-    },
+    { concurrency: 20 },
   );
 
   static async queueBatch({
@@ -1246,10 +1236,10 @@ export class CampaignBatchService {
       );
     }
 
-    await this.batchQueue.add(
+    await this.batchQueue.enqueue(
       `campaign-${campaignId}`,
       { campaignId, teamId },
-      { jobId: `campaign-batch-${campaignId}`, ...DEFAULT_QUEUE_OPTIONS },
+      { jobId: `campaign-batch-${campaignId}` },
     );
   }
 }

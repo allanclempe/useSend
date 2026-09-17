@@ -5,27 +5,26 @@ const {
   mockFindMany,
   mockIsDomainVerificationDue,
   mockRefreshDomainVerification,
-  mockUpsertJobScheduler,
-  mockWorkerOn,
-  mockQueue,
-  mockWorker,
+  mockSchedule,
+  mockCreateQueue,
+  mockCreateWorker,
 } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockIsDomainVerificationDue: vi.fn(),
   mockRefreshDomainVerification: vi.fn(),
-  mockUpsertJobScheduler: vi.fn(),
-  mockWorkerOn: vi.fn(),
-  mockQueue: vi.fn().mockImplementation(() => ({
-    upsertJobScheduler: mockUpsertJobScheduler,
+  mockSchedule: vi.fn(),
+  mockCreateQueue: vi.fn().mockImplementation(() => ({
+    schedule: mockSchedule,
   })),
-  mockWorker: vi.fn().mockImplementation(() => ({
-    on: mockWorkerOn,
-  })),
+  mockCreateWorker: vi.fn().mockImplementation(() => ({ concurrency: 1 })),
 }));
 
-vi.mock("bullmq", () => ({
-  Queue: mockQueue,
-  Worker: mockWorker,
+// Mock the driver, not the queue module — the interface and constants stay real.
+vi.mock("~/server/queue/bullmq-driver", () => ({
+  bullmqDriver: {
+    createQueue: mockCreateQueue,
+    createWorker: mockCreateWorker,
+  },
 }));
 
 vi.mock("~/server/db", () => ({
@@ -86,16 +85,13 @@ describe("domain-verification-job", () => {
     mockFindMany.mockReset();
     mockIsDomainVerificationDue.mockReset();
     mockRefreshDomainVerification.mockReset();
-    mockUpsertJobScheduler.mockReset();
-    mockWorkerOn.mockReset();
-    mockQueue.mockReset();
-    mockWorker.mockReset();
-    mockQueue.mockImplementation(() => ({
-      upsertJobScheduler: mockUpsertJobScheduler,
+    mockSchedule.mockReset();
+    mockCreateQueue.mockReset();
+    mockCreateWorker.mockReset();
+    mockCreateQueue.mockImplementation(() => ({
+      schedule: mockSchedule,
     }));
-    mockWorker.mockImplementation(() => ({
-      on: mockWorkerOn,
-    }));
+    mockCreateWorker.mockImplementation(() => ({ concurrency: 1 }));
   });
 
   it("refreshes only domains that are due", async () => {
@@ -115,9 +111,16 @@ describe("domain-verification-job", () => {
   it("initializes the worker lazily", async () => {
     await initDomainVerificationJob();
 
-    expect(mockQueue).toHaveBeenCalledTimes(1);
-    expect(mockWorker).toHaveBeenCalledTimes(1);
-    expect(mockUpsertJobScheduler).toHaveBeenCalledTimes(1);
-    expect(mockWorkerOn).toHaveBeenCalledTimes(2);
+    expect(mockCreateQueue).toHaveBeenCalledTimes(1);
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+    expect(mockSchedule).toHaveBeenCalledWith("domain-verification-hourly", {
+      cron: "0 * * * *",
+      tz: "UTC",
+    });
+
+    // completed + failed handlers are now options, not .on() registrations
+    const workerOptions = mockCreateWorker.mock.calls[0]?.[2];
+    expect(workerOptions?.onCompleted).toBeTypeOf("function");
+    expect(workerOptions?.onFailed).toBeTypeOf("function");
   });
 });

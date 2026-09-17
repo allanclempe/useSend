@@ -1,19 +1,13 @@
-import { Queue, Worker } from "bullmq";
 import { subDays } from "date-fns";
 import { db } from "~/server/db";
-import { getRedis, BULL_PREFIX } from "~/server/redis";
-import { DEFAULT_QUEUE_OPTIONS, WEBHOOK_CLEANUP_QUEUE } from "../queue/queue-constants";
+import { createQueue, createWorker, WEBHOOK_CLEANUP_QUEUE } from "../queue";
 import { logger } from "../logger/log";
 
 const WEBHOOK_RETENTION_DAYS = 30;
 
-const webhookCleanupQueue = new Queue(WEBHOOK_CLEANUP_QUEUE, {
-  connection: getRedis(),
-  prefix: BULL_PREFIX,
-  skipVersionCheck: true,
-});
+const webhookCleanupQueue = createQueue(WEBHOOK_CLEANUP_QUEUE);
 
-const worker = new Worker(
+createWorker(
   WEBHOOK_CLEANUP_QUEUE,
   async () => {
     const cutoff = subDays(new Date(), WEBHOOK_RETENTION_DAYS);
@@ -31,29 +25,17 @@ const worker = new Worker(
     );
   },
   {
-    connection: getRedis(),
-    prefix: BULL_PREFIX,
-    skipVersionCheck: true,
-  }
-);
-
-await webhookCleanupQueue.upsertJobScheduler(
-  "webhook-cleanup-daily",
-  {
-    pattern: "0 3 * * *", // daily at 03:00 UTC
-    tz: "UTC",
-  },
-  {
-    opts: {
-      ...DEFAULT_QUEUE_OPTIONS,
+    onCompleted: (job) => {
+      logger.info({ jobId: job.id }, "[WebhookCleanupJob]: Job completed");
+    },
+    onFailed: (job, err) => {
+      logger.error({ err, jobId: job?.id }, "[WebhookCleanupJob]: Job failed");
     },
   }
 );
 
-worker.on("completed", (job) => {
-  logger.info({ jobId: job.id }, "[WebhookCleanupJob]: Job completed");
-});
-
-worker.on("failed", (job, err) => {
-  logger.error({ err, jobId: job?.id }, "[WebhookCleanupJob]: Job failed");
+// daily at 03:00 UTC
+await webhookCleanupQueue.schedule("webhook-cleanup-daily", {
+  cron: "0 3 * * *",
+  tz: "UTC",
 });

@@ -21,12 +21,7 @@ import {
   updateCampaignAnalytics,
 } from "./campaign-service";
 import { env } from "~/env";
-import { getRedis, BULL_PREFIX } from "../redis";
-import { Queue, Worker } from "bullmq";
-import {
-  DEFAULT_QUEUE_OPTIONS,
-  SES_WEBHOOK_QUEUE,
-} from "../queue/queue-constants";
+import { createQueue, createWorker, SES_WEBHOOK_QUEUE } from "../queue";
 import { getChildLogger, logger, withLogger } from "../logger/log";
 import { randomUUID } from "crypto";
 import { SuppressionService } from "./suppression-service";
@@ -631,13 +626,9 @@ function getEmailData(data: SesEvent) {
 }
 
 export class SesHookParser {
-  private static sesHookQueue = new Queue(SES_WEBHOOK_QUEUE, {
-    connection: getRedis(),
-    prefix: BULL_PREFIX,
-    skipVersionCheck: true,
-  });
+  private static sesHookQueue = createQueue<SesEvent>(SES_WEBHOOK_QUEUE);
 
-  private static worker = new Worker(
+  private static worker = createWorker<SesEvent>(
     SES_WEBHOOK_QUEUE,
     async (job) => {
       return await withLogger(
@@ -649,12 +640,7 @@ export class SesHookParser {
         },
       );
     },
-    {
-      connection: getRedis(),
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
-      concurrency: 50,
-    },
+    { concurrency: 50 },
   );
 
   private static async execute(event: SesEvent) {
@@ -667,10 +653,6 @@ export class SesHookParser {
   }
 
   static async queue(data: { event: SesEvent; messageId: string }) {
-    return await this.sesHookQueue.add(
-      data.messageId,
-      data.event,
-      DEFAULT_QUEUE_OPTIONS,
-    );
+    return await this.sesHookQueue.enqueue(data.messageId, data.event);
   }
 }

@@ -58,11 +58,12 @@ vi.mock("~/server/service/contact-service", () => ({
   updateContactSubscription: mockUpdateContactSubscription,
 }));
 
-vi.mock("bullmq", () => ({
-  Queue: class {
-    add = mockQueueAdd;
+// Mock the driver, not the queue module — the interface and constants stay real.
+vi.mock("~/server/queue/bullmq-driver", () => ({
+  bullmqDriver: {
+    createQueue: () => ({ enqueue: mockQueueAdd }),
+    createWorker: () => ({ concurrency: 1 }),
   },
-  Worker: class {},
 }));
 
 vi.mock("~/server/redis", () => ({
@@ -72,10 +73,6 @@ vi.mock("~/server/redis", () => ({
 
 vi.mock("~/server/service/email-queue-service", () => ({
   EmailQueueService: {},
-}));
-
-vi.mock("~/server/queue/bullmq-context", () => ({
-  createWorkerHandler: vi.fn((handler) => handler),
 }));
 
 vi.mock("~/server/service/suppression-service", () => ({

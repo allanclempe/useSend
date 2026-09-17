@@ -53,11 +53,12 @@ vi.mock("~/server/service/suppression-service", () => ({
   },
 }));
 
-vi.mock("bullmq", () => ({
-  Queue: class {
-    add = vi.fn();
+// Mock the driver, not the queue module — the interface and constants stay real.
+vi.mock("~/server/queue/bullmq-driver", () => ({
+  bullmqDriver: {
+    createQueue: () => ({ enqueue: vi.fn() }),
+    createWorker: () => ({ concurrency: 1 }),
   },
-  Worker: class {},
 }));
 
 vi.mock("~/server/redis", () => ({

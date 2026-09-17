@@ -1,14 +1,18 @@
-import { Queue, Worker } from "bullmq";
 import { env } from "~/env";
 import { EmailAttachment } from "~/types";
 import { convert as htmlToText } from "html-to-text";
 import { getConfigurationSetName } from "~/utils/ses-utils";
 import { db } from "../db";
 import { sendRawEmail } from "../aws/ses";
-import { getRedis, BULL_PREFIX } from "../redis";
-import { DEFAULT_QUEUE_OPTIONS } from "../queue/queue-constants";
+import {
+  createQueue,
+  createWorker,
+  createWorkerHandler,
+  type Queue,
+  type TeamJob,
+  type Worker,
+} from "../queue";
 import { logger } from "../logger/log";
-import { createWorkerHandler, TeamJob } from "../queue/bullmq-context";
 import { LimitService } from "./limit-service";
 import {
   BUILT_IN_CONTACT_VARIABLES,
@@ -24,18 +28,13 @@ type QueueEmailJob = TeamJob<{
 }>;
 
 function createQueueAndWorker(region: string, quota: number, suffix: string) {
-  const connection = getRedis();
-
   const queueName = `${region}-${suffix}`;
 
-  const queue = new Queue(queueName, { connection, prefix: BULL_PREFIX, skipVersionCheck: true });
+  const queue = createQueue<QueueEmailJob["data"]>(queueName);
 
   // TODO: Add team context to job data when queueing
-  const worker = new Worker(queueName, createWorkerHandler(executeEmail), {
+  const worker = createWorker(queueName, createWorkerHandler(executeEmail), {
     concurrency: quota,
-    connection,
-    prefix: BULL_PREFIX,
-    skipVersionCheck: true,
   });
 
   return { queue, worker };
@@ -43,9 +42,12 @@ function createQueueAndWorker(region: string, quota: number, suffix: string) {
 
 export class EmailQueueService {
   private static initialized = false;
-  public static transactionalQueue = new Map<string, Queue<QueueEmailJob>>();
+  public static transactionalQueue = new Map<
+    string,
+    Queue<QueueEmailJob["data"]>
+  >();
   private static transactionalWorker = new Map<string, Worker>();
-  public static marketingQueue = new Map<string, Queue<QueueEmailJob>>();
+  public static marketingQueue = new Map<string, Queue<QueueEmailJob["data"]>>();
   private static marketingWorker = new Map<string, Worker>();
 
   public static initializeQueue(
@@ -131,7 +133,7 @@ export class EmailQueueService {
     if (!queue) {
       throw new Error(`Queue for region ${region} not found`);
     }
-    await queue.add(
+    await queue.enqueue(
       emailId,
       {
         emailId,
@@ -140,7 +142,7 @@ export class EmailQueueService {
         isBulk,
         teamId,
       },
-      { jobId: emailId, delay, ...DEFAULT_QUEUE_OPTIONS }
+      { jobId: emailId, delay }
     );
   }
 
@@ -196,7 +198,7 @@ export class EmailQueueService {
       {} as Record<
         string,
         {
-          queue: Queue | undefined;
+          queue: Queue<QueueEmailJob["data"]> | undefined;
           region: string;
           transactional: boolean;
           jobDetails: typeof jobs;
@@ -228,10 +230,9 @@ export class EmailQueueService {
           isBulk,
           teamId: job.teamId,
         },
-        opts: {
+        options: {
           jobId: job.emailId, // Use emailId as jobId
           delay: job.delay,
-          ...DEFAULT_QUEUE_OPTIONS, // Apply default options (attempts, backoff)
         },
       }));
 
@@ -240,7 +241,7 @@ export class EmailQueueService {
         `[EmailQueueService]: Adding jobs to queue`
       );
       bulkAddPromises.push(
-        queue.addBulk(bulkData).catch((error) => {
+        queue.enqueueBulk(bulkData).catch((error: unknown) => {
           logger.error(
             { err: error, queue: queue.name },
             `[EmailQueueService]: Failed to add bulk jobs to queue`

@@ -1,10 +1,10 @@
-import { Queue, Worker } from "bullmq";
-import { createWorkerHandler, TeamJob } from "../queue/bullmq-context";
 import {
   CAMPAIGN_SCHEDULER_QUEUE,
-  DEFAULT_QUEUE_OPTIONS,
-} from "../queue/queue-constants";
-import { getRedis, BULL_PREFIX } from "../redis";
+  createQueue,
+  createWorker,
+  createWorkerHandler,
+  type TeamJob,
+} from "../queue";
 import { CampaignBatchService } from "../service/campaign-service";
 import { db } from "../db";
 import { logger } from "../logger/log";
@@ -14,16 +14,11 @@ const SCHEDULER_TICK_MS = 1500;
 type SchedulerJob = TeamJob<{}>;
 
 export class CampaignSchedulerService {
-  private static schedulerQueue = new Queue<SchedulerJob>(
-    CAMPAIGN_SCHEDULER_QUEUE,
-    {
-      connection: getRedis(),
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
-    }
+  private static schedulerQueue = createQueue<SchedulerJob["data"]>(
+    CAMPAIGN_SCHEDULER_QUEUE
   );
 
-  static worker = new Worker(
+  static worker = createWorker(
     CAMPAIGN_SCHEDULER_QUEUE,
     createWorkerHandler(async (_job: SchedulerJob) => {
       try {
@@ -84,22 +79,16 @@ export class CampaignSchedulerService {
         logger.error({ err }, "Campaign scheduler tick failed");
       }
     }),
-    { connection: getRedis(), concurrency: 1, prefix: BULL_PREFIX, skipVersionCheck: true }
+    { concurrency: 1 }
   );
 
   static async start() {
     try {
-      await this.schedulerQueue.add(
-        "tick",
-        {},
-        {
-          jobId: "campaign-scheduler",
-          repeat: { every: SCHEDULER_TICK_MS },
-          ...DEFAULT_QUEUE_OPTIONS,
-        }
-      );
+      await this.schedulerQueue.schedule("campaign-scheduler", {
+        every: SCHEDULER_TICK_MS,
+      });
     } catch (err) {
-      // Adding the same repeatable job is idempotent; ignore job-exists errors
+      // Registering the same recurring job is idempotent; ignore exists errors
       logger.info({ err }, "Scheduler start attempted");
     }
   }
