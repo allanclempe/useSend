@@ -1,6 +1,7 @@
 import JoinTeam from "~/components/team/JoinTeam";
 import { Suspense } from "react";
 import Spinner from "@usesend/ui/src/spinner";
+import { headers } from "next/headers";
 import { getServerAuthSession } from "~/server/auth";
 import { redirect } from "next/navigation";
 
@@ -9,7 +10,7 @@ export default async function CreateTeam({
 }: {
   searchParams: Promise<{ inviteId?: string }>;
 }) {
-  const session = await getServerAuthSession();
+  const session = await getServerAuthSession(await headers());
   const params = await searchParams;
 
   if (!session) {

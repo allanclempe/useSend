@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { headers } from "next/headers";
 import { getServerAuthSession } from "~/server/auth";
 import { VerifyOtp } from "./verify-otp";
 
@@ -18,7 +19,7 @@ export default async function VerifyPage({
 }: {
   searchParams: Promise<{ email?: string; otp?: string; inviteId?: string }>;
 }) {
-  const session = await getServerAuthSession();
+  const session = await getServerAuthSession(await headers());
 
   if (session) {
     redirect("/dashboard");

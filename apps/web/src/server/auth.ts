@@ -2,9 +2,7 @@ import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { customSession, emailOTP } from "better-auth/plugins";
-import { nextCookies } from "better-auth/next-js";
 import { eq } from "drizzle-orm";
-import { headers } from "next/headers";
 
 import { env } from "~/env";
 import { publicEnv } from "~/env.public";
@@ -179,19 +177,27 @@ export const auth = betterAuth({
       session,
       user: toAppSessionUser(user),
     })),
-    // Must stay last: it flushes better-auth's Set-Cookie headers through
-    // Next's cookie API so server actions and route handlers both see them.
-    nextCookies(),
   ],
 });
 
 /**
- * Wrapper for the session lookup so callers don't reach for `auth.api` and
- * `headers()` individually. Keeps the name `getServerAuthSession` had under
- * NextAuth, so the seven server-side call sites are a one-line change each.
+ * Wrapper for the session lookup, so callers don't reach for `auth.api`
+ * themselves. Keeps the name `getServerAuthSession` had under NextAuth.
+ *
+ * **The headers are an argument, not something this reads for itself.** They
+ * used to come from `next/headers`, which does not exist on Workers and which
+ * a Vite build would have had to bundle into the Worker to find out. Each
+ * runtime hands over the headers it already has: a Next.js page passes
+ * `await headers()`, a TanStack Start server function passes
+ * `getRequest().headers`, and a route handler passes `request.headers`.
+ *
+ * The `nextCookies()` plugin went with it. It exists to flush better-auth's
+ * `Set-Cookie` through Next's cookie API for **server actions**, and this app
+ * has none: every sign-in goes through `authClient` in the browser, so the
+ * cookie arrives on the HTTP response like any other.
  */
-export const getServerAuthSession = async () =>
-  auth.api.getSession({ headers: await headers() });
+export const getServerAuthSession = async (headers: Headers) =>
+  auth.api.getSession({ headers });
 
 export type ServerAuthSession = Awaited<
   ReturnType<typeof getServerAuthSession>

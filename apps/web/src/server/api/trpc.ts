@@ -33,7 +33,7 @@ import { randomUUID } from "crypto";
  * @see https://trpc.io/docs/server/context
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
-  const session = await getServerAuthSession();
+  const session = await getServerAuthSession(opts.headers);
 
   // The database client is deliberately *not* on the context: nothing reads
   // `ctx.db`, and Drizzle's client type is large enough that including it makes

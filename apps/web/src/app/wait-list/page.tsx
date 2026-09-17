@@ -1,11 +1,12 @@
 import { Rocket } from "lucide-react";
 
+import { headers } from "next/headers";
 import { getServerAuthSession } from "~/server/auth";
 import { WaitListForm } from "./waitlist-form";
 import { redirect } from "next/navigation";
 
 export default async function WaitListPage() {
-  const session = await getServerAuthSession();
+  const session = await getServerAuthSession(await headers());
 
   if (!session?.user) {
     redirect("/login");
