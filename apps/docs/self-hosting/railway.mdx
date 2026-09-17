@@ -64,13 +64,13 @@ GITHUB_SECRET="<your-github-client-secret>"
 
   </Step>
 
-  <Step title="NextAuth URL">
-  Set your public app URL for NextAuth.
+  <Step title="App URL">
+  Set the public URL the app is served from.
 
 Add the following variables in Railway:
 
 ```env
-NEXTAUTH_URL="https://<your-railway-domain>"
+APP_URL="https://<your-railway-domain>"
 ```
 
   </Step>
@@ -84,7 +84,7 @@ NEXTAUTH_URL="https://<your-railway-domain>"
 ## Step 3: Optional — Custom domain
 
 - Add a custom domain in Railway and configure DNS.
-- Update `NEXTAUTH_URL` to your new domain (e.g., `https://mail.yourdomain.com`).
+- Update `APP_URL` to your new domain (e.g., `https://mail.yourdomain.com`).
 - Redeploy to apply the change.
 
 ## Step 4: Set up SES region in useSend

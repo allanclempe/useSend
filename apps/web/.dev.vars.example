@@ -8,8 +8,8 @@
 # because `src/env.js` validates it at module load.
 
 DATABASE_URL="postgresql://usesend:password@127.0.0.1:54329/usesend_test"
-NEXTAUTH_URL="http://localhost:8788"
-NEXTAUTH_SECRET="cf-local-dev-secret"
+APP_URL="http://localhost:8788"
+APP_SECRET="cf-local-dev-secret"
 REDIS_URL="redis://127.0.0.1:6380"
 NODE_ENV="development"
 NEXT_PUBLIC_IS_CLOUD="false"

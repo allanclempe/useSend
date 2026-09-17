@@ -15,9 +15,15 @@ import { validateDomainFromEmail } from "./domain-service";
 
 const DOUBLE_OPT_IN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * **`APP_SECRET` cannot be rotated** without invalidating every confirmation
+ * link already sitting in an inbox — the same constraint the campaign
+ * unsubscribe hashes carry (see `createUnsubUrl`). It was renamed from
+ * `NEXTAUTH_SECRET` in issue #59 keeping the value for this reason.
+ */
 function createDoubleOptInHash(contactId: string, expiresAt: number) {
   return createHash("sha256")
-    .update(`${contactId}-${expiresAt}-${env.NEXTAUTH_SECRET}`)
+    .update(`${contactId}-${expiresAt}-${env.APP_SECRET}`)
     .digest("hex");
 }
 
@@ -45,7 +51,7 @@ function createDoubleOptInConfirmationUrl(contactId: string) {
     hash,
   });
 
-  return `${env.NEXTAUTH_URL}/subscribe?${searchParams.toString()}`;
+  return `${env.APP_URL}/subscribe?${searchParams.toString()}`;
 }
 
 export async function sendDoubleOptInConfirmationEmail({

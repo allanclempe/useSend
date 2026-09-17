@@ -172,7 +172,22 @@ own `wrangler.*.jsonc` and are never deployed.
   `env` list, `.env.example`, and `.env.selfhost.example` — the last two with the
   command that generates it. Add a placeholder to
   `apps/web/src/test/setup/setup-env.ts` if it is required rather than optional.
-  Never commit a real value.
+  Never commit a real value. Docker and self-host paths carry their own copies —
+  `docker/prod/compose.yml`, `docker/README.md`, `apps/web/.dev.vars.example`,
+  `apps/web/.env.test.example`, `.github/workflows/test-web.yml`, `CONTRIBUTION.md`
+  and `apps/docs/**` — so renaming one is wider than the four places above.
+- **`APP_URL` is the one name for the application's public base URL**, and
+  `APP_SECRET` is the one name for the application-wide signing key. Neither is
+  an auth setting despite having been called `NEXTAUTH_*` until issue #59. Do not
+  reintroduce a `BETTER_AUTH_URL`-style second name for either: better-auth takes
+  `baseURL: env.APP_URL`.
+- **`APP_SECRET` cannot be rotated.** It keys the SHA-256 hashes in campaign
+  unsubscribe, one-click-unsubscribe and double-opt-in links, which are already
+  sitting in delivered inboxes. A new value invalidates all of them, and one-click
+  unsubscribe is an RFC 8058 and Gmail/Yahoo bulk-sender obligation. The same
+  applies to switching the construction from `createHash` to `createHmac`, which
+  is worth doing on its own terms but changes every hash — treat it as a
+  link-invalidating migration, not a cleanup.
 
 ## Testing Guidelines
 

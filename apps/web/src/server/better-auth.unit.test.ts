@@ -8,8 +8,7 @@ const mocks = vi.hoisted(() => ({
     GOOGLE_CLIENT_SECRET: undefined as string | undefined,
     FROM_EMAIL: undefined as string | undefined,
     ADMIN_EMAIL: undefined as string | undefined,
-    NEXTAUTH_URL: "http://localhost:3000",
-    BETTER_AUTH_URL: undefined as string | undefined,
+    APP_URL: "http://localhost:3000",
   },
   sendSignUpEmail: vi.fn(),
 }));
@@ -44,8 +43,7 @@ describe("better-auth configuration", () => {
       GOOGLE_CLIENT_SECRET: undefined,
       FROM_EMAIL: undefined,
       ADMIN_EMAIL: undefined,
-      NEXTAUTH_URL: "http://localhost:3000",
-      BETTER_AUTH_URL: undefined,
+      APP_URL: "http://localhost:3000",
     });
   });
 
@@ -94,8 +92,8 @@ describe("better-auth configuration", () => {
       expect(url.searchParams.get("email")).toBe("a+b@example.com");
     });
 
-    it("prefers BETTER_AUTH_URL when it is set", () => {
-      mocks.env.BETTER_AUTH_URL = "https://app.usesend.com";
+    it("follows APP_URL, the one name for the public base URL", () => {
+      mocks.env.APP_URL = "https://app.usesend.com";
 
       expect(getAppBaseUrl()).toBe("https://app.usesend.com");
       expect(buildOtpSignInUrl("person@example.com", "ab12c")).toBe(

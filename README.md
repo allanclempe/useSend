@@ -62,7 +62,7 @@ We're currently working on opening useSend for public beta.
 - [Drizzle](https://orm.drizzle.team/) - ORM
 - [Tailwind](https://tailwindcss.com/) - CSS
 - [shadcn/ui](https://ui.shadcn.com/) - Component Library
-- [NextAuth.js](https://next-auth.js.org/) - Authentication
+- [better-auth](https://better-auth.com/) - Authentication
 - [tRPC](https://trpc.io/) - API
 - [hono](https://hono.dev/) - Public API
 - [Redis](https://redis.io/) - Queue

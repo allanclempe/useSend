@@ -339,7 +339,7 @@ export async function parseSesHook(data: SesEvent) {
   if (email.campaignId) {
     if (
       mailStatus !== "CLICKED" ||
-      !(mailData as SesClick).link.startsWith(`${env.NEXTAUTH_URL}/unsubscribe`)
+      !(mailData as SesClick).link.startsWith(`${env.APP_URL}/unsubscribe`)
     ) {
       await checkUnsubscribe({
         contactId: email.contactId!,

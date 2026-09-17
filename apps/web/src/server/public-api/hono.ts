@@ -138,7 +138,7 @@ export function getApp() {
       version: "1.0.0",
       title: "useSend API",
     },
-    servers: [{ url: `${env.NEXTAUTH_URL}/api` }],
+    servers: [{ url: `${env.APP_URL}/api` }],
   }));
 
   app.openAPIRegistry.registerComponent("securitySchemes", "Bearer", {

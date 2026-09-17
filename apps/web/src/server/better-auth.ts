@@ -66,13 +66,12 @@ export function generateSignInOtp() {
 /**
  * Absolute base URL for links we put in emails.
  *
- * `NEXTAUTH_URL` outlived NextAuth: despite the name it is the application's
- * public base URL, used for billing redirects, team invites, domain links and
- * unsubscribe URLs in about fifteen places. Renaming it is issue #59, not this
- * one. `BETTER_AUTH_URL` wins where both are set.
+ * One name, `APP_URL`. This used to pick between `BETTER_AUTH_URL` and
+ * `NEXTAUTH_URL`; issue #59 collapsed both into `APP_URL`, since all three
+ * always meant the same thing — the origin the application is reachable at.
  */
 export function getAppBaseUrl() {
-  return env.BETTER_AUTH_URL ?? env.NEXTAUTH_URL;
+  return env.APP_URL;
 }
 
 /**

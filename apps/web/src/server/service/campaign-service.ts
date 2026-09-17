@@ -623,24 +623,36 @@ export async function resumeCampaign({
   return { ok: true };
 }
 
+/**
+ * Unsubscribe link for the footer of a campaign email.
+ *
+ * **`APP_SECRET` cannot be rotated.** The hash below is baked into every
+ * campaign email we have already delivered, and the `verifyUnsubscribeLink` /
+ * `subscribeContact` checks further down recompute it from the same secret. A
+ * new value silently invalidates every unsubscribe link in every inbox — which
+ * for one-click unsubscribe is an RFC 8058 and Gmail/Yahoo bulk-sender
+ * obligation, not just a broken link. `APP_SECRET` was renamed from
+ * `NEXTAUTH_SECRET` in issue #59 for exactly this reason: the name changed, the
+ * value did not.
+ */
 export function createUnsubUrl(contactId: string, campaignId: string) {
   const unsubId = `${contactId}-${campaignId}`;
 
   const unsubHash = createHash("sha256")
-    .update(`${unsubId}-${env.NEXTAUTH_SECRET}`)
+    .update(`${unsubId}-${env.APP_SECRET}`)
     .digest("hex");
 
-  return `${env.NEXTAUTH_URL}/unsubscribe?id=${unsubId}&hash=${unsubHash}`;
+  return `${env.APP_URL}/unsubscribe?id=${unsubId}&hash=${unsubHash}`;
 }
 
 export function createOneClickUnsubUrl(contactId: string, campaignId: string) {
   const unsubId = `${contactId}-${campaignId}`;
 
   const unsubHash = createHash("sha256")
-    .update(`${unsubId}-${env.NEXTAUTH_SECRET}`)
+    .update(`${unsubId}-${env.APP_SECRET}`)
     .digest("hex");
 
-  return `${env.NEXTAUTH_URL}/api/unsubscribe-oneclick?id=${unsubId}&hash=${unsubHash}`;
+  return `${env.APP_URL}/api/unsubscribe-oneclick?id=${unsubId}&hash=${unsubHash}`;
 }
 
 function verifyUnsubscribeLink(id: string, hash: string) {
@@ -652,7 +664,7 @@ function verifyUnsubscribeLink(id: string, hash: string) {
 
   // Verify the hash
   const expectedHash = createHash("sha256")
-    .update(`${id}-${env.NEXTAUTH_SECRET}`)
+    .update(`${id}-${env.APP_SECRET}`)
     .digest("hex");
 
   if (hash !== expectedHash) {
@@ -748,7 +760,7 @@ export async function subscribeContact(id: string, hash: string) {
 
   // Verify the hash
   const expectedHash = createHash("sha256")
-    .update(`${id}-${env.NEXTAUTH_SECRET}`)
+    .update(`${id}-${env.APP_SECRET}`)
     .digest("hex");
 
   if (hash !== expectedHash) {

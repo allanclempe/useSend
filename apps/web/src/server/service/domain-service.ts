@@ -276,7 +276,7 @@ async function sendDomainStatusNotification({
         ? `useSend: ${domain.name} verification status changed`
         : `useSend: ${domain.name} verification failed`;
 
-  const domainUrl = `${env.NEXTAUTH_URL}/domains/${domain.id}`;
+  const domainUrl = `${env.APP_URL}/domains/${domain.id}`;
   const html = await renderDomainVerificationStatusEmail({
     domainName: domain.name,
     currentStatus: domain.status,
