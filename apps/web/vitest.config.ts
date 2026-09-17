@@ -21,6 +21,7 @@ export default defineConfig({
         "src/**/*.test.{ts,tsx}",
         "src/**/*.spec.{ts,tsx}",
         "src/test/**",
+        "src/bench/**",
         "src/env.js",
       ],
     },

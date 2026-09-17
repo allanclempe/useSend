@@ -19,6 +19,7 @@
     "test:integration": "RUN_INTEGRATION=true vitest run -c vitest.integration.config.ts",
     "test:integration:full": "pnpm test:integration:prepare:local && pnpm test:integration",
     "test:coverage": "vitest run -c vitest.default.config.ts --coverage",
+    "bench:cpu": "vitest run -c vitest.bench.config.ts",
     "typecheck": "tsc --noEmit --pretty false",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
