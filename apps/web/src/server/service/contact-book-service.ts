@@ -114,19 +114,20 @@ export async function createContactBook(
 
   const [created] = await client
     .insert(schema.contactBook)
-    .values({
-      // Prisma generated this with @default(cuid()); the column has no database
-      // default, so it has to be supplied explicitly now.
-      id: createId(),
-      name,
-      teamId,
-      properties: {},
-      variables: normalizedVariables,
-      doubleOptInEnabled: true,
-      doubleOptInSubject: DEFAULT_DOUBLE_OPT_IN_SUBJECT,
-      doubleOptInContent: DEFAULT_DOUBLE_OPT_IN_CONTENT,
-      updatedAt: new Date(),
-    })
+    .values(
+      withUpdatedAt({
+        // Prisma generated this with @default(cuid()); the column has no
+        // database default, so it has to be supplied explicitly now.
+        id: createId(),
+        name,
+        teamId,
+        properties: {},
+        variables: normalizedVariables,
+        doubleOptInEnabled: true,
+        doubleOptInSubject: DEFAULT_DOUBLE_OPT_IN_SUBJECT,
+        doubleOptInContent: DEFAULT_DOUBLE_OPT_IN_CONTENT,
+      }),
+    )
     .returning();
 
   return created!;

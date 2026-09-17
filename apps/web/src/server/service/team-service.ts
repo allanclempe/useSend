@@ -1,9 +1,13 @@
 import { TRPCError } from "@trpc/server";
 import { env } from "~/env";
-import { db } from "~/server/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { createId } from "~/server/drizzle/id";
+import { withUpdatedAt } from "~/server/drizzle/touch";
 import { sendMail, sendTeamInviteEmail } from "~/server/mailer";
 import { logger } from "~/server/logger/log";
-import type { Prisma, Team, TeamInvite } from "@prisma/client";
+type Team = typeof schema.team.$inferSelect;
+type TeamInvite = typeof schema.teamInvite.$inferSelect;
 import { UnsendApiError } from "../public-api/api-error";
 import { getRedis, redisKey } from "~/server/redis";
 import { LimitReason } from "~/lib/constants/plans";
@@ -21,7 +25,11 @@ export class TeamService {
   }
 
   static async refreshTeamCache(teamId: number): Promise<Team | null> {
-    const team = await db.team.findUnique({ where: { id: teamId } });
+    const [team] = await drizzleDb
+      .select()
+      .from(schema.team)
+      .where(eq(schema.team.id, teamId))
+      .limit(1);
 
     if (!team) return null;
 
@@ -56,15 +64,12 @@ export class TeamService {
     userId: number,
     name: string,
   ): Promise<Team | undefined> {
-    const teams = await db.team.findMany({
-      where: {
-        teamUsers: {
-          some: {
-            userId: userId,
-          },
-        },
-      },
-    });
+    // Prisma's `teamUsers: { some: ... }` relation filter becomes a join.
+    const teams = await drizzleDb
+      .select({ id: schema.team.id })
+      .from(schema.team)
+      .innerJoin(schema.teamUser, eq(schema.teamUser.teamId, schema.team.id))
+      .where(eq(schema.teamUser.userId, userId));
 
     if (teams.length > 0) {
       logger.info({ userId }, "User already has a team");
@@ -72,7 +77,7 @@ export class TeamService {
     }
 
     if (!env.NEXT_PUBLIC_IS_CLOUD) {
-      const _team = await db.team.findFirst();
+      const [_team] = await drizzleDb.select().from(schema.team).limit(1);
       if (_team) {
         throw new TRPCError({
           message: "Can't have multiple teams in self hosted version",
@@ -81,16 +86,27 @@ export class TeamService {
       }
     }
 
-    const created = await db.team.create({
-      data: {
-        name,
-        teamUsers: {
-          create: {
-            userId,
-            role: "ADMIN",
-          },
-        },
-      },
+    // Prisma wrote the team and its owning TeamUser as one nested create.
+    // Drizzle has no nested writes, so the two inserts need a transaction to
+    // keep a team from ever existing without an admin.
+    const created = await drizzleDb.transaction(async (tx) => {
+      const [team] = await tx
+        .insert(schema.team)
+        .values(withUpdatedAt({ name }))
+        .returning();
+
+      if (!team) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to create team",
+        });
+      }
+
+      await tx
+        .insert(schema.teamUser)
+        .values({ teamId: team.id, userId, role: "ADMIN" });
+
+      return team;
     });
     // Warm cache for the new team
     await TeamService.refreshTeamCache(created.id);
@@ -103,49 +119,52 @@ export class TeamService {
    */
   static async updateTeam(
     teamId: number,
-    data: Prisma.TeamUpdateInput,
+    data: Partial<typeof schema.team.$inferInsert>,
   ): Promise<Team> {
-    const updated = await db.team.update({ where: { id: teamId }, data });
+    const [updated] = await drizzleDb
+      .update(schema.team)
+      .set(withUpdatedAt(data))
+      .where(eq(schema.team.id, teamId))
+      .returning();
+
+    if (!updated) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
+    }
+
     await TeamService.refreshTeamCache(teamId);
     return updated;
   }
 
   static async getUserTeams(userId: number) {
-    return db.team.findMany({
-      where: {
-        teamUsers: {
-          some: {
-            userId: userId,
-          },
-        },
-      },
-      include: {
-        teamUsers: {
-          where: {
-            userId: userId,
-          },
-        },
-      },
-    });
+    // Prisma returned each team with its (filtered) teamUsers nested. The join
+    // gives one row per pair, which is reshaped back into that form.
+    const rows = await drizzleDb
+      .select({ team: schema.team, teamUser: schema.teamUser })
+      .from(schema.team)
+      .innerJoin(schema.teamUser, eq(schema.teamUser.teamId, schema.team.id))
+      .where(eq(schema.teamUser.userId, userId));
+
+    return rows.map(({ team, teamUser }) => ({
+      ...team,
+      teamUsers: [teamUser],
+    }));
   }
 
   static async getTeamUsers(teamId: number) {
-    return db.teamUser.findMany({
-      where: {
-        teamId,
-      },
-      include: {
-        user: true,
-      },
-    });
+    const rows = await drizzleDb
+      .select({ teamUser: schema.teamUser, user: schema.user })
+      .from(schema.teamUser)
+      .innerJoin(schema.user, eq(schema.user.id, schema.teamUser.userId))
+      .where(eq(schema.teamUser.teamId, teamId));
+
+    return rows.map(({ teamUser, user }) => ({ ...teamUser, user }));
   }
 
   static async getTeamInvites(teamId: number) {
-    return db.teamInvite.findMany({
-      where: {
-        teamId,
-      },
-    });
+    return drizzleDb
+      .select()
+      .from(schema.teamInvite)
+      .where(eq(schema.teamInvite.teamId, teamId));
   }
 
   static async createTeamInvite(
@@ -170,29 +189,35 @@ export class TeamService {
       });
     }
 
-    const user = await db.user.findUnique({
-      where: {
-        email,
-      },
-      include: {
-        teamUsers: true,
-      },
-    });
+    const userRows = await drizzleDb
+      .select({ userId: schema.user.id, teamUserId: schema.teamUser.userId })
+      .from(schema.user)
+      .leftJoin(schema.teamUser, eq(schema.teamUser.userId, schema.user.id))
+      .where(eq(schema.user.email, email));
 
-    if (user && user.teamUsers.length > 0) {
+    const user = userRows[0];
+    const userTeamCount = userRows.filter(
+      (row) => row.teamUserId !== null,
+    ).length;
+
+    if (user && userTeamCount > 0) {
       throw new TRPCError({
         code: "BAD_REQUEST",
         message: "User already part of a team",
       });
     }
 
-    const teamInvite = await db.teamInvite.create({
-      data: {
-        teamId,
-        email,
-        role,
-      },
-    });
+    const [teamInvite] = await drizzleDb
+      .insert(schema.teamInvite)
+      .values(withUpdatedAt({ id: createId(), teamId, email, role }))
+      .returning();
+
+    if (!teamInvite) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to create invite",
+      });
+    }
 
     const teamUrl = `${env.NEXTAUTH_URL}/join-team?inviteId=${teamInvite.id}`;
 
@@ -208,12 +233,16 @@ export class TeamService {
     userId: string,
     role: "MEMBER" | "ADMIN",
   ) {
-    const teamUser = await db.teamUser.findFirst({
-      where: {
-        teamId,
-        userId: Number(userId),
-      },
-    });
+    const [teamUser] = await drizzleDb
+      .select()
+      .from(schema.teamUser)
+      .where(
+        and(
+          eq(schema.teamUser.teamId, teamId),
+          eq(schema.teamUser.userId, Number(userId)),
+        ),
+      )
+      .limit(1);
 
     if (!teamUser) {
       throw new TRPCError({
@@ -223,12 +252,13 @@ export class TeamService {
     }
 
     // Check if this is the last admin
-    const adminCount = await db.teamUser.count({
-      where: {
-        teamId,
-        role: "ADMIN",
-      },
-    });
+    const adminCount = await drizzleDb.$count(
+      schema.teamUser,
+      and(
+        eq(schema.teamUser.teamId, teamId),
+        eq(schema.teamUser.role, "ADMIN"),
+      ),
+    );
 
     if (adminCount === 1 && teamUser.role === "ADMIN") {
       throw new TRPCError({
@@ -237,17 +267,23 @@ export class TeamService {
       });
     }
 
-    const updated = await db.teamUser.update({
-      where: {
-        teamId_userId: {
-          teamId,
-          userId: Number(userId),
-        },
-      },
-      data: {
-        role,
-      },
-    });
+    const [updated] = await drizzleDb
+      .update(schema.teamUser)
+      .set({ role })
+      .where(
+        and(
+          eq(schema.teamUser.teamId, teamId),
+          eq(schema.teamUser.userId, Number(userId)),
+        ),
+      )
+      .returning();
+
+    if (!updated) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Team member not found",
+      });
+    }
     // Role updates might influence permissions; refresh cache to be safe
     await TeamService.invalidateTeamCache(teamId);
     return updated;
@@ -259,12 +295,16 @@ export class TeamService {
     requestorRole: string,
     requestorId: number,
   ) {
-    const teamUser = await db.teamUser.findFirst({
-      where: {
-        teamId,
-        userId: Number(userId),
-      },
-    });
+    const [teamUser] = await drizzleDb
+      .select()
+      .from(schema.teamUser)
+      .where(
+        and(
+          eq(schema.teamUser.teamId, teamId),
+          eq(schema.teamUser.userId, Number(userId)),
+        ),
+      )
+      .limit(1);
 
     if (!teamUser) {
       throw new TRPCError({
@@ -281,12 +321,13 @@ export class TeamService {
     }
 
     // Check if this is the last admin
-    const adminCount = await db.teamUser.count({
-      where: {
-        teamId,
-        role: "ADMIN",
-      },
-    });
+    const adminCount = await drizzleDb.$count(
+      schema.teamUser,
+      and(
+        eq(schema.teamUser.teamId, teamId),
+        eq(schema.teamUser.role, "ADMIN"),
+      ),
+    );
 
     if (adminCount === 1 && teamUser.role === "ADMIN") {
       throw new TRPCError({
@@ -295,14 +336,22 @@ export class TeamService {
       });
     }
 
-    const deleted = await db.teamUser.delete({
-      where: {
-        teamId_userId: {
-          teamId,
-          userId: Number(userId),
-        },
-      },
-    });
+    const [deleted] = await drizzleDb
+      .delete(schema.teamUser)
+      .where(
+        and(
+          eq(schema.teamUser.teamId, teamId),
+          eq(schema.teamUser.userId, Number(userId)),
+        ),
+      )
+      .returning();
+
+    if (!deleted) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: "Team member not found",
+      });
+    }
     await TeamService.invalidateTeamCache(teamId);
     return deleted;
   }
@@ -312,14 +361,16 @@ export class TeamService {
     inviteId: string,
     teamName: string,
   ) {
-    const invite = await db.teamInvite.findFirst({
-      where: {
-        teamId,
-        id: {
-          equals: inviteId,
-        },
-      },
-    });
+    const [invite] = await drizzleDb
+      .select()
+      .from(schema.teamInvite)
+      .where(
+        and(
+          eq(schema.teamInvite.teamId, teamId),
+          eq(schema.teamInvite.id, inviteId),
+        ),
+      )
+      .limit(1);
 
     if (!invite) {
       throw new TRPCError({
@@ -336,14 +387,16 @@ export class TeamService {
   }
 
   static async deleteTeamInvite(teamId: number, inviteId: string) {
-    const invite = await db.teamInvite.findFirst({
-      where: {
-        teamId,
-        id: {
-          equals: inviteId,
-        },
-      },
-    });
+    const [invite] = await drizzleDb
+      .select()
+      .from(schema.teamInvite)
+      .where(
+        and(
+          eq(schema.teamInvite.teamId, teamId),
+          eq(schema.teamInvite.id, inviteId),
+        ),
+      )
+      .limit(1);
 
     if (!invite) {
       throw new TRPCError({
@@ -352,14 +405,21 @@ export class TeamService {
       });
     }
 
-    return db.teamInvite.delete({
-      where: {
-        teamId_email: {
-          teamId,
-          email: invite.email,
-        },
-      },
-    });
+    const [deleted] = await drizzleDb
+      .delete(schema.teamInvite)
+      .where(
+        and(
+          eq(schema.teamInvite.teamId, teamId),
+          eq(schema.teamInvite.email, invite.email),
+        ),
+      )
+      .returning();
+
+    if (!deleted) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Invite not found" });
+    }
+
+    return deleted;
   }
 
   /**
