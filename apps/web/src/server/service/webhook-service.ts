@@ -8,7 +8,19 @@ import {
   type WebhookEventPayloadMap,
   type WebhookEventType,
 } from "@usesend/lib/src/webhook/webhook-events";
-import { db } from "../db";
+import {
+  and,
+  arrayContains,
+  desc,
+  eq,
+  inArray,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { getRedis, redisKey } from "../redis";
 import {
   createQueue,
@@ -79,6 +91,30 @@ export class WebhookQueueService {
   }
 }
 
+type WebhookRow = typeof schema.webhook.$inferSelect;
+
+/**
+ * Normalises a webhook row for callers.
+ *
+ * `eventTypes` and `domainIds` are nullable in the database, but Prisma typed
+ * them as plain arrays and every caller — the dashboard, the public API, the
+ * event filter — assumes that. Coercing here keeps the existing contract
+ * rather than pushing `| null` out to all of them.
+ *
+ * Note this means a row with a NULL `eventTypes` reads as `[]`, which the emit
+ * filter treats as "no subscription list, receive everything". A NULL row does
+ * not actually match that filter in SQL, so such a webhook silently receives
+ * nothing. `eventTypes` has no default either, so the state is reachable. That
+ * predates this port and is left alone here rather than changed blind.
+ */
+function toWebhook(row: WebhookRow) {
+  return {
+    ...row,
+    eventTypes: row.eventTypes ?? [],
+    domainIds: row.domainIds ?? [],
+  };
+}
+
 export class WebhookService {
   public static async emit<TType extends WebhookEventType>(
     teamId: number,
@@ -86,47 +122,30 @@ export class WebhookService {
     payload: WebhookEventInput<TType>,
     options?: { domainId?: number | null },
   ) {
+    // Prisma's array operators: `has` is `@>` on a one-element array, and
+    // `isEmpty` has no Drizzle helper, so it is cardinality().
     const domainFilter =
       options?.domainId == null
         ? undefined
-        : {
-            OR: [
-              {
-                domainIds: {
-                  isEmpty: true,
-                },
-              },
-              {
-                domainIds: {
-                  has: options.domainId,
-                },
-              },
-            ],
-          };
+        : or(
+            sql`cardinality(${schema.webhook.domainIds}) = 0`,
+            arrayContains(schema.webhook.domainIds, [options.domainId]),
+          );
 
-    const activeWebhooks = await db.webhook.findMany({
-      where: {
-        teamId,
-        status: WebhookStatus.ACTIVE,
-        AND: [
-          {
-            OR: [
-              {
-                eventTypes: {
-                  has: type,
-                },
-              },
-              {
-                eventTypes: {
-                  isEmpty: true,
-                },
-              },
-            ],
-          },
-          ...(domainFilter ? [domainFilter] : []),
-        ],
-      },
-    });
+    const activeWebhooks = await drizzleDb
+      .select()
+      .from(schema.webhook)
+      .where(
+        and(
+          eq(schema.webhook.teamId, teamId),
+          eq(schema.webhook.status, WebhookStatus.ACTIVE),
+          or(
+            arrayContains(schema.webhook.eventTypes, [type]),
+            sql`cardinality(${schema.webhook.eventTypes}) = 0`,
+          ),
+          domainFilter,
+        ),
+      );
 
     if (activeWebhooks.length === 0) {
       logger.debug(
@@ -139,42 +158,59 @@ export class WebhookService {
     const payloadString = stringifyPayload(payload);
 
     for (const webhook of activeWebhooks) {
-      const call = await db.webhookCall.create({
-        data: {
-          webhookId: webhook.id,
-          teamId: webhook.teamId,
-          type: type,
-          payload: payloadString,
-          status: WebhookCallStatus.PENDING,
-          attempt: 0,
-        },
-      });
+      const [call] = await drizzleDb
+        .insert(schema.webhookCall)
+        .values(
+          withUpdatedAt({
+            id: createId(),
+            webhookId: webhook.id,
+            teamId: webhook.teamId,
+            type: type,
+            payload: payloadString,
+            status: WebhookCallStatus.PENDING,
+            attempt: 0,
+          }),
+        )
+        .returning();
+
+      if (!call) {
+        throw new Error("Failed to create webhook call");
+      }
 
       await WebhookQueueService.enqueueCall(call.id, webhook.teamId);
     }
   }
 
   public static async retryCall(params: { callId: string; teamId: number }) {
-    const call = await db.webhookCall.findFirst({
-      where: { id: params.callId, teamId: params.teamId },
-    });
+    const [call] = await drizzleDb
+      .select()
+      .from(schema.webhookCall)
+      .where(
+        and(
+          eq(schema.webhookCall.id, params.callId),
+          eq(schema.webhookCall.teamId, params.teamId),
+        ),
+      )
+      .limit(1);
 
     if (!call) {
       throw new Error("Webhook call not found");
     }
 
-    await db.webhookCall.update({
-      where: { id: call.id },
-      data: {
-        status: WebhookCallStatus.PENDING,
-        attempt: 0,
-        nextAttemptAt: null,
-        lastError: null,
-        responseStatus: null,
-        responseTimeMs: null,
-        responseText: null,
-      },
-    });
+    await drizzleDb
+      .update(schema.webhookCall)
+      .set(
+        withUpdatedAt({
+          status: WebhookCallStatus.PENDING,
+          attempt: 0,
+          nextAttemptAt: null,
+          lastError: null,
+          responseStatus: null,
+          responseTimeMs: null,
+          responseText: null,
+        }),
+      )
+      .where(eq(schema.webhookCall.id, call.id));
 
     await WebhookQueueService.enqueueCall(call.id, params.teamId);
 
@@ -185,9 +221,16 @@ export class WebhookService {
     webhookId: string;
     teamId: number;
   }) {
-    const webhook = await db.webhook.findFirst({
-      where: { id: params.webhookId, teamId: params.teamId },
-    });
+    const [webhook] = await drizzleDb
+      .select()
+      .from(schema.webhook)
+      .where(
+        and(
+          eq(schema.webhook.id, params.webhookId),
+          eq(schema.webhook.teamId, params.teamId),
+        ),
+      )
+      .limit(1);
 
     if (!webhook) {
       throw new Error("Webhook not found");
@@ -199,16 +242,24 @@ export class WebhookService {
       sentAt: new Date().toISOString(),
     };
 
-    const call = await db.webhookCall.create({
-      data: {
-        webhookId: webhook.id,
-        teamId: webhook.teamId,
-        type: "webhook.test",
-        payload: stringifyPayload(payload),
-        status: WebhookCallStatus.PENDING,
-        attempt: 0,
-      },
-    });
+    const [call] = await drizzleDb
+      .insert(schema.webhookCall)
+      .values(
+        withUpdatedAt({
+          id: createId(),
+          webhookId: webhook.id,
+          teamId: webhook.teamId,
+          type: "webhook.test",
+          payload: stringifyPayload(payload),
+          status: WebhookCallStatus.PENDING,
+          attempt: 0,
+        }),
+      )
+      .returning();
+
+    if (!call) {
+      throw new Error("Failed to create webhook call");
+    }
 
     await WebhookQueueService.enqueueCall(call.id, webhook.teamId);
 
@@ -220,16 +271,26 @@ export class WebhookService {
   }
 
   public static async listWebhooks(teamId: number) {
-    return db.webhook.findMany({
-      where: { teamId },
-      orderBy: { createdAt: "desc" },
-    });
+    const rows = await drizzleDb
+      .select()
+      .from(schema.webhook)
+      .where(eq(schema.webhook.teamId, teamId))
+      .orderBy(desc(schema.webhook.createdAt));
+
+    return rows.map(toWebhook);
   }
 
   public static async getWebhook(params: { id: string; teamId: number }) {
-    const webhook = await db.webhook.findFirst({
-      where: { id: params.id, teamId: params.teamId },
-    });
+    const [webhook] = await drizzleDb
+      .select()
+      .from(schema.webhook)
+      .where(
+        and(
+          eq(schema.webhook.id, params.id),
+          eq(schema.webhook.teamId, params.teamId),
+        ),
+      )
+      .limit(1);
 
     if (!webhook) {
       throw new UnsendApiError({
@@ -238,7 +299,7 @@ export class WebhookService {
       });
     }
 
-    return webhook;
+    return toWebhook(webhook);
   }
 
   public static async createWebhook(params: {
@@ -274,18 +335,31 @@ export class WebhookService {
 
     const secret = params.secret ?? WebhookService.generateSecret();
 
-    return db.webhook.create({
-      data: {
-        teamId: params.teamId,
-        domainIds: normalizedDomainIds,
-        url: params.url,
-        description: params.description,
-        secret,
-        eventTypes: params.eventTypes,
-        status: WebhookStatus.ACTIVE,
-        createdByUserId: params.userId,
-      },
-    });
+    const [created] = await drizzleDb
+      .insert(schema.webhook)
+      .values(
+        withUpdatedAt({
+          id: createId(),
+          teamId: params.teamId,
+          domainIds: normalizedDomainIds,
+          url: params.url,
+          description: params.description,
+          secret,
+          eventTypes: params.eventTypes,
+          status: WebhookStatus.ACTIVE,
+          createdByUserId: params.userId,
+        }),
+      )
+      .returning();
+
+    if (!created) {
+      throw new UnsendApiError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to create webhook",
+      });
+    }
+
+    return toWebhook(created);
   }
 
   public static async updateWebhook(params: {
@@ -298,9 +372,16 @@ export class WebhookService {
     rotateSecret?: boolean;
     secret?: string;
   }) {
-    const webhook = await db.webhook.findFirst({
-      where: { id: params.id, teamId: params.teamId },
-    });
+    const [webhook] = await drizzleDb
+      .select()
+      .from(schema.webhook)
+      .where(
+        and(
+          eq(schema.webhook.id, params.id),
+          eq(schema.webhook.teamId, params.teamId),
+        ),
+      )
+      .limit(1);
 
     if (!webhook) {
       throw new UnsendApiError({
@@ -326,19 +407,31 @@ export class WebhookService {
       );
     }
 
-    return db.webhook.update({
-      where: { id: webhook.id },
-      data: {
-        url: params.url ?? webhook.url,
-        description:
-          params.description === undefined
-            ? webhook.description
-            : (params.description ?? null),
-        eventTypes: params.eventTypes ?? webhook.eventTypes,
-        domainIds: normalizedDomainIds ?? webhook.domainIds,
-        secret: secret ?? webhook.secret,
-      },
-    });
+    const [updated] = await drizzleDb
+      .update(schema.webhook)
+      .set(
+        withUpdatedAt({
+          url: params.url ?? webhook.url,
+          description:
+            params.description === undefined
+              ? webhook.description
+              : (params.description ?? null),
+          eventTypes: params.eventTypes ?? webhook.eventTypes,
+          domainIds: normalizedDomainIds ?? webhook.domainIds,
+          secret: secret ?? webhook.secret,
+        }),
+      )
+      .where(eq(schema.webhook.id, webhook.id))
+      .returning();
+
+    if (!updated) {
+      throw new UnsendApiError({
+        code: "NOT_FOUND",
+        message: "Webhook not found",
+      });
+    }
+
+    return toWebhook(updated);
   }
 
   private static normalizeDomainIds(domainIds?: number[]) {
@@ -353,17 +446,15 @@ export class WebhookService {
     domainIds: number[],
     teamId: number,
   ) {
-    const matchingDomains = await db.domain.findMany({
-      where: {
-        id: {
-          in: domainIds,
-        },
-        teamId,
-      },
-      select: {
-        id: true,
-      },
-    });
+    const matchingDomains = await drizzleDb
+      .select({ id: schema.domain.id })
+      .from(schema.domain)
+      .where(
+        and(
+          inArray(schema.domain.id, domainIds),
+          eq(schema.domain.teamId, teamId),
+        ),
+      );
 
     if (matchingDomains.length !== domainIds.length) {
       throw new UnsendApiError({
@@ -378,9 +469,16 @@ export class WebhookService {
     teamId: number;
     status: WebhookStatus;
   }) {
-    const webhook = await db.webhook.findFirst({
-      where: { id: params.id, teamId: params.teamId },
-    });
+    const [webhook] = await drizzleDb
+      .select()
+      .from(schema.webhook)
+      .where(
+        and(
+          eq(schema.webhook.id, params.id),
+          eq(schema.webhook.teamId, params.teamId),
+        ),
+      )
+      .limit(1);
 
     if (!webhook) {
       throw new UnsendApiError({
@@ -389,22 +487,41 @@ export class WebhookService {
       });
     }
 
-    return db.webhook.update({
-      where: { id: webhook.id },
-      data: {
-        status: params.status,
-        consecutiveFailures:
-          params.status === WebhookStatus.ACTIVE
-            ? 0
-            : webhook.consecutiveFailures,
-      },
-    });
+    const [updated] = await drizzleDb
+      .update(schema.webhook)
+      .set(
+        withUpdatedAt({
+          status: params.status,
+          consecutiveFailures:
+            params.status === WebhookStatus.ACTIVE
+              ? 0
+              : webhook.consecutiveFailures,
+        }),
+      )
+      .where(eq(schema.webhook.id, webhook.id))
+      .returning();
+
+    if (!updated) {
+      throw new UnsendApiError({
+        code: "NOT_FOUND",
+        message: "Webhook not found",
+      });
+    }
+
+    return toWebhook(updated);
   }
 
   public static async deleteWebhook(params: { id: string; teamId: number }) {
-    const webhook = await db.webhook.findFirst({
-      where: { id: params.id, teamId: params.teamId },
-    });
+    const [webhook] = await drizzleDb
+      .select()
+      .from(schema.webhook)
+      .where(
+        and(
+          eq(schema.webhook.id, params.id),
+          eq(schema.webhook.teamId, params.teamId),
+        ),
+      )
+      .limit(1);
 
     if (!webhook) {
       throw new UnsendApiError({
@@ -413,9 +530,19 @@ export class WebhookService {
       });
     }
 
-    return db.webhook.delete({
-      where: { id: webhook.id },
-    });
+    const [deleted] = await drizzleDb
+      .delete(schema.webhook)
+      .where(eq(schema.webhook.id, webhook.id))
+      .returning();
+
+    if (!deleted) {
+      throw new UnsendApiError({
+        code: "NOT_FOUND",
+        message: "Webhook not found",
+      });
+    }
+
+    return toWebhook(deleted);
   }
 
   public static async listWebhookCalls(params: {
@@ -425,16 +552,51 @@ export class WebhookService {
     limit: number;
     cursor?: string;
   }) {
-    const calls = await db.webhookCall.findMany({
-      where: {
-        teamId: params.teamId,
-        webhookId: params.webhookId,
-        status: params.status,
-      },
-      orderBy: { createdAt: "desc" },
-      take: params.limit + 1,
-      cursor: params.cursor ? { id: params.cursor } : undefined,
-    });
+    // Prisma's positional `cursor` has no Drizzle equivalent, so this becomes a
+    // keyset predicate. It needs the cursor row's createdAt, hence the extra
+    // read.
+    //
+    // Ordering is now (createdAt desc, id desc) rather than createdAt alone.
+    // createdAt is not unique, and under a tie the previous ordering was
+    // arbitrary — which meant a page boundary landing mid-tie could repeat or
+    // skip rows. The compound order is a total order, so it cannot.
+    const [cursorRow] = params.cursor
+      ? await drizzleDb
+          .select({
+            id: schema.webhookCall.id,
+            createdAt: schema.webhookCall.createdAt,
+          })
+          .from(schema.webhookCall)
+          .where(eq(schema.webhookCall.id, params.cursor))
+          .limit(1)
+      : [];
+
+    const calls = await drizzleDb
+      .select()
+      .from(schema.webhookCall)
+      .where(
+        and(
+          eq(schema.webhookCall.teamId, params.teamId),
+          params.webhookId
+            ? eq(schema.webhookCall.webhookId, params.webhookId)
+            : undefined,
+          params.status
+            ? eq(schema.webhookCall.status, params.status)
+            : undefined,
+          // Inclusive of the cursor row, matching Prisma without `skip`.
+          cursorRow
+            ? or(
+                lt(schema.webhookCall.createdAt, cursorRow.createdAt),
+                and(
+                  eq(schema.webhookCall.createdAt, cursorRow.createdAt),
+                  sql`${schema.webhookCall.id} <= ${cursorRow.id}`,
+                ),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(schema.webhookCall.createdAt), desc(schema.webhookCall.id))
+      .limit(params.limit + 1);
 
     let nextCursor: string | null = null;
     if (calls.length > params.limit) {
@@ -449,25 +611,33 @@ export class WebhookService {
   }
 
   public static async getWebhookCall(params: { id: string; teamId: number }) {
-    const call = await db.webhookCall.findFirst({
-      where: { id: params.id, teamId: params.teamId },
-      include: {
-        webhook: {
-          select: {
-            apiVersion: true,
-          },
-        },
-      },
-    });
+    const [row] = await drizzleDb
+      .select({
+        call: schema.webhookCall,
+        apiVersion: schema.webhook.apiVersion,
+      })
+      .from(schema.webhookCall)
+      .innerJoin(
+        schema.webhook,
+        eq(schema.webhook.id, schema.webhookCall.webhookId),
+      )
+      .where(
+        and(
+          eq(schema.webhookCall.id, params.id),
+          eq(schema.webhookCall.teamId, params.teamId),
+        ),
+      )
+      .limit(1);
 
-    if (!call) {
+    if (!row) {
       throw new UnsendApiError({
         code: "NOT_FOUND",
         message: "Webhook call not found",
       });
     }
 
-    return call;
+    // Reshaped to Prisma's nested include so callers are unchanged.
+    return { ...row.call, webhook: { apiVersion: row.apiVersion } };
   }
 }
 
@@ -489,12 +659,17 @@ function stringifyPayload(payload: unknown) {
 
 async function processWebhookCall(job: WebhookCallJob) {
   const attempt = job.attemptsMade + 1;
-  const call = await db.webhookCall.findUnique({
-    where: { id: job.data.callId },
-    include: {
-      webhook: true,
-    },
-  });
+  const [row] = await drizzleDb
+    .select({ call: schema.webhookCall, webhook: schema.webhook })
+    .from(schema.webhookCall)
+    .innerJoin(
+      schema.webhook,
+      eq(schema.webhook.id, schema.webhookCall.webhookId),
+    )
+    .where(eq(schema.webhookCall.id, job.data.callId))
+    .limit(1);
+
+  const call = row ? { ...row.call, webhook: row.webhook } : undefined;
 
   if (!call) {
     logger.warn(
@@ -505,13 +680,10 @@ async function processWebhookCall(job: WebhookCallJob) {
   }
 
   if (call.webhook.status !== WebhookStatus.ACTIVE) {
-    await db.webhookCall.update({
-      where: { id: call.id },
-      data: {
-        status: WebhookCallStatus.DISCARDED,
-        attempt,
-      },
-    });
+    await drizzleDb
+      .update(schema.webhookCall)
+      .set(withUpdatedAt({ status: WebhookCallStatus.DISCARDED, attempt }))
+      .where(eq(schema.webhookCall.id, call.id));
     logger.info(
       { callId: call.id, webhookId: call.webhookId },
       "[WebhookQueueService]: Discarded call because webhook is not active",
@@ -519,13 +691,10 @@ async function processWebhookCall(job: WebhookCallJob) {
     return;
   }
 
-  await db.webhookCall.update({
-    where: { id: call.id },
-    data: {
-      status: WebhookCallStatus.IN_PROGRESS,
-      attempt,
-    },
-  });
+  await drizzleDb
+    .update(schema.webhookCall)
+    .set(withUpdatedAt({ status: WebhookCallStatus.IN_PROGRESS, attempt }))
+    .where(eq(schema.webhookCall.id, call.id));
 
   const lockKey = redisKey(`webhook:lock:${call.webhookId}`);
   const redis = getRedis();
@@ -533,13 +702,15 @@ async function processWebhookCall(job: WebhookCallJob) {
 
   const lockAcquired = await acquireLock(redis, lockKey, lockValue);
   if (!lockAcquired) {
-    await db.webhookCall.update({
-      where: { id: call.id },
-      data: {
-        nextAttemptAt: new Date(Date.now() + WEBHOOK_LOCK_RETRY_DELAY_MS),
-        status: WebhookCallStatus.PENDING,
-      },
-    });
+    await drizzleDb
+      .update(schema.webhookCall)
+      .set(
+        withUpdatedAt({
+          nextAttemptAt: new Date(Date.now() + WEBHOOK_LOCK_RETRY_DELAY_MS),
+          status: WebhookCallStatus.PENDING,
+        }),
+      )
+      .where(eq(schema.webhookCall.id, call.id));
     // Let BullMQ handle retry timing; this records observability.
     throw new Error("Webhook lock not acquired");
   }
@@ -558,27 +729,32 @@ async function processWebhookCall(job: WebhookCallJob) {
       `Webhook call ${call.id} completed successfully, response status: ${responseStatus}, response time: ${responseTimeMs}ms, `,
     );
 
-    await db.$transaction([
-      db.webhookCall.update({
-        where: { id: call.id },
-        data: {
-          status: WebhookCallStatus.DELIVERED,
-          attempt,
-          responseStatus,
-          responseTimeMs,
-          lastError: null,
-          nextAttemptAt: null,
-          responseText,
-        },
-      }),
-      db.webhook.update({
-        where: { id: call.webhookId },
-        data: {
-          consecutiveFailures: 0,
-          lastSuccessAt: new Date(),
-        },
-      }),
-    ]);
+    await drizzleDb.transaction(async (tx) => {
+      await tx
+        .update(schema.webhookCall)
+        .set(
+          withUpdatedAt({
+            status: WebhookCallStatus.DELIVERED,
+            attempt,
+            responseStatus,
+            responseTimeMs,
+            lastError: null,
+            nextAttemptAt: null,
+            responseText,
+          }),
+        )
+        .where(eq(schema.webhookCall.id, call.id));
+
+      await tx
+        .update(schema.webhook)
+        .set(
+          withUpdatedAt({
+            consecutiveFailures: 0,
+            lastSuccessAt: new Date(),
+          }),
+        )
+        .where(eq(schema.webhook.id, call.webhookId));
+    });
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown webhook error";
@@ -596,20 +772,27 @@ async function processWebhookCall(job: WebhookCallJob) {
 
     const isFinalAttempt = attempt >= WEBHOOK_MAX_ATTEMPTS;
 
-    const updatedWebhook = await db.$transaction(async (tx) => {
-      const webhookAfterFailure = await tx.webhook.update({
-        where: { id: call.webhookId },
-        data: {
-          lastFailureAt: new Date(),
-          ...(isFinalAttempt
-            ? {
-                consecutiveFailures: {
-                  increment: 1,
-                },
-              }
-            : {}),
-        },
-      });
+    const updatedWebhook = await drizzleDb.transaction(async (tx) => {
+      const [webhookAfterFailure] = await tx
+        .update(schema.webhook)
+        .set(
+          withUpdatedAt({
+            lastFailureAt: new Date(),
+            // Prisma's `{ increment: 1 }`. Done in SQL rather than read-then-write
+            // so concurrent failures on the same webhook cannot lose a count.
+            ...(isFinalAttempt
+              ? {
+                  consecutiveFailures: sql`${schema.webhook.consecutiveFailures} + 1`,
+                }
+              : {}),
+          }),
+        )
+        .where(eq(schema.webhook.id, call.webhookId))
+        .returning();
+
+      if (!webhookAfterFailure) {
+        throw new Error("Webhook not found");
+      }
 
       if (
         isFinalAttempt &&
@@ -617,32 +800,38 @@ async function processWebhookCall(job: WebhookCallJob) {
         webhookAfterFailure.consecutiveFailures >=
           WEBHOOK_AUTO_DISABLE_THRESHOLD
       ) {
-        return tx.webhook.update({
-          where: { id: call.webhookId },
-          data: {
-            status: WebhookStatus.AUTO_DISABLED,
-          },
-        });
+        const [disabled] = await tx
+          .update(schema.webhook)
+          .set(withUpdatedAt({ status: WebhookStatus.AUTO_DISABLED }))
+          .where(eq(schema.webhook.id, call.webhookId))
+          .returning();
+
+        return disabled ?? webhookAfterFailure;
       }
 
       return webhookAfterFailure;
     });
 
-    await db.webhookCall.update({
-      where: { id: call.id },
-      data: {
-        status:
-          attempt >= WEBHOOK_MAX_ATTEMPTS
-            ? WebhookCallStatus.FAILED
-            : WebhookCallStatus.PENDING,
-        attempt,
-        nextAttemptAt,
-        lastError: errorMessage,
-        responseStatus: responseStatus ?? undefined,
-        responseTimeMs: responseTimeMs ?? undefined,
-        responseText: responseText ?? undefined,
-      },
-    });
+    await drizzleDb
+      .update(schema.webhookCall)
+      .set(
+        withUpdatedAt({
+          status:
+            attempt >= WEBHOOK_MAX_ATTEMPTS
+              ? WebhookCallStatus.FAILED
+              : WebhookCallStatus.PENDING,
+          attempt,
+          nextAttemptAt,
+          lastError: errorMessage,
+          // Prisma read `undefined` as "leave this column alone", which is how
+          // a non-HTTP failure keeps the response fields from an earlier
+          // attempt. Spread conditionally rather than passing undefined.
+          ...(responseStatus !== null ? { responseStatus } : {}),
+          ...(responseTimeMs !== null ? { responseTimeMs } : {}),
+          ...(responseText !== null ? { responseText } : {}),
+        }),
+      )
+      .where(eq(schema.webhookCall.id, call.id));
 
     const statusLabel =
       updatedWebhook.status === WebhookStatus.AUTO_DISABLED
