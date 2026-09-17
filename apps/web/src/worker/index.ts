@@ -6,6 +6,10 @@ import {
   withWorkerBindings,
   type WorkerBindings,
 } from "~/server/worker-bindings";
+import {
+  handleSesCallbackRequest,
+  isSesCallbackRequest,
+} from "~/server/service/ses-callback";
 import { handleQueueBatch } from "./queue-consumer";
 import { handleScheduled } from "./scheduled";
 import { handleStorageRequest, isStorageRequest } from "./storage-routes";
@@ -53,6 +57,13 @@ export default {
           // Outside the Hono app on purpose — see storage-routes.ts.
           if (isStorageRequest(url)) {
             return handleStorageRequest(request, url);
+          }
+
+          // Also outside it, and for the same reason: SNS posts here, not a
+          // customer with an API key, and the path is fixed by what
+          // `ses-settings-service.ts` subscribed the topic to (§2).
+          if (isSesCallbackRequest(url)) {
+            return handleSesCallbackRequest(request);
           }
 
           return app.fetch(request, env, ctx);

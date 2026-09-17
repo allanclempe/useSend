@@ -49,7 +49,7 @@ From `apps/web/src/server/queue/queue-constants.ts`:
 | ~~`campaign-emails-processing`~~ | — | **Does not exist.** `CAMPAIGN_MAIL_PROCESSING_QUEUE` is a constant nothing reads: no `createQueue`, no `createWorker`, no enqueue. Nothing to cut over. |
 | `campaign-batch` | CF Queue | must self-chunk, §4.3 |
 | `contact-bulk-add` | CF Queue | must self-chunk, §4.3 |
-| `ses-webhook` | HTTP route → CF Queue | SNS already POSTs to `setting.callbackUrl`; keep the HTTP hop |
+| `ses-webhook` | HTTP route → CF Queue | SNS already POSTs to `setting.callbackUrl`; keep the HTTP hop. **Done** — `server/service/ses-callback.ts`, served by both the Next route and the Worker so the one subscribed URL cannot drift. The consumer-side batched INSERT (§12, optimization 3) is **not** done. |
 | `campaign-scheduler` | **Durable Object alarm** | preserves the 1.5s tick exactly, §4.2 |
 | `domain-verification` | Cron Trigger `0 * * * *` | 1:1 with today's pattern |
 | `webhook-cleanup` | Cron Trigger | clean fit |
