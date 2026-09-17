@@ -1,23 +1,28 @@
 import { customAlphabet } from "nanoid";
 
+const BODY_LENGTH = 24;
+const generate = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", BODY_LENGTH);
+
 /**
- * Generates primary keys for tables that Prisma declared as `@default(cuid())`.
+ * Generates primary keys for tables Prisma declared as `@default(cuid())`.
  *
  * Prisma generated those client-side — the columns have no database default —
- * so every Drizzle insert into one of the 13 affected tables has to supply an
- * id explicitly. Centralised here so that stays one decision rather than 13.
+ * so every Drizzle insert into one of the 13 affected tables supplies an id.
+ * Centralised here so that stays one decision rather than 13.
  *
- * nanoid rather than a cuid package: it is already a dependency, so this adds
- * nothing to the bundle (which the Workers migration cares about), and the
- * original `cuid` package is deprecated.
+ * Shaped to match the cuid1 values already in those columns: 25 lowercase
+ * alphanumeric characters, leading `c`. Ids appear in URLs, API responses and
+ * customer integrations, so new rows should not be distinguishable from old
+ * ones at a glance.
  *
- * The alphabet is restricted to lowercase alphanumerics — nanoid's default
- * includes `-` and `_`, and these ids appear in URLs and API responses where
- * looking like the cuids they sit alongside is worth more than two extra bits
- * per character. 24 chars over 36 symbols is ~124 bits of entropy.
+ * It is a matching *shape*, not a real cuid. Generating genuine cuid1 would
+ * mean the deprecated `cuid` package, which fingerprints using `os.hostname()`
+ * and so does not survive the move to Workers. Backfilling the existing values
+ * instead is not on the table — they are externally referenced. nanoid is
+ * already a dependency, runs anywhere, and 24 random characters over 36 symbols
+ * is ~124 bits, well clear of collision risk.
  *
- * Existing rows keep their cuids. Nothing validates or parses the format —
- * checked across the app, the public API schemas and the SDK — so the two
- * coexist safely in the same column.
+ * Nothing validates or parses the format — checked across the app, the public
+ * API zod schemas and the SDK — so the two coexist safely regardless.
  */
-export const createId = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 24);
+export const createId = () => `c${generate()}`;

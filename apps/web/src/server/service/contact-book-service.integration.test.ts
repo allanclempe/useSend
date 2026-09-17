@@ -62,7 +62,8 @@ describeIntegration("contact-book-service", () => {
     expect(created.doubleOptInSubject).toBe(DEFAULT_DOUBLE_OPT_IN_SUBJECT);
     expect(created.doubleOptInContent).toBe(DEFAULT_DOUBLE_OPT_IN_CONTENT);
     // Prisma generated this id client-side; Drizzle has to supply one.
-    expect(created.id).toMatch(/^[0-9a-z]{24}$/);
+    // Same shape as the cuid1 values already in this column.
+    expect(created.id).toMatch(/^c[0-9a-z]{24}$/);
     expect(created.variables).toEqual([]);
   });
 
