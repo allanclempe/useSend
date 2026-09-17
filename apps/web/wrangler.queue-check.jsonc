@@ -1,0 +1,65 @@
+/**
+ * A fixture Worker, never deployed.
+ *
+ * `src/worker/queue-check.ts` exercises the Phase 8 queue seam inside a real
+ * `workerd` isolate: a producer binding, the `queue()` consumer export, the
+ * registry dispatch, `delaySeconds`, retries with a growing backoff, and the
+ * dead letter hop. All of it is simulated locally by `wrangler dev`, on disk
+ * under `.wrangler`, with no Cloudflare account.
+ *
+ * Separate config from `wrangler.jsonc` so the fixture can never end up in the
+ * API's bundle. The queue declarations below are a deliberate copy of the real
+ * ones rather than a shared file — a fixture that could change the API's
+ * deploy-time configuration would be worse than a duplicated block.
+ *
+ *   pnpm --filter=web queue:check
+ *   curl -s -X POST 'http://localhost:8791/enqueue?count=3'
+ *   curl -s http://localhost:8791/received | jq
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "usesend-queue-check",
+  "main": "src/worker/queue-check.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // `handleQueueBatch` builds a Drizzle client per invocation, so the binding
+  // has to exist. `postgres-js` does not open a socket until the first query
+  // and the probe handler makes none, so nothing here needs a live database.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "REPLACE_WITH_HYPERDRIVE_ID",
+      "localConnectionString": "postgresql://usesend:password@127.0.0.1:54329/usesend_test"
+    }
+  ],
+
+  "queues": {
+    "producers": [
+      { "queue": "usesend-ses-webhook", "binding": "QUEUE_SES_WEBHOOK" },
+      { "queue": "usesend-contact-bulk-add", "binding": "QUEUE_CONTACT_BULK_ADD" }
+    ],
+    "consumers": [
+      {
+        "queue": "usesend-ses-webhook",
+        "max_batch_size": 100,
+        "max_batch_timeout": 5,
+        "max_retries": 4,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-contact-bulk-add",
+        "max_batch_size": 25,
+        "max_batch_timeout": 2,
+        "max_retries": 2,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-dead-letter",
+        "max_batch_size": 100,
+        "max_batch_timeout": 30,
+        "max_retries": 0
+      }
+    ]
+  }
+}

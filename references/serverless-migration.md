@@ -46,7 +46,7 @@ From `apps/web/src/server/queue/queue-constants.ts`:
 | `{region}-transactional` | CF Queue → consumer Worker | `max_concurrency` = `transactionalQuota` |
 | `{region}-marketing` | CF Queue → consumer Worker | `max_concurrency` = `marketingQuota` |
 | `webhook-dispatch` | **Durable Object per `webhookId`** | serialization is free; DO alarm drives retry backoff |
-| `campaign-emails-processing` | CF Queue | |
+| ~~`campaign-emails-processing`~~ | — | **Does not exist.** `CAMPAIGN_MAIL_PROCESSING_QUEUE` is a constant nothing reads: no `createQueue`, no `createWorker`, no enqueue. Nothing to cut over. |
 | `campaign-batch` | CF Queue | must self-chunk, §4.3 |
 | `contact-bulk-add` | CF Queue | must self-chunk, §4.3 |
 | `ses-webhook` | HTTP route → CF Queue | SNS already POSTs to `setting.callbackUrl`; keep the HTTP hop |

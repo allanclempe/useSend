@@ -56,6 +56,67 @@
     }
   ],
 
+  // Cloudflare Queues (§2). `server/queue/queue-registry.ts` is the source of
+  // truth for this block and `queue-registry.unit.test.ts` fails if the two
+  // disagree — a producer binding that is declared in one place and not the
+  // other is a 500 on a send path, which is the worst place to find out.
+  //
+  // Everything here is deploy-time config. `max_retries`, `max_batch_size` and
+  // `max_concurrency` cannot be changed from running code, which is the whole
+  // of §4.1: an SES region, and the rate limit that sizes its consumer, now
+  // take a deploy to change.
+  //
+  // `wrangler dev` simulates all of this on disk under `.wrangler`, so producer
+  // and consumer can be exercised end to end with no Cloudflare account.
+  "queues": {
+    "producers": [
+      { "queue": "usesend-ses-webhook", "binding": "QUEUE_SES_WEBHOOK" },
+      { "queue": "usesend-webhook-dispatch", "binding": "QUEUE_WEBHOOK_DISPATCH" },
+      { "queue": "usesend-contact-bulk-add", "binding": "QUEUE_CONTACT_BULK_ADD" },
+      { "queue": "usesend-campaign-batch", "binding": "QUEUE_CAMPAIGN_BATCH" }
+    ],
+    "consumers": [
+      {
+        "queue": "usesend-ses-webhook",
+        "max_batch_size": 100,
+        "max_batch_timeout": 5,
+        "max_retries": 4,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-webhook-dispatch",
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-contact-bulk-add",
+        "max_batch_size": 25,
+        "max_batch_timeout": 2,
+        "max_retries": 2,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-campaign-batch",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      // The shared dead letter queue. No producer binding: Cloudflare routes to
+      // it, nothing in this codebase sends to it. `max_retries` is 0 because a
+      // dead letter queue that retries is just another queue — the consumer
+      // logs one error record per message and acks (§11's alerting path).
+      {
+        "queue": "usesend-dead-letter",
+        "max_batch_size": 100,
+        "max_batch_timeout": 30,
+        "max_retries": 0
+      }
+    ]
+  },
+
   // Local values live in `.dev.vars` (gitignored, see `.dev.vars.example`).
   // Deployed values are secrets, not vars — nothing here is committed.
   "vars": {}

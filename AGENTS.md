@@ -62,8 +62,19 @@ Things that behave differently inside the Worker, by design:
   a module-level `const` or a `static` class field — this is why `drizzleDb` is a
   lazy proxy and why the BullMQ driver defers its queue.
 - **No BullMQ.** `server/queue/index.ts` picks a driver by runtime. Inside a
-  Worker, consumers are not started and `enqueue` throws, until Cloudflare Queue
-  bindings land in Phase 8.
+  Worker, `enqueue` goes to a Cloudflare Queue producer binding and
+  `createWorker` registers a handler rather than starting one — a Cloudflare
+  consumer is the `queue()` export on the Worker (`src/worker/queue-consumer.ts`),
+  declared in `wrangler.jsonc`. `server/queue/queue-registry.ts` is the source of
+  truth for which queues exist, and `queue-registry.unit.test.ts` fails if
+  `wrangler.jsonc` disagrees with it. **Adding a queue means editing both**:
+  Cloudflare Queues are deploy-time config, so a binding that is not in the
+  config is simply absent from `env` at runtime.
+- **Queue payloads are ID references.** A message caps at 128 KB and the driver
+  refuses anything larger. Never a body, never an attachment.
+- **`options.jobId` does nothing on Workers.** It is BullMQ's dedup key and
+  Cloudflare has no equivalent, so a handler that must not run twice needs its
+  own database-side guard (§4.4).
 - **No connection reuse across requests.** Workers ties an I/O object to the
   request that created it, so the Worker builds a database client per request
   and publishes it through `AsyncLocalStorage`. Do not cache a connection, a
@@ -77,6 +88,12 @@ Things that behave differently inside the Worker, by design:
 `pnpm --filter=web compat:check` runs the §8 runtime-compatibility list
 (`src/worker/compat-check.ts`) inside a real isolate and reports what passed.
 Run it after changing anything in the Worker's dependency tree.
+
+`pnpm --filter=web queue:check` runs the queue seam inside a real isolate the
+same way (`src/worker/queue-check.ts`, port 8791): enqueue through the real
+driver, consume through the real `queue()` export, and observe `delaySeconds`,
+the retry backoff and the dead letter hop. Both are fixture Workers with their
+own `wrangler.*.jsonc` and are never deployed.
 
 ## Coding Style & Naming Conventions
 
