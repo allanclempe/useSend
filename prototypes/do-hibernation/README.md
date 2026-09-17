@@ -82,6 +82,12 @@ that would settle it.
 
 ## Results
 
-See the results comment on [#7](https://github.com/allanclempe/useSend/issues/7), and
-`references/serverless-migration.md` §4.2 and §12 for what was decided off the back of it. Raw
-observations from each run land in `results/<runId>.json` (gitignored).
+At 1.5s the object is **never evicted** — one instance handled all 40 alarms. The eviction cliff
+is between 9s and 11s, matching the documented 10s rule. At 15s, where the object otherwise evicts
+between every alarm, a held-open TCP socket, an in-flight `fetch()` or a pending timer each keep it
+resident; `blockConcurrencyWhile` does not. The scheduler therefore ticks at 30s and must not hold
+a database connection — `references/serverless-migration.md` §4.2.
+
+Full tables, the GB-s implications and what is still unsettled: the results comment on
+[#7](https://github.com/allanclempe/useSend/issues/7) and §12. Raw observations from each run land
+in `results/<runId>.json` (gitignored).
