@@ -1,7 +1,7 @@
 import { env } from "~/env";
 import { UseSend } from "usesend-js";
 import { isSelfHosted } from "~/utils/common";
-import { db } from "./db";
+import { drizzleDb, schema } from "./drizzle";
 import { getDomains } from "./service/domain-service";
 import { sendEmail } from "./service/email-service";
 import { logger } from "./logger/log";
@@ -97,7 +97,7 @@ export async function sendMail(
       Assuming self hosted will have only one team
       TODO: fix this
      */
-    const team = await db.team.findFirst({});
+    const [team] = await drizzleDb.select().from(schema.team).limit(1);
     if (!team) {
       logger.error("No team found");
       return;

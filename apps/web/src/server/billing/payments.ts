@@ -1,7 +1,9 @@
 import Stripe from "stripe";
 import { env } from "~/env";
 import { isEntitledSubscriptionStatus } from "~/lib/subscription-status";
-import { db } from "../db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { withUpdatedAt } from "../drizzle/touch";
 import { sendSubscriptionConfirmationEmail } from "../mailer";
 import { TeamService } from "../service/team-service";
 import { logger } from "../logger/log";
@@ -27,9 +29,11 @@ async function createCustomerForTeam(teamId: number) {
 }
 
 export async function createCheckoutSessionForTeam(teamId: number) {
-  const team = await db.team.findUnique({
-    where: { id: teamId },
-  });
+  const [team] = await drizzleDb
+    .select()
+    .from(schema.team)
+    .where(eq(schema.team.id, teamId))
+    .limit(1);
 
   if (!team) {
     throw new Error("Team not found");
@@ -93,9 +97,11 @@ function getPlanFromPriceIds(priceIds: string[]) {
 }
 
 export async function getManageSessionUrl(teamId: number) {
-  const team = await db.team.findUnique({
-    where: { id: teamId },
-  });
+  const [team] = await drizzleDb
+    .select()
+    .from(schema.team)
+    .where(eq(schema.team.id, teamId))
+    .limit(1);
 
   if (!team) {
     throw new Error("Team not found");
@@ -118,9 +124,11 @@ export async function getManageSessionUrl(teamId: number) {
 export async function syncStripeData(customerId: string) {
   const stripe = getStripe();
 
-  const team = await db.team.findUnique({
-    where: { stripeCustomerId: customerId },
-  });
+  const [team] = await drizzleDb
+    .select()
+    .from(schema.team)
+    .where(eq(schema.team.stripeCustomerId, customerId))
+    .limit(1);
 
   if (!team) {
     return;
@@ -154,42 +162,30 @@ export async function syncStripeData(customerId: string) {
   const isNowPaid = subscription.status === "active" && nextPlan !== "FREE";
   const shouldSendSubscriptionConfirmation = !wasPaid && isNowPaid;
 
-  await db.subscription.upsert({
-    where: { id: subscription.id },
-    update: {
-      status: subscription.status,
-      priceId: subscription.items.data[0]?.price?.id || "",
-      priceIds: priceIds,
-      currentPeriodEnd: new Date(
-        subscription.items.data[0]?.current_period_end * 1000,
-      ),
-      currentPeriodStart: new Date(
-        subscription.items.data[0]?.current_period_start * 1000,
-      ),
-      cancelAtPeriodEnd: subscription.cancel_at
-        ? new Date(subscription.cancel_at * 1000)
-        : null,
-      paymentMethod: JSON.stringify(subscription.default_payment_method),
-      teamId: team.id,
-    },
-    create: {
-      id: subscription.id,
-      status: subscription.status,
-      priceId: subscription.items.data[0]?.price?.id || "",
-      priceIds: priceIds,
-      currentPeriodEnd: new Date(
-        subscription.items.data[0]?.current_period_end * 1000,
-      ),
-      currentPeriodStart: new Date(
-        subscription.items.data[0]?.current_period_start * 1000,
-      ),
-      cancelAtPeriodEnd: subscription.cancel_at
-        ? new Date(subscription.cancel_at * 1000)
-        : null,
-      paymentMethod: JSON.stringify(subscription.default_payment_method),
-      teamId: team.id,
-    },
-  });
+  const subscriptionValues = {
+    status: subscription.status,
+    priceId: subscription.items.data[0]?.price?.id || "",
+    priceIds: priceIds,
+    currentPeriodEnd: new Date(
+      subscription.items.data[0]?.current_period_end * 1000,
+    ),
+    currentPeriodStart: new Date(
+      subscription.items.data[0]?.current_period_start * 1000,
+    ),
+    cancelAtPeriodEnd: subscription.cancel_at
+      ? new Date(subscription.cancel_at * 1000)
+      : null,
+    paymentMethod: JSON.stringify(subscription.default_payment_method),
+    teamId: team.id,
+  };
+
+  await drizzleDb
+    .insert(schema.subscription)
+    .values(withUpdatedAt({ id: subscription.id, ...subscriptionValues }))
+    .onConflictDoUpdate({
+      target: schema.subscription.id,
+      set: withUpdatedAt(subscriptionValues),
+    });
 
   await TeamService.updateTeam(team.id, {
     plan: subscription.status === "canceled" ? "FREE" : nextPlan,

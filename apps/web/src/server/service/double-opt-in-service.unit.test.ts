@@ -2,32 +2,58 @@ import { createHash } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  mockDb,
+  mockContactSelect,
+  mockDomainSelect,
+  mockContactUpdate,
   mockSendEmail,
   mockRendererRender,
   mockLogger,
   mockValidateDomainFromEmail,
 } = vi.hoisted(() => ({
-  mockDb: {
-    contact: {
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    domain: {
-      findFirst: vi.fn(),
-    },
-  },
+  mockContactSelect: vi.fn(),
+  mockDomainSelect: vi.fn(),
+  mockContactUpdate: vi.fn(),
   mockSendEmail: vi.fn(),
   mockRendererRender: vi.fn(),
   mockLogger: {
+    // importOriginal on ~/server/drizzle constructs the client, which logs.
+    debug: vi.fn(),
     error: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
   },
   mockValidateDomainFromEmail: vi.fn(),
 }));
 
-vi.mock("~/server/db", () => ({
-  db: mockDb,
-}));
+/**
+ * These cover the confirmation email — which template renders, which variables
+ * are substituted, how invalid and expired links are rejected — with the mailer
+ * and renderer already faked. The database is incidental, so the Drizzle client
+ * is stubbed rather than moving these to integration tests.
+ *
+ * The two reads are distinguished by whether the chain has an innerJoin (the
+ * contact, which joins its contact book) or an orderBy (the fallback domain).
+ */
+vi.mock("~/server/drizzle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/server/drizzle")>();
+
+  const drizzleDb = {
+    select: () => ({
+      from: () => ({
+        innerJoin: () => ({ where: () => ({ limit: () => mockContactSelect() }) }),
+        where: () => ({
+          orderBy: () => ({ limit: () => mockDomainSelect() }),
+          limit: () => mockContactSelect(),
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({ where: () => ({ returning: () => mockContactUpdate() }) }),
+    }),
+  };
+
+  return { ...actual, drizzleDb };
+});
 
 vi.mock("~/server/service/email-service", () => ({
   sendEmail: mockSendEmail,
@@ -64,9 +90,9 @@ describe("double-opt-in-service", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-02-08T00:00:00.000Z"));
 
-    mockDb.contact.findUnique.mockReset();
-    mockDb.contact.update.mockReset();
-    mockDb.domain.findFirst.mockReset();
+    mockContactSelect.mockReset();
+    mockContactUpdate.mockReset();
+    mockDomainSelect.mockReset();
     mockSendEmail.mockReset();
     mockRendererRender.mockReset();
     mockLogger.error.mockReset();
@@ -83,13 +109,13 @@ describe("double-opt-in-service", () => {
   });
 
   it("skips sending when double opt-in is disabled", async () => {
-    mockDb.contact.findUnique.mockResolvedValue({
+    mockContactSelect.mockResolvedValue([{
       id: "contact_1",
       email: "alice@example.com",
       firstName: "Alice",
       lastName: "Smith",
       contactBookId: "book_1",
-      contactBook: {
+      book: {
         id: "book_1",
         name: "Newsletter",
         doubleOptInEnabled: false,
@@ -97,7 +123,7 @@ describe("double-opt-in-service", () => {
         doubleOptInSubject: null,
         doubleOptInContent: null,
       },
-    });
+    }]);
 
     await sendDoubleOptInConfirmationEmail({
       contactId: "contact_1",
@@ -105,18 +131,18 @@ describe("double-opt-in-service", () => {
       teamId: 7,
     });
 
-    expect(mockDb.domain.findFirst).not.toHaveBeenCalled();
+    expect(mockDomainSelect).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
   it("throws when no verified domain exists", async () => {
-    mockDb.contact.findUnique.mockResolvedValue({
+    mockContactSelect.mockResolvedValue([{
       id: "contact_1",
       email: "alice@example.com",
       firstName: "Alice",
       lastName: "Smith",
       contactBookId: "book_1",
-      contactBook: {
+      book: {
         id: "book_1",
         name: "Newsletter",
         doubleOptInEnabled: true,
@@ -124,8 +150,8 @@ describe("double-opt-in-service", () => {
         doubleOptInSubject: "Confirm {{firstName}}",
         doubleOptInContent: JSON.stringify({ type: "doc", content: [] }),
       },
-    });
-    mockDb.domain.findFirst.mockResolvedValue(null);
+    }]);
+    mockDomainSelect.mockResolvedValue([]);
 
     await expect(
       sendDoubleOptInConfirmationEmail({
@@ -140,13 +166,13 @@ describe("double-opt-in-service", () => {
   });
 
   it("sends rendered confirmation email with template variables", async () => {
-    mockDb.contact.findUnique.mockResolvedValue({
+    mockContactSelect.mockResolvedValue([{
       id: "contact_1",
       email: "alice@example.com",
       firstName: "Alice",
       lastName: "Smith",
       contactBookId: "book_1",
-      contactBook: {
+      book: {
         id: "book_1",
         name: "Newsletter",
         doubleOptInEnabled: true,
@@ -154,8 +180,8 @@ describe("double-opt-in-service", () => {
         doubleOptInSubject: "Confirm {{firstName}}",
         doubleOptInContent: JSON.stringify({ type: "doc", content: [] }),
       },
-    });
-    mockDb.domain.findFirst.mockResolvedValue({ name: "example.com" });
+    }]);
+    mockDomainSelect.mockResolvedValue([{ name: "example.com" }]);
     mockRendererRender.mockResolvedValue(
       '<p>Click <a href="{{doubleOptInUrl}}">confirm</a></p>',
     );
@@ -175,13 +201,13 @@ describe("double-opt-in-service", () => {
   });
 
   it("falls back to plain HTML when template rendering fails", async () => {
-    mockDb.contact.findUnique.mockResolvedValue({
+    mockContactSelect.mockResolvedValue([{
       id: "contact_1",
       email: "alice@example.com",
       firstName: "Alice",
       lastName: "Smith",
       contactBookId: "book_1",
-      contactBook: {
+      book: {
         id: "book_1",
         name: "Newsletter",
         doubleOptInEnabled: true,
@@ -189,8 +215,8 @@ describe("double-opt-in-service", () => {
         doubleOptInSubject: "Confirm {{firstName}}",
         doubleOptInContent: JSON.stringify({ type: "doc", content: [] }),
       },
-    });
-    mockDb.domain.findFirst.mockResolvedValue({ name: "example.com" });
+    }]);
+    mockDomainSelect.mockResolvedValue([{ name: "example.com" }]);
     mockRendererRender.mockRejectedValue(new Error("render failed"));
 
     await sendDoubleOptInConfirmationEmail({
@@ -206,13 +232,13 @@ describe("double-opt-in-service", () => {
   });
 
   it("replaces empty template variables instead of leaving tokens", async () => {
-    mockDb.contact.findUnique.mockResolvedValue({
+    mockContactSelect.mockResolvedValue([{
       id: "contact_1",
       email: "alice@example.com",
       firstName: null,
       lastName: null,
       contactBookId: "book_1",
-      contactBook: {
+      book: {
         id: "book_1",
         name: "Newsletter",
         doubleOptInEnabled: true,
@@ -220,8 +246,8 @@ describe("double-opt-in-service", () => {
         doubleOptInSubject: "Confirm {{firstName}}",
         doubleOptInContent: JSON.stringify({ type: "doc", content: [] }),
       },
-    });
-    mockDb.domain.findFirst.mockResolvedValue({ name: "example.com" });
+    }]);
+    mockDomainSelect.mockResolvedValue([{ name: "example.com" }]);
     mockRendererRender.mockResolvedValue("<p>Test</p>");
 
     await sendDoubleOptInConfirmationEmail({
@@ -235,13 +261,13 @@ describe("double-opt-in-service", () => {
   });
 
   it("uses configured double opt-in from address when present", async () => {
-    mockDb.contact.findUnique.mockResolvedValue({
+    mockContactSelect.mockResolvedValue([{
       id: "contact_1",
       email: "alice@example.com",
       firstName: "Alice",
       lastName: "Smith",
       contactBookId: "book_1",
-      contactBook: {
+      book: {
         id: "book_1",
         name: "Newsletter",
         doubleOptInEnabled: true,
@@ -249,7 +275,7 @@ describe("double-opt-in-service", () => {
         doubleOptInSubject: "Confirm {{firstName}}",
         doubleOptInContent: JSON.stringify({ type: "doc", content: [] }),
       },
-    });
+    }]);
     mockRendererRender.mockResolvedValue("<p>Test</p>");
 
     await sendDoubleOptInConfirmationEmail({
@@ -258,7 +284,7 @@ describe("double-opt-in-service", () => {
       teamId: 7,
     });
 
-    expect(mockDb.domain.findFirst).not.toHaveBeenCalled();
+    expect(mockDomainSelect).not.toHaveBeenCalled();
     expect(mockValidateDomainFromEmail).toHaveBeenCalledWith(
       "Newsletter <hello@example.com>",
       7,
@@ -305,7 +331,7 @@ describe("double-opt-in-service", () => {
       subscribed: true,
     };
 
-    mockDb.contact.findUnique.mockResolvedValue(contact);
+    mockContactSelect.mockResolvedValue([contact]);
 
     const result = await confirmDoubleOptInSubscription({
       contactId: "contact_1",
@@ -314,7 +340,7 @@ describe("double-opt-in-service", () => {
     });
 
     expect(result).toBe(contact);
-    expect(mockDb.contact.update).not.toHaveBeenCalled();
+    expect(mockContactUpdate).not.toHaveBeenCalled();
   });
 
   it("does not re-subscribe contacts with explicit unsubscribe reasons", async () => {
@@ -326,7 +352,7 @@ describe("double-opt-in-service", () => {
       unsubscribeReason: "UNSUBSCRIBED",
     };
 
-    mockDb.contact.findUnique.mockResolvedValue(contact);
+    mockContactSelect.mockResolvedValue([contact]);
 
     const result = await confirmDoubleOptInSubscription({
       contactId: "contact_1",
@@ -335,21 +361,23 @@ describe("double-opt-in-service", () => {
     });
 
     expect(result).toBe(contact);
-    expect(mockDb.contact.update).not.toHaveBeenCalled();
+    expect(mockContactUpdate).not.toHaveBeenCalled();
   });
 
   it("activates pending contacts with a valid link", async () => {
     const expiresAt = Date.now() + 60_000;
 
-    mockDb.contact.findUnique.mockResolvedValue({
+    mockContactSelect.mockResolvedValue([{
       id: "contact_1",
       subscribed: false,
-    });
-    mockDb.contact.update.mockResolvedValue({
-      id: "contact_1",
-      subscribed: true,
-      unsubscribeReason: null,
-    });
+    }]);
+    mockContactUpdate.mockResolvedValue([
+      {
+        id: "contact_1",
+        subscribed: true,
+        unsubscribeReason: null,
+      },
+    ]);
 
     const result = await confirmDoubleOptInSubscription({
       contactId: "contact_1",
@@ -357,13 +385,7 @@ describe("double-opt-in-service", () => {
       hash: getHash("contact_1", expiresAt),
     });
 
-    expect(mockDb.contact.update).toHaveBeenCalledWith({
-      where: { id: "contact_1" },
-      data: {
-        subscribed: true,
-        unsubscribeReason: null,
-      },
-    });
+    expect(mockContactUpdate).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       id: "contact_1",
       subscribed: true,

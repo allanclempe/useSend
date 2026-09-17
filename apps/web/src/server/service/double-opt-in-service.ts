@@ -6,7 +6,9 @@ import {
   DEFAULT_DOUBLE_OPT_IN_CONTENT,
   DEFAULT_DOUBLE_OPT_IN_SUBJECT,
 } from "~/lib/constants/double-opt-in";
-import { db } from "../db";
+import { and, asc, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { withUpdatedAt } from "../drizzle/touch";
 import { logger } from "../logger/log";
 import { sendEmail } from "./email-service";
 import { validateDomainFromEmail } from "./domain-service";
@@ -55,26 +57,32 @@ export async function sendDoubleOptInConfirmationEmail({
   contactBookId: string;
   teamId: number;
 }) {
-  const contact = await db.contact.findUnique({
-    where: { id: contactId },
-    select: {
-      id: true,
-      email: true,
-      firstName: true,
-      lastName: true,
-      contactBookId: true,
-      contactBook: {
-        select: {
-          id: true,
-          name: true,
-          doubleOptInEnabled: true,
-          doubleOptInFrom: true,
-          doubleOptInSubject: true,
-          doubleOptInContent: true,
-        },
+  const [row] = await drizzleDb
+    .select({
+      id: schema.contact.id,
+      email: schema.contact.email,
+      firstName: schema.contact.firstName,
+      lastName: schema.contact.lastName,
+      contactBookId: schema.contact.contactBookId,
+      book: {
+        id: schema.contactBook.id,
+        name: schema.contactBook.name,
+        doubleOptInEnabled: schema.contactBook.doubleOptInEnabled,
+        doubleOptInFrom: schema.contactBook.doubleOptInFrom,
+        doubleOptInSubject: schema.contactBook.doubleOptInSubject,
+        doubleOptInContent: schema.contactBook.doubleOptInContent,
       },
-    },
-  });
+    })
+    .from(schema.contact)
+    .innerJoin(
+      schema.contactBook,
+      eq(schema.contactBook.id, schema.contact.contactBookId),
+    )
+    .where(eq(schema.contact.id, contactId))
+    .limit(1);
+
+  // Reshaped to Prisma's nested include so the rest of the function is unchanged.
+  const contact = row ? { ...row, contactBook: row.book } : null;
 
   if (!contact || contact.contactBookId !== contactBookId) {
     throw new Error("Contact not found for double opt-in email");
@@ -88,18 +96,17 @@ export async function sendDoubleOptInConfirmationEmail({
   let from: string;
 
   if (!configuredFrom) {
-    const domain = await db.domain.findFirst({
-      where: {
-        teamId,
-        status: DomainStatus.SUCCESS,
-      },
-      select: {
-        name: true,
-      },
-      orderBy: {
-        createdAt: "asc",
-      },
-    });
+    const [domain] = await drizzleDb
+      .select({ name: schema.domain.name })
+      .from(schema.domain)
+      .where(
+        and(
+          eq(schema.domain.teamId, teamId),
+          eq(schema.domain.status, DomainStatus.SUCCESS),
+        ),
+      )
+      .orderBy(asc(schema.domain.createdAt))
+      .limit(1);
 
     if (!domain) {
       throw new Error(
@@ -193,9 +200,11 @@ export async function confirmDoubleOptInSubscription({
     throw new Error("Invalid confirmation link");
   }
 
-  const existingContact = await db.contact.findUnique({
-    where: { id: contactId },
-  });
+  const [existingContact] = await drizzleDb
+    .select()
+    .from(schema.contact)
+    .where(eq(schema.contact.id, contactId))
+    .limit(1);
 
   if (!existingContact) {
     throw new Error("Contact not found");
@@ -205,11 +214,15 @@ export async function confirmDoubleOptInSubscription({
     return existingContact;
   }
 
-  return db.contact.update({
-    where: { id: contactId },
-    data: {
-      subscribed: true,
-      unsubscribeReason: null,
-    },
-  });
+  const [updated] = await drizzleDb
+    .update(schema.contact)
+    .set(withUpdatedAt({ subscribed: true, unsubscribeReason: null }))
+    .where(eq(schema.contact.id, contactId))
+    .returning();
+
+  if (!updated) {
+    throw new Error("Contact not found");
+  }
+
+  return updated;
 }

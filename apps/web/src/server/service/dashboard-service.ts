@@ -1,6 +1,8 @@
-import { db } from "~/server/db";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { drizzleDb, schema } from "../drizzle";
 import { format, subDays } from "date-fns";
-import { Prisma, Team } from "@prisma/client";
+import { Team } from "@prisma/client";
 
 type EmailTimeSeries = {
   days?: number;
@@ -13,7 +15,7 @@ export async function emailTimeSeries(input: EmailTimeSeries) {
   const { domain, team } = input;
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
-  const isoStartDate = startDate.toISOString().split("T")[0];
+  const isoStartDate = startDate.toISOString().split("T")[0] as string;
 
   type DailyEmailUsage = {
     date: string;
@@ -25,22 +27,30 @@ export async function emailTimeSeries(input: EmailTimeSeries) {
     complained: number;
   };
 
-  const result = await db.$queryRaw<Array<DailyEmailUsage>>`
-    SELECT
-      date,
-      SUM(sent)::integer AS sent,
-      SUM(delivered)::integer AS delivered,
-      SUM(opened)::integer AS opened,
-      SUM(clicked)::integer AS clicked,
-      SUM(bounced)::integer AS bounced,
-      SUM(complained)::integer AS complained
-    FROM "DailyEmailUsage"
-    WHERE "teamId" = ${team.id}
-    AND "date" >= ${isoStartDate}
-    ${domain ? Prisma.sql`AND "domainId" = ${domain}` : Prisma.sql``}
-    GROUP BY "date"
-    ORDER BY "date" ASC
-  `;
+  // A grouped sum, which the query builder expresses directly. The ::integer
+  // casts stay: SUM over an integer column returns bigint.
+  const sum = (column: AnyPgColumn) => sql<number>`SUM(${column})::integer`;
+
+  const result = await drizzleDb
+    .select({
+      date: schema.dailyEmailUsage.date,
+      sent: sum(schema.dailyEmailUsage.sent),
+      delivered: sum(schema.dailyEmailUsage.delivered),
+      opened: sum(schema.dailyEmailUsage.opened),
+      clicked: sum(schema.dailyEmailUsage.clicked),
+      bounced: sum(schema.dailyEmailUsage.bounced),
+      complained: sum(schema.dailyEmailUsage.complained),
+    })
+    .from(schema.dailyEmailUsage)
+    .where(
+      and(
+        eq(schema.dailyEmailUsage.teamId, team.id),
+        gte(schema.dailyEmailUsage.date, isoStartDate),
+        domain ? eq(schema.dailyEmailUsage.domainId, domain) : undefined,
+      ),
+    )
+    .groupBy(schema.dailyEmailUsage.date)
+    .orderBy(asc(schema.dailyEmailUsage.date));
 
   // Fill in any missing dates with 0 values
   const filledResult: DailyEmailUsage[] = [];
@@ -101,12 +111,15 @@ type ReputationMetricsData = {
 export async function reputationMetricsData(input: ReputationMetricsData) {
   const { domain, team } = input;
 
-  const reputations = await db.cumulatedMetrics.findMany({
-    where: {
-      teamId: team.id,
-      ...(domain ? { domainId: domain } : {}),
-    },
-  });
+  const reputations = await drizzleDb
+    .select()
+    .from(schema.cumulatedMetrics)
+    .where(
+      and(
+        eq(schema.cumulatedMetrics.teamId, team.id),
+        domain ? eq(schema.cumulatedMetrics.domainId, domain) : undefined,
+      ),
+    );
 
   const results = reputations.reduce(
     (acc, curr) => {
