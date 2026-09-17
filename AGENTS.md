@@ -8,6 +8,7 @@
 - apps/smtp-server: SMTP proxy/server (TypeScript → tsup build).
 - packages/\*: Shared libraries (email-editor, ui, eslint-config, tailwind-config, typescript-config, sdk).
 - docker/: Dev/compose files; .env\* at repo root define configuration.
+- The dev database is Neon Local (`docker/dev/compose.yml`), a proxy to a real Neon branch — not a local Postgres container. It needs `NEON_PROJECT_ID`, `NEON_API_KEY` and `NEON_BRANCH_ID` in the environment; `.envrc` + direnv is how they get there. In a git worktree, source the main checkout's `.envrc` with `source_env "$(git rev-parse --git-common-dir)/../.envrc"`. Connect on `postgres://neon:npg@localhost:54320/neondb?sslmode=require`. `docker/testing/compose.yml` is still plain postgres:16.
 
 ## Build, Test, and Development Commands
 

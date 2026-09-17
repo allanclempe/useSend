@@ -18,6 +18,9 @@ node_modules
 .envrc.local
 .direnv/
 
+# Neon Local branch state
+.neon_local/
+
 # Testing
 coverage
 .idea
