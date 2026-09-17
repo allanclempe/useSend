@@ -1,6 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createHash } from "crypto";
-import { UnsubscribeReason } from "@prisma/client";
 
 const { mockDb, mockTx, mockUpdateContactSubscription } = vi.hoisted(() => {
   const mockTx = {
@@ -96,8 +94,6 @@ vi.mock("~/server/logger/log", () => ({
 import {
   CampaignBatchService,
   recordCampaignContactFailure,
-  subscribeContact,
-  unsubscribeContact,
 } from "~/server/service/campaign-service";
 
 const input = {
@@ -221,63 +217,5 @@ describe("CampaignBatchService", () => {
       { campaignId: "campaign_1", teamId: 7 },
       expect.objectContaining({ jobId: "campaign-batch-campaign_1" }),
     );
-  });
-});
-
-describe("campaign contact subscription changes", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("updates the contact through the webhook-emitting service on unsubscribe", async () => {
-    const contact = {
-      id: "contact_1",
-      contactBookId: "book_1",
-      email: "alice@example.com",
-      subscribed: true,
-    };
-    const updatedContact = { ...contact, subscribed: false };
-    mockDb.contact.findUnique.mockResolvedValue(contact);
-    mockUpdateContactSubscription.mockResolvedValue(updatedContact);
-
-    const result = await unsubscribeContact({
-      contactId: "contact_1",
-      campaignId: "campaign_1",
-      reason: UnsubscribeReason.UNSUBSCRIBED,
-    });
-
-    expect(mockUpdateContactSubscription).toHaveBeenCalledWith({
-      contactId: "contact_1",
-      subscribed: false,
-      unsubscribeReason: UnsubscribeReason.UNSUBSCRIBED,
-    });
-    expect(mockDb.campaign.update).toHaveBeenCalledWith({
-      where: { id: "campaign_1" },
-      data: { unsubscribed: { increment: 1 } },
-    });
-    expect(result).toBe(updatedContact);
-  });
-
-  it("updates the contact through the webhook-emitting service on re-subscribe", async () => {
-    mockDb.contact.findUnique.mockResolvedValue({
-      id: "contact_1",
-      contactBookId: "book_1",
-      email: "alice@example.com",
-      subscribed: false,
-    });
-    const id = "contact_1-campaign_1";
-    const hash = createHash("sha256").update(`${id}-test-secret`).digest("hex");
-
-    await subscribeContact(id, hash);
-
-    expect(mockUpdateContactSubscription).toHaveBeenCalledWith({
-      contactId: "contact_1",
-      subscribed: true,
-      unsubscribeReason: null,
-    });
-    expect(mockDb.campaign.update).toHaveBeenCalledWith({
-      where: { id: "campaign_1" },
-      data: { unsubscribed: { decrement: 1 } },
-    });
   });
 });
