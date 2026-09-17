@@ -48,10 +48,11 @@ if (isSelfHosted() && isEmailCleanupEnabled()) {
                             isNotNull(schema.email.headers)
                         )
                     )
-                )
-                .returning({id: schema.email.id});
+                );
 
-            logger.info(`[Cleanup] Emails cleaned: ${cleaned.length}`);
+            // `.count` rather than `.returning()`: we only count the rows, and
+            // `.returning()` buffers every id into a JS array to get there.
+            logger.info(`[Cleanup] Emails cleaned: ${cleaned.count}`);
         },
         {
             onCompleted: (job) => {

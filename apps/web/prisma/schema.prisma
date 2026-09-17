@@ -290,6 +290,7 @@ model EmailEvent {
 
   @@index([emailId])
   @@index([teamId])
+  @@index([createdAt])
 }
 
 model ContactBook {

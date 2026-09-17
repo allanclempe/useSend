@@ -1,4 +1,4 @@
-import { lt } from "drizzle-orm";
+import { asc, inArray, lt } from "drizzle-orm";
 import { env } from "~/env";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { isEmailEventRetentionEnabled } from "~/utils/common";
@@ -23,22 +23,61 @@ const CLEANUP_CRON = "30 0 * * *"; // daily, staggered off the email-body cleanu
  */
 let initialized = false;
 
-/** Deletes every `EmailEvent` older than `retentionDays`; returns how many. */
-export async function deleteExpiredEmailEvents(retentionDays: number) {
+/**
+ * Rows per `DELETE`. The first run on an install that has been accumulating
+ * events for years has to remove everything outside the window at once; doing
+ * that in a single statement holds one transaction open over tens of millions
+ * of rows. Batching keeps each transaction short and lets autovacuum keep up.
+ */
+const DELETE_BATCH_SIZE = 10_000;
+
+/**
+ * Deletes every `EmailEvent` older than `retentionDays`; returns how many.
+ *
+ * `batchSize` exists so the tests can cross a batch boundary without seeding
+ * ten thousand rows; callers should leave it alone.
+ */
+export async function deleteExpiredEmailEvents(
+  retentionDays: number,
+  batchSize = DELETE_BATCH_SIZE,
+) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - retentionDays);
 
-  const deleted = await drizzleDb
-    .delete(schema.emailEvent)
-    .where(lt(schema.emailEvent.createdAt, cutoff))
-    .returning({ id: schema.emailEvent.id });
+  let deleted = 0;
+
+  // `.count` rather than `.returning()`: the only thing we do with the deleted
+  // rows is count them, and materialising every id in the Node heap to do that
+  // is how the first run runs out of memory.
+  for (;;) {
+    const batch = await drizzleDb
+      .delete(schema.emailEvent)
+      .where(
+        inArray(
+          schema.emailEvent.id,
+          drizzleDb
+            .select({ id: schema.emailEvent.id })
+            .from(schema.emailEvent)
+            .where(lt(schema.emailEvent.createdAt, cutoff))
+            .orderBy(asc(schema.emailEvent.createdAt))
+            .limit(batchSize),
+        ),
+      );
+
+    deleted += batch.count;
+
+    // A short batch means the cutoff has been reached.
+    if (batch.count < batchSize) {
+      break;
+    }
+  }
 
   logger.info(
-    { deleted: deleted.length, cutoff: cutoff.toISOString() },
+    { deleted, cutoff: cutoff.toISOString() },
     "[EmailEventCleanupJob]: Deleted old email events",
   );
 
-  return deleted.length;
+  return deleted;
 }
 
 export async function initEmailEventCleanupJob() {

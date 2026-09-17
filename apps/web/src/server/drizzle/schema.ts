@@ -122,6 +122,7 @@ export const emailEvent = pgTable("EmailEvent", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	teamId: integer(),
 }, (table) => [
+	index("EmailEvent_createdAt_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamp_ops")),
 	index("EmailEvent_emailId_idx").using("btree", table.emailId.asc().nullsLast().op("text_ops")),
 	index("EmailEvent_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
 	foreignKey({

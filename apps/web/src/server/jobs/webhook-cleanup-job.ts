@@ -21,17 +21,18 @@ let initialized = false;
 /** Deletes every `WebhookCall` older than `retentionDays`; returns how many. */
 export async function deleteExpiredWebhookCalls(retentionDays: number) {
   const cutoff = subDays(new Date(), retentionDays);
+  // `.count` rather than `.returning()`: we only ever count the deleted rows,
+  // and `.returning()` buffers every id into a JS array to get there.
   const deleted = await drizzleDb
     .delete(schema.webhookCall)
-    .where(lt(schema.webhookCall.createdAt, cutoff))
-    .returning({ id: schema.webhookCall.id });
+    .where(lt(schema.webhookCall.createdAt, cutoff));
 
   logger.info(
-    { deleted: deleted.length, cutoff: cutoff.toISOString() },
+    { deleted: deleted.count, cutoff: cutoff.toISOString() },
     "[WebhookCleanupJob]: Deleted old webhook calls",
   );
 
-  return deleted.length;
+  return deleted.count;
 }
 
 export async function initWebhookCleanupJob() {

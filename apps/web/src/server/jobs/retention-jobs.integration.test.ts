@@ -98,6 +98,34 @@ describeIntegration("retention jobs", () => {
 
       expect(await drizzleDb.$count(schema.email)).toBe(1);
     });
+
+    it("keeps deleting past the first batch", async () => {
+      // The delete is batched so the first run on a years-old install does not
+      // hold one transaction over the whole table. Five expired rows and a
+      // batch of two means three round trips, the last one short.
+      for (let i = 0; i < 5; i++) {
+        await seedEvent(`old_${i}`, daysAgo(100 + i));
+      }
+      await seedEvent("recent", daysAgo(10));
+
+      const deleted = await deleteExpiredEmailEvents(90, 2);
+
+      expect(deleted).toBe(5);
+      const remaining = await drizzleDb.select().from(schema.emailEvent);
+      expect(remaining.map((e) => e.id)).toEqual(["recent"]);
+    });
+
+    it("stops cleanly when a full batch empties the table", async () => {
+      // Batch size divides the row count exactly: the loop has to make one more
+      // round trip, see zero rows and stop, rather than spinning.
+      await seedEvent("old_a", daysAgo(100));
+      await seedEvent("old_b", daysAgo(101));
+
+      const deleted = await deleteExpiredEmailEvents(90, 2);
+
+      expect(deleted).toBe(2);
+      expect(await drizzleDb.$count(schema.emailEvent)).toBe(0);
+    });
   });
 
   describe("deleteExpiredWebhookCalls", () => {
