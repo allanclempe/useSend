@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ContactBookSchema } from "~/lib/zod/contact-book-schema";
-import { db } from "~/server/db";
+import { drizzleDb } from "~/server/drizzle";
 import { PublicAPIApp } from "~/server/public-api/hono";
 import {
   createContactBook as createContactBookService,
@@ -54,7 +54,7 @@ function createContactBook(app: PublicAPIApp) {
       body.doubleOptInSubject !== undefined ||
       body.doubleOptInContent !== undefined;
 
-    const contactBook = await db.$transaction(async (tx) => {
+    const contactBook = await drizzleDb.transaction(async (tx) => {
       const created = await createContactBookService(
         team.id,
         body.name,

@@ -4,7 +4,7 @@ import { UnsendApiError } from "~/server/public-api/api-error";
 const {
   mockGetTeamFromToken,
   mockRedis,
-  mockDb,
+  mockDrizzleDb,
   mockCreateContactBook,
   mockUpdateContactBook,
   mockTransactionClient,
@@ -15,14 +15,12 @@ const {
     expire: vi.fn(),
     ttl: vi.fn(),
   },
-  mockDb: {
-    $transaction: vi.fn(),
+  mockDrizzleDb: {
+    transaction: vi.fn(),
   },
   mockCreateContactBook: vi.fn(),
   mockUpdateContactBook: vi.fn(),
-  mockTransactionClient: {
-    contactBook: {},
-  },
+  mockTransactionClient: {},
 }));
 
 vi.mock("~/server/public-api/auth", () => ({
@@ -34,8 +32,8 @@ vi.mock("~/server/redis", () => ({
   redisKey: (key: string) => key,
 }));
 
-vi.mock("~/server/db", () => ({
-  db: mockDb,
+vi.mock("~/server/drizzle", () => ({
+  drizzleDb: mockDrizzleDb,
 }));
 
 vi.mock("~/server/service/contact-book-service", () => ({
@@ -74,7 +72,7 @@ describe("POST /v1/contactBooks", () => {
     mockRedis.incr.mockReset();
     mockRedis.expire.mockReset();
     mockRedis.ttl.mockReset();
-    mockDb.$transaction.mockReset();
+    mockDrizzleDb.transaction.mockReset();
     mockCreateContactBook.mockReset();
     mockUpdateContactBook.mockReset();
 
@@ -89,7 +87,7 @@ describe("POST /v1/contactBooks", () => {
     mockRedis.expire.mockResolvedValue(1);
     mockRedis.ttl.mockResolvedValue(1);
 
-    mockDb.$transaction.mockImplementation(async (callback: any) =>
+    mockDrizzleDb.transaction.mockImplementation(async (callback: any) =>
       callback(mockTransactionClient),
     );
   });
@@ -113,7 +111,7 @@ describe("POST /v1/contactBooks", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockDrizzleDb.transaction).toHaveBeenCalledTimes(1);
     expect(mockCreateContactBook).toHaveBeenCalledWith(
       1,
       "Newsletter",
