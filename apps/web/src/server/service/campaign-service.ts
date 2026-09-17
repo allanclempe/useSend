@@ -26,7 +26,7 @@ function toContact(row: typeof schema.contact.$inferSelect): Contact {
   return { ...row, properties: (row.properties ?? {}) as Contact["properties"] };
 }
 
-function toCampaign(row: typeof schema.campaign.$inferSelect): Campaign {
+export function toCampaign(row: typeof schema.campaign.$inferSelect): Campaign {
   return {
     ...row,
     replyTo: row.replyTo ?? [],

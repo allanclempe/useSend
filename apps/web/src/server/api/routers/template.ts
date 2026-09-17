@@ -1,4 +1,7 @@
-import { Prisma } from "@prisma/client";
+import { and, desc, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { createId } from "~/server/drizzle/id";
+import { withUpdatedAt } from "~/server/drizzle/touch";
 import { TRPCError } from "@trpc/server";
 import { EmailRenderer } from "@usesend/email-editor/src/renderer";
 import { z } from "zod";
@@ -21,33 +24,29 @@ export const templateRouter = createTRPCRouter({
         page: z.number().optional(),
       }),
     )
-    .query(async ({ ctx: { db, team }, input }) => {
+    .query(async ({ ctx: { team }, input }) => {
       const page = input.page || 1;
       const limit = 30;
       const offset = (page - 1) * limit;
 
-      const whereConditions: Prisma.TemplateFindManyArgs["where"] = {
-        teamId: team.id,
-      };
+      const where = eq(schema.template.teamId, team.id);
 
-      const countP = db.template.count({ where: whereConditions });
+      const countP = drizzleDb.$count(schema.template, where);
 
-      const templatesP = db.template.findMany({
-        where: whereConditions,
-        select: {
-          id: true,
-          name: true,
-          subject: true,
-          createdAt: true,
-          updatedAt: true,
-          html: true,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-        skip: offset,
-        take: limit,
-      });
+      const templatesP = drizzleDb
+        .select({
+          id: schema.template.id,
+          name: schema.template.name,
+          subject: schema.template.subject,
+          createdAt: schema.template.createdAt,
+          updatedAt: schema.template.updatedAt,
+          html: schema.template.html,
+        })
+        .from(schema.template)
+        .where(where)
+        .orderBy(desc(schema.template.createdAt))
+        .offset(offset)
+        .limit(limit);
 
       const [templates, count] = await Promise.all([templatesP, countP]);
 
@@ -61,13 +60,18 @@ export const templateRouter = createTRPCRouter({
         subject: z.string(),
       }),
     )
-    .mutation(async ({ ctx: { db, team }, input }) => {
-      const template = await db.template.create({
-        data: {
-          ...input,
-          teamId: team.id,
-        },
-      });
+    .mutation(async ({ ctx: { team }, input }) => {
+      const [template] = await drizzleDb
+        .insert(schema.template)
+        .values(withUpdatedAt({ id: createId(), ...input, teamId: team.id }))
+        .returning();
+
+      if (!template) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to create template",
+        });
+      }
 
       return template;
     }),
@@ -80,7 +84,7 @@ export const templateRouter = createTRPCRouter({
         content: z.string().optional(),
       }),
     )
-    .mutation(async ({ ctx: { db }, input }) => {
+    .mutation(async ({ input }) => {
       const { templateId, ...data } = input;
       let html: string | null = null;
 
@@ -91,29 +95,56 @@ export const templateRouter = createTRPCRouter({
         html = await renderer.render();
       }
 
-      const template = await db.template.update({
-        where: { id: templateId },
-        data: {
-          ...data,
-          html,
-        },
-      });
+      const [template] = await drizzleDb
+        .update(schema.template)
+        .set(withUpdatedAt({ ...data, html }))
+        .where(eq(schema.template.id, templateId))
+        .returning();
+
+      if (!template) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Template not found",
+        });
+      }
+
       return template;
     }),
 
   deleteTemplate: templateProcedure.mutation(
-    async ({ ctx: { db, team }, input }) => {
-      const template = await db.template.delete({
-        where: { id: input.templateId, teamId: team.id },
-      });
+    async ({ ctx: { team }, input }) => {
+      const [template] = await drizzleDb
+        .delete(schema.template)
+        .where(
+          and(
+            eq(schema.template.id, input.templateId),
+            eq(schema.template.teamId, team.id),
+          ),
+        )
+        .returning();
+
+      if (!template) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Template not found",
+        });
+      }
+
       return template;
     },
   ),
 
-  getTemplate: templateProcedure.query(async ({ ctx: { db, team }, input }) => {
-    const template = await db.template.findUnique({
-      where: { id: input.templateId, teamId: team.id },
-    });
+  getTemplate: templateProcedure.query(async ({ ctx: { team }, input }) => {
+    const [template] = await drizzleDb
+      .select()
+      .from(schema.template)
+      .where(
+        and(
+          eq(schema.template.id, input.templateId),
+          eq(schema.template.teamId, team.id),
+        ),
+      )
+      .limit(1);
 
     if (!template) {
       throw new TRPCError({
@@ -131,15 +162,26 @@ export const templateRouter = createTRPCRouter({
   }),
 
   duplicateTemplate: templateProcedure.mutation(
-    async ({ ctx: { db, team, template }, input }) => {
-      const newTemplate = await db.template.create({
-        data: {
-          name: `${template.name} (Copy)`,
-          subject: template.subject,
-          content: template.content,
-          teamId: team.id,
-        },
-      });
+    async ({ ctx: { team, template }, input }) => {
+      const [newTemplate] = await drizzleDb
+        .insert(schema.template)
+        .values(
+          withUpdatedAt({
+            id: createId(),
+            name: `${template.name} (Copy)`,
+            subject: template.subject,
+            content: template.content,
+            teamId: team.id,
+          }),
+        )
+        .returning();
+
+      if (!newTemplate) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to duplicate template",
+        });
+      }
 
       return newTemplate;
     },

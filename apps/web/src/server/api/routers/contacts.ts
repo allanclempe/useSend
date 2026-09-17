@@ -1,4 +1,6 @@
-import { CampaignStatus, Prisma } from "@prisma/client";
+import { CampaignStatus } from "@prisma/client";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
@@ -76,50 +78,52 @@ export const contactsRouter = createTRPCRouter({
         search: z.string().optional(),
       }),
     )
-    .query(async ({ ctx: { db }, input }) => {
+    .query(async ({ input }) => {
       const page = input.page || 1;
       const limit = 30;
       const offset = (page - 1) * limit;
 
-      const whereConditions: Prisma.ContactFindManyArgs["where"] = {
-        contactBookId: input.contactBookId,
-        ...(input.subscribed !== undefined
-          ? { subscribed: input.subscribed }
-          : {}),
-        ...(input.search
-          ? {
-              OR: [
-                { email: { contains: input.search, mode: "insensitive" } },
-                { firstName: { contains: input.search, mode: "insensitive" } },
-                { lastName: { contains: input.search, mode: "insensitive" } },
-              ],
-            }
-          : {}),
-      };
+      const where = and(
+        eq(schema.contact.contactBookId, input.contactBookId),
+        input.subscribed !== undefined
+          ? eq(schema.contact.subscribed, input.subscribed)
+          : undefined,
+        input.search
+          ? or(
+              ilike(schema.contact.email, `%${input.search}%`),
+              ilike(schema.contact.firstName, `%${input.search}%`),
+              ilike(schema.contact.lastName, `%${input.search}%`),
+            )
+          : undefined,
+      );
 
-      const countP = db.contact.count({ where: whereConditions });
+      const countP = drizzleDb.$count(schema.contact, where);
 
-      const contactsP = db.contact.findMany({
-        where: whereConditions,
-        select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          properties: true,
-          subscribed: true,
-          createdAt: true,
-          contactBookId: true,
-          unsubscribeReason: true,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-        skip: offset,
-        take: limit,
-      });
+      const contactsP = drizzleDb
+        .select({
+          id: schema.contact.id,
+          email: schema.contact.email,
+          firstName: schema.contact.firstName,
+          lastName: schema.contact.lastName,
+          properties: schema.contact.properties,
+          subscribed: schema.contact.subscribed,
+          createdAt: schema.contact.createdAt,
+          contactBookId: schema.contact.contactBookId,
+          unsubscribeReason: schema.contact.unsubscribeReason,
+        })
+        .from(schema.contact)
+        .where(where)
+        .orderBy(desc(schema.contact.createdAt))
+        .offset(offset)
+        .limit(limit);
 
-      const [contacts, count] = await Promise.all([contactsP, countP]);
+      const [rows, count] = await Promise.all([contactsP, countP]);
+
+      // jsonb reads as `unknown` in Drizzle; the list expects a string map.
+      const contacts = rows.map((row) => ({
+        ...row,
+        properties: (row.properties ?? {}) as Record<string, string>,
+      }));
 
       return { contacts, totalPage: Math.ceil(count / limit) };
     }),
@@ -256,39 +260,41 @@ export const contactsRouter = createTRPCRouter({
         search: z.string().optional(),
       }),
     )
-    .query(async ({ ctx: { db }, input }) => {
-      const whereConditions: Prisma.ContactFindManyArgs["where"] = {
-        contactBookId: input.contactBookId,
-        ...(input.subscribed !== undefined
-          ? { subscribed: input.subscribed }
-          : {}),
-        ...(input.search
-          ? {
-              OR: [
-                { email: { contains: input.search, mode: "insensitive" } },
-                { firstName: { contains: input.search, mode: "insensitive" } },
-                { lastName: { contains: input.search, mode: "insensitive" } },
-              ],
-            }
-          : {}),
-      };
+    .query(async ({ input }) => {
+      const where = and(
+        eq(schema.contact.contactBookId, input.contactBookId),
+        input.subscribed !== undefined
+          ? eq(schema.contact.subscribed, input.subscribed)
+          : undefined,
+        input.search
+          ? or(
+              ilike(schema.contact.email, `%${input.search}%`),
+              ilike(schema.contact.firstName, `%${input.search}%`),
+              ilike(schema.contact.lastName, `%${input.search}%`),
+            )
+          : undefined,
+      );
 
-      const contacts = await db.contact.findMany({
-        where: whereConditions,
-        select: {
-          email: true,
-          firstName: true,
-          lastName: true,
-          properties: true,
-          subscribed: true,
-          unsubscribeReason: true,
-          createdAt: true,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-        take: 100000, // Limit to 100k contacts to prevent memory issues
-      });
+      const contacts = await drizzleDb
+        .select({
+          email: schema.contact.email,
+          firstName: schema.contact.firstName,
+          lastName: schema.contact.lastName,
+          properties: schema.contact.properties,
+          subscribed: schema.contact.subscribed,
+          unsubscribeReason: schema.contact.unsubscribeReason,
+          createdAt: schema.contact.createdAt,
+        })
+        .from(schema.contact)
+        .where(where)
+        .orderBy(desc(schema.contact.createdAt))
+        .limit(100000) // Cap to prevent memory issues
+        .then((rows) =>
+          rows.map((row) => ({
+            ...row,
+            properties: (row.properties ?? {}) as Record<string, string>,
+          })),
+        );
 
       return contacts;
     }),

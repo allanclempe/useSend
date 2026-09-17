@@ -1,4 +1,8 @@
-import { CampaignStatus, Prisma } from "@prisma/client";
+import { CampaignStatus } from "@prisma/client";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { createId } from "~/server/drizzle/id";
+import { withUpdatedAt } from "~/server/drizzle/touch";
 import { TRPCError } from "@trpc/server";
 import { EmailRenderer } from "@usesend/email-editor/src/renderer";
 import { z } from "zod";
@@ -12,6 +16,7 @@ import {
 import { logger } from "~/server/logger/log";
 import { nanoid } from "~/server/nanoid";
 import * as campaignService from "~/server/service/campaign-service";
+import { toCampaign } from "~/server/service/campaign-service";
 import { validateDomainFromEmail } from "~/server/service/domain-service";
 import {
   getDocumentUploadUrl,
@@ -29,60 +34,44 @@ export const campaignRouter = createTRPCRouter({
         search: z.string().optional().nullable(),
       }),
     )
-    .query(async ({ ctx: { db, team }, input }) => {
+    .query(async ({ ctx: { team }, input }) => {
       const page = input.page || 1;
       const limit = 30;
       const offset = (page - 1) * limit;
 
-      const whereConditions: Prisma.CampaignFindManyArgs["where"] = {
-        teamId: team.id,
-      };
+      const where = and(
+        eq(schema.campaign.teamId, team.id),
+        input.status ? eq(schema.campaign.status, input.status) : undefined,
+        input.search
+          ? or(
+              ilike(schema.campaign.name, `%${input.search}%`),
+              ilike(schema.campaign.subject, `%${input.search}%`),
+            )
+          : undefined,
+      );
 
-      if (input.status) {
-        whereConditions.status = input.status;
-      }
+      const countP = drizzleDb.$count(schema.campaign, where);
 
-      if (input.search) {
-        whereConditions.OR = [
-          {
-            name: {
-              contains: input.search,
-              mode: "insensitive",
-            },
-          },
-          {
-            subject: {
-              contains: input.search,
-              mode: "insensitive",
-            },
-          },
-        ];
-      }
-
-      const countP = db.campaign.count({ where: whereConditions });
-
-      const campaignsP = db.campaign.findMany({
-        where: whereConditions,
-        select: {
-          id: true,
-          name: true,
-          from: true,
-          subject: true,
-          createdAt: true,
-          updatedAt: true,
-          status: true,
-          scheduledAt: true,
-          total: true,
-          sent: true,
-          delivered: true,
-          unsubscribed: true,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-        skip: offset,
-        take: limit,
-      });
+      const campaignsP = drizzleDb
+        .select({
+          id: schema.campaign.id,
+          name: schema.campaign.name,
+          from: schema.campaign.from,
+          subject: schema.campaign.subject,
+          createdAt: schema.campaign.createdAt,
+          updatedAt: schema.campaign.updatedAt,
+          status: schema.campaign.status,
+          scheduledAt: schema.campaign.scheduledAt,
+          total: schema.campaign.total,
+          sent: schema.campaign.sent,
+          delivered: schema.campaign.delivered,
+          unsubscribed: schema.campaign.unsubscribed,
+        })
+        .from(schema.campaign)
+        .where(where)
+        .orderBy(desc(schema.campaign.createdAt))
+        .offset(offset)
+        .limit(limit);
 
       const [campaigns, count] = await Promise.all([campaignsP, countP]);
 
@@ -97,16 +86,27 @@ export const campaignRouter = createTRPCRouter({
         subject: z.string(),
       }),
     )
-    .mutation(async ({ ctx: { db, team }, input }) => {
+    .mutation(async ({ ctx: { team }, input }) => {
       const domain = await validateDomainFromEmail(input.from, team.id);
 
-      const campaign = await db.campaign.create({
-        data: {
-          ...input,
-          teamId: team.id,
-          domainId: domain.id,
-        },
-      });
+      const [campaign] = await drizzleDb
+        .insert(schema.campaign)
+        .values(
+          withUpdatedAt({
+            id: createId(),
+            ...input,
+            teamId: team.id,
+            domainId: domain.id,
+          }),
+        )
+        .returning();
+
+      if (!campaign) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to create campaign",
+        });
+      }
 
       return campaign;
     }),
@@ -124,12 +124,19 @@ export const campaignRouter = createTRPCRouter({
         replyTo: z.string().array().optional(),
       }),
     )
-    .mutation(async ({ ctx: { db, team, campaign: campaignOld }, input }) => {
+    .mutation(async ({ ctx: { team, campaign: campaignOld }, input }) => {
       const { html: htmlInput, campaignId, ...data } = input;
       if (data.contactBookId) {
-        const contactBook = await db.contactBook.findUnique({
-          where: { id: data.contactBookId, teamId: team.id },
-        });
+        const [contactBook] = await drizzleDb
+          .select({ id: schema.contactBook.id })
+          .from(schema.contactBook)
+          .where(
+            and(
+              eq(schema.contactBook.id, data.contactBookId),
+              eq(schema.contactBook.teamId, team.id),
+            ),
+          )
+          .limit(1);
 
         if (!contactBook) {
           throw new TRPCError({
@@ -155,7 +162,7 @@ export const campaignRouter = createTRPCRouter({
         htmlToSave = htmlInput;
       }
 
-      const campaignUpdateData: Prisma.CampaignUpdateInput = {
+      const campaignUpdateData: Partial<typeof schema.campaign.$inferInsert> = {
         ...data,
         domainId,
       };
@@ -164,10 +171,19 @@ export const campaignRouter = createTRPCRouter({
         campaignUpdateData.html = htmlToSave;
       }
 
-      const campaign = await db.campaign.update({
-        where: { id: campaignId },
-        data: campaignUpdateData,
-      });
+      const [campaign] = await drizzleDb
+        .update(schema.campaign)
+        .set(withUpdatedAt(campaignUpdateData))
+        .where(eq(schema.campaign.id, campaignId))
+        .returning();
+
+      if (!campaign) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Campaign not found",
+        });
+      }
+
       return campaign;
     }),
 
@@ -175,10 +191,17 @@ export const campaignRouter = createTRPCRouter({
     return await campaignService.deleteCampaign(input.campaignId, team.id);
   }),
 
-  getCampaign: campaignProcedure.query(async ({ ctx: { db, team }, input }) => {
-    const campaign = await db.campaign.findUnique({
-      where: { id: input.campaignId, teamId: team.id },
-    });
+  getCampaign: campaignProcedure.query(async ({ ctx: { team }, input }) => {
+    const [campaign] = await drizzleDb
+      .select()
+      .from(schema.campaign)
+      .where(
+        and(
+          eq(schema.campaign.id, input.campaignId),
+          eq(schema.campaign.teamId, team.id),
+        ),
+      )
+      .limit(1);
 
     if (!campaign) {
       throw new TRPCError({
@@ -190,37 +213,59 @@ export const campaignRouter = createTRPCRouter({
     const imageUploadSupported = isStorageConfigured();
 
     if (campaign?.contactBookId) {
-      const contactBook = await db.contactBook.findUnique({
-        where: { id: campaign.contactBookId, teamId: team.id },
-      });
-      return { ...campaign, contactBook, imageUploadSupported };
+      const [contactBook] = await drizzleDb
+        .select()
+        .from(schema.contactBook)
+        .where(
+          and(
+            eq(schema.contactBook.id, campaign.contactBookId),
+            eq(schema.contactBook.teamId, team.id),
+          ),
+        )
+        .limit(1);
+      return {
+        ...toCampaign(campaign),
+        contactBook: contactBook
+          ? {
+              ...contactBook,
+              // jsonb reads as `unknown`; the editor expects a string map.
+              properties: (contactBook.properties ?? {}) as Record<
+                string,
+                string
+              >,
+            }
+          : null,
+        imageUploadSupported,
+      };
     }
     return {
-      ...campaign,
+      ...toCampaign(campaign),
       contactBook: null,
       imageUploadSupported,
     };
   }),
 
   latestEmails: campaignProcedure.query(
-    async ({ ctx: { db, team, campaign } }) => {
-      const emails = await db.email.findMany({
-        where: {
-          teamId: team.id,
-          campaignId: campaign.id,
-        },
-        orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-        take: 10,
-        select: {
-          id: true,
-          subject: true,
-          to: true,
-          latestStatus: true,
-          createdAt: true,
-          updatedAt: true,
-          scheduledAt: true,
-        },
-      });
+    async ({ ctx: { team, campaign } }) => {
+      const emails = await drizzleDb
+        .select({
+          id: schema.email.id,
+          subject: schema.email.subject,
+          to: schema.email.to,
+          latestStatus: schema.email.latestStatus,
+          createdAt: schema.email.createdAt,
+          updatedAt: schema.email.updatedAt,
+          scheduledAt: schema.email.scheduledAt,
+        })
+        .from(schema.email)
+        .where(
+          and(
+            eq(schema.email.teamId, team.id),
+            eq(schema.email.campaignId, campaign.id),
+          ),
+        )
+        .orderBy(desc(schema.email.updatedAt), desc(schema.email.createdAt))
+        .limit(10);
 
       return emails;
     },
@@ -238,23 +283,34 @@ export const campaignRouter = createTRPCRouter({
     }),
 
   duplicateCampaign: campaignProcedure.mutation(
-    async ({ ctx: { db, team, campaign } }) => {
-      const newCampaign = await db.campaign.create({
-        data: {
-          name: `${campaign.name} (Copy)`,
-          from: campaign.from,
-          replyTo: campaign.replyTo,
-          cc: campaign.cc,
-          bcc: campaign.bcc,
-          subject: campaign.subject,
-          previewText: campaign.previewText,
-          content: campaign.content,
-          html: campaign.html,
-          teamId: team.id,
-          domainId: campaign.domainId,
-          contactBookId: campaign.contactBookId,
-        },
-      });
+    async ({ ctx: { team, campaign } }) => {
+      const [newCampaign] = await drizzleDb
+        .insert(schema.campaign)
+        .values(
+          withUpdatedAt({
+            id: createId(),
+            name: `${campaign.name} (Copy)`,
+            from: campaign.from,
+            replyTo: campaign.replyTo,
+            cc: campaign.cc,
+            bcc: campaign.bcc,
+            subject: campaign.subject,
+            previewText: campaign.previewText,
+            content: campaign.content,
+            html: campaign.html,
+            teamId: team.id,
+            domainId: campaign.domainId,
+            contactBookId: campaign.contactBookId,
+          }),
+        )
+        .returning();
+
+      if (!newCampaign) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to duplicate campaign",
+        });
+      }
 
       return newCampaign;
     },
