@@ -1,6 +1,20 @@
 import IORedis from "ioredis";
 import { env } from "~/env";
 
+/**
+ * Redis, under Node only.
+ *
+ * **Nothing outside a driver may import this module.** The connection below is
+ * cached in module scope, and Workers ties an I/O object to the request that
+ * opened it — so inside a Worker isolate this object serves exactly one
+ * invocation and then hangs every one after it, with no error. That is not a
+ * bug to be fixed here; it is why the seams exist. Reach Redis through
+ * `server/cache`, `server/rate-limit`, `server/idempotency` or
+ * `server/queue/bullmq-driver`, each of which the runtime swaps for a
+ * Cloudflare primitive.
+ *
+ * Phase 10 (#12) deletes this file along with `ioredis` and `bullmq`.
+ */
 export let connection: IORedis | null = null;
 
 /**
@@ -32,41 +46,3 @@ export const getRedis = () => {
   }
   return connection;
 };
-
-/**
- * Simple Redis caching helper. Stores JSON-serialized values under `key` for `ttlSeconds`.
- * If the key exists, returns the parsed value; otherwise, runs `fetcher`, caches, and returns it.
- */
-export async function withCache<T>(
-  key: string,
-  fetcher: () => Promise<T>,
-  options?: { ttlSeconds?: number; disable?: boolean },
-): Promise<T> {
-  const { ttlSeconds = 120, disable = false } = options ?? {};
-
-  const redis = getRedis();
-  const prefixedKey = redisKey(key);
-
-  if (!disable) {
-    const cached = await redis.get(prefixedKey);
-    if (cached) {
-      try {
-        return JSON.parse(cached) as T;
-      } catch {
-        // fallthrough to refresh cache
-      }
-    }
-  }
-
-  const value = await fetcher();
-
-  if (!disable) {
-    try {
-      await redis.setex(prefixedKey, ttlSeconds, JSON.stringify(value));
-    } catch {
-      // ignore cache set errors
-    }
-  }
-
-  return value;
-}

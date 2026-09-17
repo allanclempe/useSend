@@ -35,7 +35,7 @@ Redis carries five unrelated responsibilities. Only the first is a queue.
 | 2 | Per-webhook ordering lock | `SET NX PX` + Lua release (`webhook-service.ts:681-703`) | **Durable Object per `webhookId`** — the lock is deleted, not ported |
 | 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** (needs strong consistency) |
 | 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Rate Limiting binding**, or a DO for exact counts |
-| 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` (`team-service.ts:398`) | **Workers KV** with TTL |
+| 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` (`team-service.ts:398`) | **Workers KV** with TTL — `server/cache/`, **done** |
 
 **Do not use KV for #3 or #4.** KV is eventually consistent (~60s global propagation). Idempotency
 and rate limiting both need read-after-write. KV is correct for #5 only.
@@ -461,7 +461,7 @@ requires a Cloudflare account.
      producer has exactly one message to send. The win is entirely consumer-side.
   2. **`SUPPORTED_SES_REGIONS` needs a product decision.** Thirteen regions are pre-declared; the
      list is a default, not an answer.
-  3. **Domain verification is blocked on Phase 9** — see below.
+  3. ~~**Domain verification is blocked on Phase 9**~~ — cleared by Phase 9's cache seam, below.
   4. **Idempotency for the remaining consumers.** The send path has its claim-UPDATE (§4.5) and
      webhook delivery is serialised by its Durable Object, but `contact-bulk-add` and
      `campaign-batch` are at-least-once with no guard beyond the natural idempotence of an upsert
@@ -470,14 +470,19 @@ requires a Cloudflare account.
      logged at error severity with its source queue — which is §11's alerting path. Nobody has
      written the alert.
 - **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
-  - **`domain-service.ts` blocks domain verification on Workers, and Phase 8 cannot fix it.**
-    `getDomainVerificationState` (`domain-service.ts:130`) reads three keys from Redis on every
-    domain, and `server/redis.ts` caches the ioredis connection in a module-level `let`. Under
-    `wrangler dev` that works for exactly one invocation and then hangs: measured, the hourly cron's
-    first page ran and its continuation and the next cron both stalled, which is §8's "a cached
-    connection serves exactly one request" in the wild. Nothing in Phase 8 touches it — the queue
-    and the paging around it are correct — so **domain verification is not usable on Workers until
-    this moves to KV**. It is the only job in Phase 8 with that dependency.
+  **In progress.** The cache half is done and **the domain verification blocker is cleared**.
+
+  `getDomainVerificationState` used to read three Redis keys per domain, through the module-level
+  `let` in `server/redis.ts` — which on Workers serves exactly one invocation and then hangs, so
+  the hourly cron's first page ran and both its continuation and the next cron stalled. It is now
+  a single Workers KV value per domain behind `server/cache`, which also cuts the sweep from six
+  binding calls per domain to two against the 1000-subrequest cap.
+
+  The seam is `server/cache/` — `CacheStore` with a KV driver and a Redis driver, picked by
+  `isWorkersRuntime()` exactly the way the queue seam picks BullMQ or Queues. `withCache` moved
+  there from `server/redis.ts` unchanged. Two KV properties the callers have to live with, and do:
+  **no TTL below 60 seconds**, and **no conditional write** — so `CacheStore.add` is exact on Redis
+  and best-effort on KV, which is only ever used for notification cooldowns.
 - **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
   from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
 

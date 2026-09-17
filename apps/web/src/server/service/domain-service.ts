@@ -6,7 +6,7 @@ import { env } from "~/env";
 import { renderDomainVerificationStatusEmail } from "~/server/email-templates";
 import { logger } from "~/server/logger/log";
 import { sendMail } from "~/server/mailer";
-import { getRedis, redisKey } from "~/server/redis";
+import { cacheAdd, cacheDelete, cacheGet, cachePut } from "~/server/cache";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { withUpdatedAt } from "~/server/drizzle/touch";
 
@@ -114,9 +114,52 @@ function withDnsRecords<T extends Domain>(
 
 const dnsResolveTxt = util.promisify(dns.resolveTxt);
 
-function getDomainVerificationKey(kind: string, domainId: number) {
-  return redisKey(`domain:verification:${kind}:${domainId}`);
+/**
+ * Domain verification bookkeeping: what the sweep remembers about a domain
+ * between runs.
+ *
+ * This is the state that blocked domain verification on Workers. It used to be
+ * three Redis keys read with `MGET`, and `server/redis.ts` caches its ioredis
+ * connection in a module-level `let` — which on Workers serves exactly one
+ * invocation and then hangs, because the runtime ties an I/O object to the
+ * request that opened it. Measured under `wrangler dev`: page one of the hourly
+ * sweep ran, and both its continuation and the next cron stalled.
+ *
+ * It is now one KV value per domain rather than three keys. Not cosmetic: every
+ * binding call is a subrequest against a cap of 1000 per invocation, the page
+ * size is 25 domains, and `refreshDomainVerification` already spends several
+ * subrequests per domain on SES and DNS. One read and one write instead of
+ * three and three is the difference between comfortable headroom and arithmetic.
+ *
+ * KV's eventual consistency is the right trade here and it is worth saying why:
+ * the only reader is an hourly sweep, the recheck intervals are six hours and
+ * thirty days, and the value is advisory — losing it re-checks a domain sooner
+ * than necessary, which is the harmless direction.
+ */
+type StoredDomainVerificationState = {
+  hasEverVerified?: boolean;
+  lastCheckedAt?: string | null;
+  lastNotifiedStatus?: string | null;
+};
+
+function domainVerificationKey(domainId: number) {
+  return `domain:verification:${domainId}`;
 }
+
+/**
+ * Short-lived guard against sending the same status notification twice.
+ *
+ * Best-effort on KV — `CacheStore.add` explains why — and that is acceptable
+ * precisely here: the sweep is serialised (an hourly cron whose continuation
+ * queue runs at `max_concurrency` 1), so there is no concurrency to lose a race
+ * against in the first place, and if there were, the cost is one duplicate
+ * email. `lastNotifiedStatus` is the durable half of the same guard.
+ */
+function domainNotificationLockKey(domainId: number, status: DomainStatus) {
+  return `domain:verification:notify-lock:${domainId}:${status}`;
+}
+
+const DOMAIN_NOTIFICATION_LOCK_TTL_SECONDS = 300;
 
 function normalizeDate(value: string | null | undefined) {
   if (!value) {
@@ -130,49 +173,43 @@ function normalizeDate(value: string | null | undefined) {
 async function getDomainVerificationState(
   domainId: number,
 ): Promise<DomainVerificationState> {
-  const redis = getRedis();
-  const [lastCheckedValue, lastNotifiedStatusValue, hasEverVerifiedValue] =
-    await redis.mget([
-      getDomainVerificationKey("last-check", domainId),
-      getDomainVerificationKey("last-notified-status", domainId),
-      getDomainVerificationKey("has-ever-verified", domainId),
-    ]);
+  const raw = await cacheGet(domainVerificationKey(domainId));
+
+  let stored: StoredDomainVerificationState = {};
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        stored = parsed as StoredDomainVerificationState;
+      }
+    } catch {
+      // A value we cannot read is a value we do not have. The sweep re-checks
+      // the domain, which is the safe direction.
+    }
+  }
 
   return {
-    hasEverVerified: hasEverVerifiedValue === "1",
-    lastCheckedAt: normalizeDate(lastCheckedValue),
+    hasEverVerified: stored.hasEverVerified === true,
+    lastCheckedAt: normalizeDate(stored.lastCheckedAt),
     lastNotifiedStatus: DOMAIN_STATUS_VALUES.has(
-      (lastNotifiedStatusValue ?? "") as DomainStatus,
+      (stored.lastNotifiedStatus ?? "") as DomainStatus,
     )
-      ? (lastNotifiedStatusValue as DomainStatus)
+      ? (stored.lastNotifiedStatus as DomainStatus)
       : null,
   };
 }
 
-async function setDomainVerificationCheckedAt(
+async function putDomainVerificationState(
   domainId: number,
-  checkedAt: Date,
+  state: DomainVerificationState,
 ) {
-  await getRedis().set(
-    getDomainVerificationKey("last-check", domainId),
-    checkedAt.toISOString(),
-  );
-}
-
-async function markDomainEverVerified(domainId: number) {
-  await getRedis().set(
-    getDomainVerificationKey("has-ever-verified", domainId),
-    "1",
-  );
-}
-
-async function setLastNotifiedDomainStatus(
-  domainId: number,
-  status: DomainStatus,
-) {
-  await getRedis().set(
-    getDomainVerificationKey("last-notified-status", domainId),
-    status,
+  await cachePut(
+    domainVerificationKey(domainId),
+    JSON.stringify({
+      hasEverVerified: state.hasEverVerified,
+      lastCheckedAt: state.lastCheckedAt?.toISOString() ?? null,
+      lastNotifiedStatus: state.lastNotifiedStatus,
+    } satisfies StoredDomainVerificationState),
   );
 }
 
@@ -180,23 +217,13 @@ async function reserveDomainStatusNotification(
   domainId: number,
   status: DomainStatus,
 ) {
-  const result = await getRedis().set(
-    getDomainVerificationKey(`notification-lock:${status}`, domainId),
-    "1",
-    "EX",
-    300,
-    "NX",
-  );
-
-  return result === "OK";
+  return await cacheAdd(domainNotificationLockKey(domainId, status), "1", {
+    ttlSeconds: DOMAIN_NOTIFICATION_LOCK_TTL_SECONDS,
+  });
 }
 
 async function clearDomainVerificationState(domainId: number) {
-  await getRedis().del(
-    getDomainVerificationKey("last-check", domainId),
-    getDomainVerificationKey("last-notified-status", domainId),
-    getDomainVerificationKey("has-ever-verified", domainId),
-  );
+  await cacheDelete(domainVerificationKey(domainId));
 }
 
 function shouldContinueVerifying(
@@ -555,19 +582,24 @@ export async function refreshDomainVerification(
     });
   }
 
-  await setDomainVerificationCheckedAt(domain.id, checkedAt);
+  // One write where there used to be two, because the state is one value now.
+  // `hasEverVerified` latches: a domain that has verified once is never
+  // un-verified, which is what makes the recheck interval thirty days.
+  const nextState: DomainVerificationState = {
+    hasEverVerified:
+      verificationState.hasEverVerified ||
+      updatedDomain.status === DomainStatus.SUCCESS,
+    lastCheckedAt: checkedAt,
+    lastNotifiedStatus: verificationState.lastNotifiedStatus,
+  };
 
-  if (updatedDomain.status === DomainStatus.SUCCESS) {
-    await markDomainEverVerified(domain.id);
-  }
+  await putDomainVerificationState(domain.id, nextState);
 
   if (
     shouldSendDomainStatusNotification({
       previousStatus,
       currentStatus: updatedDomain.status,
-      hasEverVerified:
-        verificationState.hasEverVerified ||
-        updatedDomain.status === DomainStatus.SUCCESS,
+      hasEverVerified: nextState.hasEverVerified,
       lastNotifiedStatus: verificationState.lastNotifiedStatus,
     })
   ) {
@@ -582,7 +614,10 @@ export async function refreshDomainVerification(
           domain: updatedDomain,
           previousStatus,
         });
-        await setLastNotifiedDomainStatus(domain.id, updatedDomain.status);
+        await putDomainVerificationState(domain.id, {
+          ...nextState,
+          lastNotifiedStatus: updatedDomain.status,
+        });
       } catch (error) {
         logger.error(
           { err: error, domainId: domain.id, status: updatedDomain.status },

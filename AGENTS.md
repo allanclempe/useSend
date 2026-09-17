@@ -94,6 +94,21 @@ Things that behave differently inside the Worker, by design:
 - **Storage is a Worker capability.** `storage-service.ts` runs on the R2
   binding, so under Node `isStorageConfigured()` is false and the editors hide
   the image picker. `/storage/*` on the Worker serves uploads and downloads.
+- **Never import `server/redis.ts` outside a driver.** It caches its connection
+  in a module-level `let`, and Workers ties an I/O object to the request that
+  opened it — so inside a Worker that connection serves one invocation and then
+  hangs, silently. Cache goes through `server/cache` (Workers KV / Redis).
+  Anything needing read-after-write — a counter, a dedup guard — cannot use KV
+  and belongs on a Durable Object.
+- **KV cannot express a TTL under 60 seconds**, and its reads, writes, deletes
+  and negative lookups are all eventually consistent within roughly that window.
+  `CacheStore.add` is therefore exact on Redis and best-effort on KV; the only
+  callers are notification cooldowns, where losing the race costs a duplicate
+  email.
+- **KV namespaces and Durable Object bindings live in `server/binding-registry.ts`**,
+  and `binding-registry.unit.test.ts` fails if `wrangler.jsonc` disagrees. Same
+  rule as queues: **adding one means editing both**, plus a `migrations` entry
+  for a new Durable Object class and an `export` from `src/worker/index.ts`.
 - **`wrangler dev` writes nothing to Cloudflare.** Never run `wrangler deploy` or
   `wrangler login` without being asked.
 

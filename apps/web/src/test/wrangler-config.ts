@@ -59,6 +59,17 @@ export function parseJsonc(source: string): unknown {
 
 export type WranglerConfig = {
   triggers?: { crons?: string[] };
+  kv_namespaces?: Array<{ binding: string; id: string }>;
+  durable_objects?: {
+    bindings?: Array<{ name: string; class_name: string }>;
+  };
+  migrations?: Array<{
+    tag: string;
+    new_sqlite_classes?: string[];
+    new_classes?: string[];
+    deleted_classes?: string[];
+    renamed_classes?: Array<{ from: string; to: string }>;
+  }>;
   queues?: {
     producers?: Array<{ queue: string; binding: string }>;
     consumers?: Array<{

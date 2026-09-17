@@ -12,19 +12,6 @@ import {
   refreshDomainVerification,
 } from "~/server/service/domain-service";
 
-/**
- * A warning that belongs here rather than in the migration doc alone: **this
- * job does not yet work on Workers, and the reason is not in this file.**
- *
- * `isDomainVerificationDue` reads Redis through `getDomainVerificationState`,
- * and `server/redis.ts` caches the ioredis connection in a module-level `let`.
- * Workers ties an I/O object to the request that created it, so that connection
- * serves exactly one invocation and then hangs every one after it — observed
- * under `wrangler dev`, where page one ran and its continuation stalled.
- *
- * The paging below is correct and independent of it. The fix is Phase 9 moving
- * domain verification state to KV (§1, item 5).
- */
 let initialized = false;
 
 /**

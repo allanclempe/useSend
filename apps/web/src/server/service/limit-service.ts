@@ -4,7 +4,7 @@ import { getThisMonthUsage } from "./usage-service";
 import { TeamService } from "./team-service";
 import { eq } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
-import { withCache } from "../redis";
+import { withCache } from "~/server/cache";
 import { logger } from "../logger/log";
 import { Plan } from "~/types/db";
 
