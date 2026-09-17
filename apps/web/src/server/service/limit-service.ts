@@ -29,7 +29,10 @@ export class LimitService {
     }
 
     const team = await TeamService.getTeamCached(teamId);
-    const currentCount = await drizzleDb.$count(schema.domain, eq(schema.domain.teamId, teamId));
+    const currentCount = await drizzleDb.$count(
+      schema.domain,
+      eq(schema.domain.teamId, teamId),
+    );
 
     const limit = PLAN_LIMITS[getActivePlan(team)].domains;
     if (isLimitExceeded(currentCount, limit)) {
@@ -57,7 +60,10 @@ export class LimitService {
     }
 
     const team = await TeamService.getTeamCached(teamId);
-    const currentCount = await drizzleDb.$count(schema.contactBook, eq(schema.contactBook.teamId, teamId));
+    const currentCount = await drizzleDb.$count(
+      schema.contactBook,
+      eq(schema.contactBook.teamId, teamId),
+    );
 
     const limit = PLAN_LIMITS[getActivePlan(team)].contactBooks;
     if (isLimitExceeded(currentCount, limit)) {
@@ -85,7 +91,10 @@ export class LimitService {
     }
 
     const team = await TeamService.getTeamCached(teamId);
-    const currentCount = await drizzleDb.$count(schema.teamUser, eq(schema.teamUser.teamId, teamId));
+    const currentCount = await drizzleDb.$count(
+      schema.teamUser,
+      eq(schema.teamUser.teamId, teamId),
+    );
 
     const limit = PLAN_LIMITS[getActivePlan(team)].teamMembers;
     if (isLimitExceeded(currentCount, limit)) {
@@ -113,7 +122,10 @@ export class LimitService {
     }
 
     const team = await TeamService.getTeamCached(teamId);
-    const currentCount = await drizzleDb.$count(schema.webhook, eq(schema.webhook.teamId, teamId));
+    const currentCount = await drizzleDb.$count(
+      schema.webhook,
+      eq(schema.webhook.teamId, teamId),
+    );
 
     const limit = PLAN_LIMITS[getActivePlan(team)].webhooks;
     if (isLimitExceeded(currentCount, limit)) {
