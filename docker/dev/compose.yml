@@ -14,7 +14,14 @@ services:
     container_name: use-send-db
     restart: unless-stopped
     environment:
-      DRIVER: serverless
+      # postgres, not serverless: the app connects with postgres-js over plain
+      # TCP. #21 rejected the Neon HTTP driver because it supports neither the
+      # interactive transactions nor the pg_advisory_xact_lock in the auth path.
+      # The v1.5 image never reads DRIVER — it always starts PgBouncer, the
+      # WebSocket proxy and Envoy — so this documents intent rather than
+      # switching anything. Correct it anyway; `serverless` here would describe
+      # a driver choice we deliberately did not make.
+      DRIVER: postgres
       NEON_PROJECT_ID: ${NEON_PROJECT_ID:?set NEON_PROJECT_ID in .env or .envrc}
       NEON_API_KEY: ${NEON_API_KEY:?set NEON_API_KEY in .env or .envrc}
       DELETE_BRANCH: "false"
