@@ -1,0 +1,22 @@
+# Standalone prototype — NOT part of the useSend Worker deployment.
+# Local only: `pnpm install --ignore-workspace && pnpm experiment`.
+# Never `wrangler deploy` this.
+name = "do-hibernation-probe"
+main = "src/worker.ts"
+compatibility_date = "2025-09-01"
+
+[durable_objects]
+bindings = [{ name = "PROBE", class_name = "SchedulerProbe" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SchedulerProbe"]
+
+# Both point at servers `run.mjs` starts. STUB_URL stands in for the
+# Hyperdrive/Neon "which campaigns are due?" query and the queue send that the
+# real campaign-scheduler tick performs, so the alarm handler makes a genuine
+# subrequest with real latency. TCP_SINK is the socket the open-socket scenario
+# holds open — a pooled Postgres connection, in miniature.
+[vars]
+STUB_URL = "http://127.0.0.1:8797"
+TCP_SINK = "127.0.0.1:8798"
