@@ -1,14 +1,17 @@
 /**
- * Stamps `updatedAt` on a Drizzle update payload.
+ * Stamps `updatedAt` on a Drizzle write payload.
  *
  * 15 models declare `@updatedAt`, which Prisma maintained client-side — the
- * columns have no database default and there are no triggers. So every Drizzle
- * `.set()` has to supply it, and forgetting fails **silently**: the row updates
- * fine and the timestamp just goes stale. (Inserts fail loudly instead, since
- * the column is NOT NULL with no default.)
+ * columns have no database default and there are no triggers, so every write
+ * has to supply it.
  *
- * Wrapping every update in this keeps that from being 15 models' worth of
- * things to remember.
+ * **Use this on inserts as well as updates.** Today an insert cannot forget it
+ * (all 15 columns are NOT NULL with no default, so TypeScript refuses to
+ * compile), while an update that forgets it fails silently and lets the
+ * timestamp go stale. Applying the helper only to updates would be correct but
+ * relies on that NOT NULL guarantee holding forever — one nullable timestamp
+ * added later and inserts go quiet too. One rule is cheaper to keep than a rule
+ * with a caveat.
  */
 export function withUpdatedAt<T extends Record<string, unknown>>(
   data: T,

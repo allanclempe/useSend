@@ -440,18 +440,19 @@ export async function createDomain(
 
   const [domain] = await drizzleDb
     .insert(schema.domain)
-    .values({
-      name,
-      publicKey,
-      teamId,
-      subdomain,
-      region,
-      sesTenantId,
-      dkimSelector,
-      dkimStatus: DomainStatus.NOT_STARTED,
-      spfDetails: DomainStatus.NOT_STARTED,
-      updatedAt: new Date(),
-    })
+    .values(
+      withUpdatedAt({
+        name,
+        publicKey,
+        teamId,
+        subdomain,
+        region,
+        sesTenantId,
+        dkimSelector,
+        dkimStatus: DomainStatus.NOT_STARTED,
+        spfDetails: DomainStatus.NOT_STARTED,
+      }),
+    )
     .returning();
 
   if (!domain) {
