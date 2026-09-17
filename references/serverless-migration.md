@@ -94,7 +94,25 @@ and the settings UI needs copy saying so.
 
 `campaign-scheduler-job.ts:12` — `SCHEDULER_TICK_MS = 1500`. Cron Triggers floor at 1 minute, so
 this one job must be a **Durable Object with a self-rescheduling alarm**, not a Cron Trigger.
-No behaviour change required, unlike the EventBridge design.
+
+**Measured: keep the alarm, drop the 1.5s.** A Durable Object is only removed from memory after
+10s of inactivity, so one that re-arms every 1.5s never leaves it — the constructor runs once and
+the object sits resident for as long as the tick keeps running. Whether that resident time is
+*billed* hangs on a distinction in Cloudflare's pricing wording that cannot be settled without an
+account, and the two readings are 30x apart (§12). **A 30s tick makes the question moot**: at any
+interval past 10s the object is evicted between every alarm, measured. The cost is up to 30s of
+scheduling jitter, which is invisible against `batchWindowMinutes` (minutes) and scheduled sends
+(minute precision) — and §4.5 already accepts one tick of jitter on the same path.
+
+Two constraints on the DO follow, and neither is optional:
+
+- **It must not hold a Postgres connection.** A held-open outbound socket makes a Durable Object
+  ineligible for hibernation, so it is billed wall-clock however coarse the tick. Measured: the
+  same object that was evicted between every 15s alarm stayed resident across all of them with one
+  socket open. A pooled Neon/Hyperdrive connection in the scheduler DO is exactly this. Have the
+  alarm enqueue and let a Queues consumer touch the database, or query over HTTP.
+- **Nothing may be left pending across a tick** — no `setTimeout`, no `setInterval`, no unawaited
+  in-flight `fetch()`. Each was measured to pin the object on its own.
 
 ### 4.3 Workers CPU and subrequest limits vs unbounded loops
 
@@ -321,8 +339,9 @@ requires a Cloudflare account.
   end-to-end with the smallest blast radius.
   - **Instrument CPU-ms per send and per event here.** It is the one number in §12 that is estimated
     rather than measured, and this phase is the cheapest place to measure it.
-  - **Prototype Durable Object hibernation** under a 1.5s alarm before committing to the scheduler
-    design. A 30x cost swing rides on it (§12).
+  - **Durable Object hibernation is measured** — `prototypes/do-hibernation`, results in §12. At a
+    1.5s alarm the object never leaves memory; the scheduler ticks at 30s instead (§4.2). What is
+    left to confirm on a real account is the billing, not the behaviour.
 - **Phase 6 — better-auth.** Auth swap plus session/account data migration. Sequence before the
   framework rip, since TanStack Start has no NextAuth story.
 - **Phase 7 — TanStack Start.** Rip Next.js: 126 files under `src/app`. **All 17 tRPC routers are
@@ -455,15 +474,79 @@ Re-run on real Workers once #7's account access exists.
 
 **1. Durable Object duration — bites on day one, not at scale.**
 
-DO duration bills wall-clock time while running *or idle but unable to hibernate*: 400,000 GB-s
-included, then $12.50/million GB-s.
+DO duration bills wall-clock time while running *or idle in memory but unable to hibernate*:
+400,000 GB-s included, then $12.50/million GB-s, metered against 128 MB per object whatever it
+actually uses.
 
-The campaign-scheduler DO alarms every 1.5s forever (§4.2). If it stays resident it burns
-~328,000 GB-s/month — **82% of the entire allowance at zero email volume**. If it hibernates
-cleanly between alarms it is ~11,000 GB-s. A 30x swing decided by implementation detail.
+The campaign-scheduler DO alarms every 1.5s forever (§4.2). If resident time is billed it burns
+~332,000 GB-s/month — **83% of the entire allowance at zero email volume**. If idle-but-eligible
+time is free it is 4,000–11,000 GB-s. A 30x swing on a **fixed cost independent of volume**, which
+makes it the only thing here that can surprise you while still small.
 
-This is a **fixed cost independent of volume**, which makes it the only thing here that can
-surprise you while still small. Prototype it in Phase 5.
+### DO residency under a 1.5s alarm — measured
+
+Measured by `prototypes/do-hibernation` (`pnpm experiment`), a Durable Object shaped like the
+campaign scheduler running against real `workerd` under `wrangler dev`. Residency is read off
+instance identity: each instance mints an id in its constructor, so an alarm handled by an instance
+that has handled no earlier alarm means the object was evicted and rebuilt in between.
+
+| Alarm interval | Alarms on a fresh instance | Result |
+|---|---|---|
+| **1500ms** (today's tick) | 0 of 39 | **Never evicted.** One instance handled all 40 alarms, 60s old at the last. |
+| 3000ms | 0 of 7 | Never evicted |
+| 6000ms | 0 of 5 | Never evicted |
+| 9000ms | 0 of 4 | Never evicted |
+| 11000ms | 4 of 4 | **Evicted between every alarm** — each handler ran on a 9ms-old instance |
+| 15000ms | 3 of 3 | Evicted between every alarm |
+| 30000ms | 3 of 3 | Evicted between every alarm |
+
+The cliff sits between 9s and 11s, which is Cloudflare's documented rule: a Durable Object
+hibernates after **10 seconds of inactivity**, and is evicted outright after 70–140s
+([lifecycle](https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/)).
+Nothing about the alarm pins the object — a pending alarm is stored, not held in memory. A 1.5s
+tick simply never idles long enough to reach the threshold.
+
+Same object at 15s, an interval where it otherwise evicts every time, with one thing left behind:
+
+| Left behind across the idle gap | Result |
+|---|---|
+| **An open outbound TCP socket** | **Resident** — never evicted |
+| An in-flight unawaited `fetch()` | Resident — never evicted |
+| A pending `setTimeout` | Resident — never evicted |
+| A running `setInterval` | Resident — never evicted |
+| State hydrated in `blockConcurrencyWhile` | Evicted between every alarm — no effect |
+
+Those four are exactly Cloudflare's documented hibernation-eligibility rules, reproduced by the
+local runtime — which is the reason to trust the measurement: `workerd` implements the same
+eviction path, and `workerd.capnp` documents the same 10s/70s defaults. **The socket row is the one
+with teeth here**: a pooled Postgres connection to Neon held by the scheduler DO would make it
+permanently ineligible, silently, with no error anywhere.
+
+**What this cannot settle: the bill.** `workerd` models eviction but not metering — there is no
+GB-s counter in local dev. And Cloudflare's pricing page says idle time that is *eligible* for
+hibernation is not billed *"even before the runtime has hibernated"*, so a 1.5s ticker that is
+resident-but-eligible may be in the cheap branch already. That sentence was added in February 2026
+and reads as though written for the ~10s window, not for an object that stays hibernation-eligible
+for months. It is the interpretation, not the behaviour, that is unresolved. Only a deployed canary
+reading account duration GB-s over 24h closes it: 11,059 GB-s if resident time is billed, ~370 GB-s
+if it is not.
+
+**So don't bet on the interpretation — design it away.** A 30s tick is in the cheap branch under
+either reading (§4.2), and wins on two axes that do not depend on the interpretation at all: alarm
+invocations are billed as DO requests, and each `setAlarm()` is a billed row write.
+
+| Per month, one scheduler DO | 1.5s tick | 30s tick |
+|---|---|---|
+| Alarm invocations | 1,728,000 — **173% of the 1M included DO requests, at zero volume** | 86,400 (8.6%) |
+| `setAlarm()` row writes | 1,728,000 (3.5% of the included 50M) | 86,400 (0.17%) |
+| Duration if resident time is billed | 331,776 GB-s (83% of allowance) | ~550 GB-s |
+| Duration if it is free | 4,000–11,000 GB-s | ~550 GB-s |
+
+**Caveats.** Local `workerd` on Linux, not Cloudflare's fleet: eviction timing could differ in
+production under memory pressure. The likely direction of that difference is safe — more eviction,
+not less — but 10s is not a contract. Nothing here measures billing. The alarm handler does a ~9ms
+stub query rather than a real Neon round trip, so per-wake duration is a floor. Re-check against a
+real account once #7's access exists.
 
 **2. Neon — the real cost center, at every scale.**
 
