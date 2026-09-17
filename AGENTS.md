@@ -251,6 +251,21 @@ curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
   `docker/prod/compose.yml`, `docker/README.md`, `apps/web/.dev.vars.example`,
   `apps/web/.env.test.example`, `.github/workflows/test-web.yml`, `CONTRIBUTION.md`
   and `apps/docs/**` — so renaming one is wider than the four places above.
+- **There are two env modules, and which one a variable goes in is a security
+  boundary, not a style choice.** `~/env` is server-only: its `runtimeEnv`
+  reads `process.env` once per declared variable at module load, and `process`
+  does not exist in a Vite client bundle, so one client import of it is a
+  `ReferenceError` on first paint. `~/env.public` holds the handful a browser
+  may read. Both frameworks **bake those in at build time** — Vite inlines
+  `import.meta.env.NEXT_PUBLIC_*` exactly as Next.js inlines
+  `process.env.NEXT_PUBLIC_*` — so changing one on a deployed Worker without
+  rebuilding changes nothing in the browser, and nothing secret can go there.
+  A module imported from a component reads `~/env.public`; that is why
+  `~/utils/common` holds only `isCloud`/`isSelfHosted` and the retention flags
+  it used to sit next to now live in `~/server/retention`.
+  The `NEXT_PUBLIC_` prefix survives only until `src/app` goes: Next.js inlines
+  nothing without it, so renaming while both frameworks are in the tree would
+  break the half still running.
 - **`APP_URL` is the one name for the application's public base URL**, and
   `APP_SECRET` is the one name for the application-wide signing key. Neither is
   an auth setting despite having been called `NEXTAUTH_*` until issue #59. Do not

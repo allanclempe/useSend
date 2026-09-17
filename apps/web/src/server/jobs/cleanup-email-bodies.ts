@@ -5,7 +5,8 @@ import {logger} from "../logger/log";
 import {createQueue, createWorker} from "../queue";
 import {CRON_TRIGGERS} from "../queue/cron-registry";
 import {env} from "~/env";
-import {isSelfHosted, isEmailCleanupEnabled} from "~/utils/common";
+import { isSelfHosted } from "~/utils/common";
+import { isEmailCleanupEnabled } from "~/server/retention";
 
 const CLEANUP_QUEUE_NAME = "cleanup-email-bodies";
 

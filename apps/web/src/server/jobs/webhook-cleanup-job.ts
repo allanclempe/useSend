@@ -2,7 +2,7 @@ import { subDays } from "date-fns";
 import { lt } from "drizzle-orm";
 import { env } from "~/env";
 import { drizzleDb, schema } from "~/server/drizzle";
-import { isWebhookCallRetentionEnabled } from "~/utils/common";
+import { isWebhookCallRetentionEnabled } from "~/server/retention";
 import { createQueue, createWorker, WEBHOOK_CLEANUP_QUEUE } from "../queue";
 import { CRON_TRIGGERS } from "../queue/cron-registry";
 import { logger } from "../logger/log";

@@ -8,8 +8,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // `NEXT_PUBLIC_IS_CLOUD` and `ADMIN_EMAIL` are the two switches the auth path
-// branches on, so the suite has to move them. Everything else stays real --
-// these tests run against the real database and the real better-auth instance.
+// branches on, so the suite has to move them. They live in two modules now --
+// the public one is readable from a browser and the other is not (#9) -- so
+// there are two mocks. Everything else stays real: these tests run against the
+// real database and the real better-auth instance.
 vi.mock("~/env", async (importOriginal) => {
   const actual = await importOriginal<{ env: Record<string, unknown> }>();
 
@@ -17,8 +19,21 @@ vi.mock("~/env", async (importOriginal) => {
     // eslint-disable-next-line no-undef
     env: new Proxy(actual.env, {
       get: (target, property) => {
-        if (property === "NEXT_PUBLIC_IS_CLOUD") return mocks.isCloud;
         if (property === "ADMIN_EMAIL") return mocks.adminEmail;
+        return Reflect.get(target, property);
+      },
+    }),
+  };
+});
+
+vi.mock("~/env.public", async (importOriginal) => {
+  const actual = await importOriginal<{ publicEnv: Record<string, unknown> }>();
+
+  return {
+    // eslint-disable-next-line no-undef
+    publicEnv: new Proxy(actual.publicEnv, {
+      get: (target, property) => {
+        if (property === "NEXT_PUBLIC_IS_CLOUD") return mocks.isCloud;
         return Reflect.get(target, property);
       },
     }),

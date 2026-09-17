@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 
+import { publicEnv } from "~/env.public";
 import { runtimeFacts } from "~/server/functions/runtime";
 
 /**
@@ -46,6 +47,13 @@ function RuntimeCheck() {
         <dd className="font-mono">{facts.database}</dd>
         <dt className="text-muted-foreground">Rendered at</dt>
         <dd className="font-mono">{facts.at}</dd>
+        {/* Read in the component, not the loader, so it is the *client*
+            bundle's copy of `~/env.public` being proved — the one Vite has to
+            inline from `import.meta.env`. */}
+        <dt className="text-muted-foreground">Deployment</dt>
+        <dd className="font-mono">
+          {publicEnv.NEXT_PUBLIC_IS_CLOUD ? "cloud" : "self-hosted"}
+        </dd>
       </dl>
       <button
         type="button"

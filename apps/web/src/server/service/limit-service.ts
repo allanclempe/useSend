@@ -1,5 +1,6 @@
 import { PLAN_LIMITS, LimitReason } from "~/lib/constants/plans";
 import { env } from "~/env";
+import { publicEnv } from "~/env.public";
 import { getThisMonthUsage } from "./usage-service";
 import { TeamService } from "./team-service";
 import { eq } from "drizzle-orm";
@@ -24,7 +25,7 @@ export class LimitService {
     reason?: LimitReason;
   }> {
     // Limits only apply in cloud mode
-    if (!env.NEXT_PUBLIC_IS_CLOUD) {
+    if (!publicEnv.NEXT_PUBLIC_IS_CLOUD) {
       return { isLimitReached: false, limit: -1 };
     }
 
@@ -55,7 +56,7 @@ export class LimitService {
     reason?: LimitReason;
   }> {
     // Limits only apply in cloud mode
-    if (!env.NEXT_PUBLIC_IS_CLOUD) {
+    if (!publicEnv.NEXT_PUBLIC_IS_CLOUD) {
       return { isLimitReached: false, limit: -1 };
     }
 
@@ -86,7 +87,7 @@ export class LimitService {
     reason?: LimitReason;
   }> {
     // Limits only apply in cloud mode
-    if (!env.NEXT_PUBLIC_IS_CLOUD) {
+    if (!publicEnv.NEXT_PUBLIC_IS_CLOUD) {
       return { isLimitReached: false, limit: -1 };
     }
 
@@ -117,7 +118,7 @@ export class LimitService {
     reason?: LimitReason;
   }> {
     // Limits only apply in cloud mode
-    if (!env.NEXT_PUBLIC_IS_CLOUD) {
+    if (!publicEnv.NEXT_PUBLIC_IS_CLOUD) {
       return { isLimitReached: false, limit: -1 };
     }
 
@@ -154,7 +155,7 @@ export class LimitService {
     available?: number;
   }> {
     // Limits only apply in cloud mode
-    if (!env.NEXT_PUBLIC_IS_CLOUD) {
+    if (!publicEnv.NEXT_PUBLIC_IS_CLOUD) {
       return { isLimitReached: false, limit: -1 };
     }
 

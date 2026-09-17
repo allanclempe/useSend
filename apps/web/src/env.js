@@ -1,4 +1,4 @@
-import { createEnv } from "@t3-oss/env-nextjs";
+import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
 export const env = createEnv({
@@ -130,23 +130,16 @@ export const env = createEnv({
   },
 
   /**
-   * Specify your client-side environment variables schema here. This way you can ensure the app
-   * isn't built with invalid env vars. To expose them to the client, prefix them with
-   * `NEXT_PUBLIC_`.
+   * There is deliberately no `client` block. Anything a browser may read lives
+   * in `src/env.public.ts`, because the `runtimeEnv` below touches
+   * `process.env` once per variable at module load and `process` does not
+   * exist in a Vite client bundle. Keeping the two apart is what stops one
+   * client import of `~/env` from being a blank page.
    */
-  client: {
-    // NEXT_PUBLIC_CLIENTVAR: z.string(),
-    NEXT_PUBLIC_IS_CLOUD: z
-      .string()
-      .default("false")
-      .transform((str) => str === "true"),
-    NEXT_PUBLIC_APP_VERSION: z.string().optional(),
-    NEXT_PUBLIC_GIT_SHA: z.string().optional(),
-  },
 
   /**
-   * You can't destruct `process.env` as a regular object in the Next.js edge runtimes (e.g.
-   * middlewares) or client-side so we need to destruct manually.
+   * `process.env` cannot be destructured as a plain object on Workers or in a
+   * bundler that rewrites it, so every variable is named.
    */
   runtimeEnv: {
     DATABASE_URL: process.env.DATABASE_URL,
@@ -168,9 +161,6 @@ export const env = createEnv({
     AWS_SNS_ENDPOINT: process.env.AWS_SNS_ENDPOINT,
     API_RATE_LIMIT: process.env.API_RATE_LIMIT,
     AUTH_EMAIL_RATE_LIMIT: process.env.AUTH_EMAIL_RATE_LIMIT,
-    NEXT_PUBLIC_IS_CLOUD: process.env.NEXT_PUBLIC_IS_CLOUD,
-    NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION,
-    NEXT_PUBLIC_GIT_SHA: process.env.NEXT_PUBLIC_GIT_SHA,
     ADMIN_EMAIL: process.env.ADMIN_EMAIL,
     FOUNDER_EMAIL: process.env.FOUNDER_EMAIL,
     DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL,

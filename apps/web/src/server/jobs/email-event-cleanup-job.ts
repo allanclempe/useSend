@@ -1,7 +1,7 @@
 import { asc, inArray, lt } from "drizzle-orm";
 import { env } from "~/env";
 import { drizzleDb, schema } from "~/server/drizzle";
-import { isEmailEventRetentionEnabled } from "~/utils/common";
+import { isEmailEventRetentionEnabled } from "~/server/retention";
 import { logger } from "../logger/log";
 import { createQueue, createWorker, EMAIL_EVENT_CLEANUP_QUEUE } from "../queue";
 import { CRON_TRIGGERS } from "../queue/cron-registry";

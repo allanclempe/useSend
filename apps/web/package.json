@@ -45,7 +45,7 @@
     "@hono/zod-openapi": "^0.10.0",
     "@hookform/resolvers": "5.0.1",
     "@isaacs/ttlcache": "^1.4.1",
-    "@t3-oss/env-nextjs": "^0.13.0",
+    "@t3-oss/env-core": "^0.13.11",
     "@tanstack/react-query": "^5.103.1",
     "@tanstack/react-router": "^1.170.38",
     "@tanstack/react-router-ssr-query": "^1.167.3",

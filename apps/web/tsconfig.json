@@ -3,17 +3,20 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "~/*": ["./src/*"]
+      "~/*": [
+        "./src/*"
+      ]
     },
     "plugins": [
       {
         "name": "next"
       }
     ],
-    // `preserve` is what Next.js wants; Vite compiles JSX itself and only
-    // `tsc --noEmit` reads this, so the automatic runtime is what the
-    // TanStack route files are checked against.
-    "jsx": "react-jsx",
+    // `next dev` rewrites this to `preserve` on every start and says so in its
+    // output, so there is no point setting anything else while Next.js is in
+    // the tree. Vite compiles JSX itself and `tsc --noEmit` is happy either
+    // way, which is the only thing that reads it here.
+    "jsx": "preserve",
     "strictNullChecks": true
   },
   "include": [
@@ -25,5 +28,9 @@
     ".next/types/**/*.ts",
     ".eslintrc.cjs"
   ],
-  "exclude": ["node_modules", ".wrangler", "dist"]
+  "exclude": [
+    "node_modules",
+    ".wrangler",
+    "dist"
+  ]
 }

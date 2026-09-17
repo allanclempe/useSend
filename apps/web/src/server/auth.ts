@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 
 import { env } from "~/env";
+import { publicEnv } from "~/env.public";
 import { drizzleDb, schema } from "~/server/drizzle";
 import {
   AUTH_MODEL_NAMES,
@@ -69,7 +70,7 @@ const authDatabase = (
   return {
     ...adapter,
     create: async (args) => {
-      if (args.model !== "user" || env.NEXT_PUBLIC_IS_CLOUD) {
+      if (args.model !== "user" || publicEnv.NEXT_PUBLIC_IS_CLOUD) {
         return adapter.create(args);
       }
 
@@ -149,7 +150,7 @@ export const auth = betterAuth({
             .limit(1);
 
           const isWaitlisted =
-            env.NEXT_PUBLIC_IS_CLOUD &&
+            publicEnv.NEXT_PUBLIC_IS_CLOUD &&
             env.NODE_ENV !== "development" &&
             invites.length === 0;
 

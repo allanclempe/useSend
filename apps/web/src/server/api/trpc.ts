@@ -11,6 +11,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { z, ZodError } from "zod";
 import { env } from "~/env";
+import { publicEnv } from "~/env.public";
 
 import { getServerAuthSession } from "~/server/auth";
 import { and, eq } from "drizzle-orm";
@@ -315,7 +316,7 @@ export const templateProcedure = teamProcedure
  * To manage application settings, for hosted version, authenticated users will be considered as admin
  */
 export const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  if (env.NEXT_PUBLIC_IS_CLOUD && ctx.session.user.email !== env.ADMIN_EMAIL) {
+  if (publicEnv.NEXT_PUBLIC_IS_CLOUD && ctx.session.user.email !== env.ADMIN_EMAIL) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
   return next();
