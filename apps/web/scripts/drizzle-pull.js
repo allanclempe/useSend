@@ -42,11 +42,17 @@ schema = schema.replaceAll("mode: 'string'", "mode: 'date'");
 
 // 2. Repair mangled empty-array defaults.
 //
-// drizzle-kit 0.31 mis-parses a Postgres `ARRAY[]::integer[]` default, emitting
-// `.default([RAY])` — it strips the leading `AR` and leaves an undefined
-// identifier, so the schema does not compile. Webhook.domainIds hits this.
-const arrayDefaults = (schema.match(/\[RAY\]/g) ?? []).length;
-schema = schema.replaceAll("[RAY]", "[]");
+// drizzle-kit 0.31 mis-parses a Postgres `ARRAY[]::...` default: it strips the
+// leading `AR` and emits the remainder as a value. The exact shape depends on
+// the element type, and only one of them fails loudly:
+//
+//   integer[] -> .default([RAY])    undefined identifier, does not compile
+//   text[]    -> .default(["RAY"])  compiles fine, silently wrong default
+//
+// The quoted form is the dangerous one — it typechecks and would write the
+// string "RAY" into the column on any insert that omits the field.
+const arrayDefaults = (schema.match(/\.default\(\["?RAY"?\]\)/g) ?? []).length;
+schema = schema.replace(/\.default\(\["?RAY"?\]\)/g, ".default([])");
 
 // 3. Drop Prisma's bookkeeping table.
 //
