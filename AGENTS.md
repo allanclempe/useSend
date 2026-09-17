@@ -55,6 +55,17 @@
   contained. A new transitive major of a shared library — zod, react, drizzle — surfaces as type
   errors in files the change never touched.
 
+## Logging
+
+- `logger` from `~/server/logger/log` is the only logger. Never `console.log`.
+- Records follow the **OpenTelemetry Logs Data Model**, one JSON object per line: `timestamp` (RFC 3339), `severity_text`, `severity_number`, `body`, `resource`, `attributes`, plus `trace_id` / `span_id` / `trace_flags` when there is a trace. Not pino's `level` / `time` / `msg` — that shape is gone.
+- The call shape is unchanged: `logger.info({ teamId }, "Sending email")`. The string is the OTel `Body` — write it for a human; the object becomes `attributes` — put the ids there. Prefer both: a record with no body is hard to search, and a body with the ids interpolated into it is hard to filter.
+- **Errors:** pass the `Error` itself, under any key — `logger.error({ err }, "…")`. The logger maps the first Error to `exception.type` / `exception.message` / `exception.stacktrace` and appends the `cause` chain. Do not unpack `err.message` at the call site.
+- **Attribute keys:** camelCase for our own ids (`teamId`, `emailId`, `campaignId`). Dotted names only where OTel defines a semantic convention (`exception.*`, `service.*`); do not invent new dotted names.
+- **Never log personal data or secrets in an attribute.** No raw email addresses — use `maskEmail` from `~/server/logger/redact`. No API keys, tokens, magic links or message bodies. Never a whole provider payload (`{ data }` from an SES/SNS event): log the ids out of it.
+- **Trace context** lives in `~/server/logger/trace-context`. Entry points — HTTP handlers, routes, anything that starts work — wrap themselves in `withTraceContext(startTrace(req.headers.get("traceparent")), …)`. The queue seam (`server/queue/index.ts`) carries it across enqueue/consume on its own, so services, jobs and handlers never touch it.
+- **Export path: structured stdout.** Cloudflare Workers Logs ingests and indexes these records (`observability.enabled` in `wrangler.jsonc`). There is deliberately no OTLP exporter in the request path — a log line must not cost a subrequest. If OTLP is wanted, it belongs in a tail worker.
+
 ## Rules
 
 - Prefer to use trpc alway unless asked otherwise

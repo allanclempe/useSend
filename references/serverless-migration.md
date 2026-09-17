@@ -303,6 +303,15 @@ webhook, campaign and domain services.
 4. **Native R2 binding**, not presigned URLs. `storage-service.ts` drops `@aws-sdk/client-s3` and
    `@aws-sdk/s3-request-presigner`; uploads/downloads proxy through a Worker route.
 5. **Scheduled emails move to a sweeper** — see §4.5. `changeDelay` and `chancelEmail` are deleted.
+6. **Logs are OpenTelemetry records on stdout; the export path is Workers Logs.** `server/logger/log.ts`
+   emits the OTel Logs Data Model (`severity_text` / `severity_number`, `body`, `attributes`,
+   `resource`, `trace_id`) as one JSON object per line, and `observability.enabled` in
+   `wrangler.jsonc` is what ships them. **No OTLP exporter in the request path** — a Worker that
+   POSTs to a collector pays a subrequest per log line, against a 1000-subrequest cap, on the same
+   path that is already spending them on SES and Neon. OTLP, if it is ever wanted, goes in a tail
+   worker reading exactly these records. W3C `traceparent` is propagated by the queue seam
+   (`server/queue/index.ts`), so an API request, the message it enqueues and the consumer that runs
+   it share one `trace_id` — no tracer SDK, and nothing to rip out when #7 adds one.
 
 ## 12. Cost model
 
