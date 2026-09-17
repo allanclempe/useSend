@@ -1,0 +1,18 @@
+# Local values for `pnpm dev:worker`. Copy to `.dev.vars`, which is gitignored.
+#
+# Under `nodejs_compat` these are read back through `process.env`, which is what
+# lets `src/env.js` validate inside a Worker exactly as it does under Node.
+#
+# DATABASE_URL is only a fallback: when the Hyperdrive binding is present the
+# Worker uses its connection string instead. It still has to be set and valid,
+# because `src/env.js` validates it at module load.
+
+DATABASE_URL="postgresql://usesend:password@127.0.0.1:54329/usesend_test"
+NEXTAUTH_URL="http://localhost:8788"
+NEXTAUTH_SECRET="cf-local-dev-secret"
+REDIS_URL="redis://127.0.0.1:6380"
+NODE_ENV="development"
+NEXT_PUBLIC_IS_CLOUD="false"
+AWS_ACCESS_KEY_ID="local"
+AWS_SECRET_ACCESS_KEY="local"
+AWS_DEFAULT_REGION="us-east-1"

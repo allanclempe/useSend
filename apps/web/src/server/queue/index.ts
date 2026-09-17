@@ -6,6 +6,8 @@ import {
   withTraceContext,
 } from "../logger/trace-context";
 import { bullmqDriver } from "./bullmq-driver";
+import { workersDriver } from "./workers-driver";
+import { isWorkersRuntime } from "../runtime";
 import type {
   BulkJob,
   EnqueueOptions,
@@ -23,8 +25,11 @@ export * from "./queue-constants";
 /**
  * The active queue backend. Swapping this for a Cloudflare Queues driver is the
  * whole point of the seam — see references/serverless-migration.md.
+ *
+ * BullMQ on Node, and a Workers driver inside a Worker isolate, where BullMQ's
+ * Redis sockets and blocking consumers cannot run at all.
  */
-const driver = bullmqDriver;
+const driver = isWorkersRuntime() ? workersDriver : bullmqDriver;
 
 /**
  * Trace context rides on the message body as a W3C `traceparent`.

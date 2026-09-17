@@ -17,6 +17,7 @@
 - `pnpm start:web:local`: Run only `apps/web` locally on port 3000.
 - `pnpm build`: Turbo build across the monorepo.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
+- `pnpm dev:worker`: Run the public API on Cloudflare Workers locally (see below).
 - Database (apps/web filter): `db:generate` | `db:migrate` | `db:push` | `db:studio`.
 - Migrations are drizzle-kit's, in `apps/web/src/server/drizzle/migrations`. The workflow is: edit
   `src/server/drizzle/schema.ts` (the hand-authored source of truth), run `pnpm --filter=web
@@ -31,6 +32,39 @@
   `import type`, so adding a value import there would pull the whole schema into the browser
   bundle.
 - Never run migrations unless users explicitly asked
+
+## Running the Worker locally
+
+`apps/web/wrangler.jsonc` serves the Hono public API (`src/worker/index.ts`) on
+Cloudflare Workers. **No Cloudflare account and no `wrangler login` are needed**:
+`wrangler dev` runs the real `workerd` binary locally and simulates KV, R2,
+Queues and Durable Objects on disk under `apps/web/.wrangler`. Only
+`wrangler deploy` needs an account.
+
+1. `pnpm test:infra:up`, then `pnpm --filter=web test:integration:prepare:local`
+   once to migrate the throwaway `usesend_test` container. That is the database
+   `wrangler.jsonc` points Hyperdrive at locally. To use a different one for a
+   session, set
+   `WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://…`.
+2. `cp apps/web/.dev.vars.example apps/web/.dev.vars` and fill it in. `.dev.vars`
+   is gitignored. Under `nodejs_compat` these arrive as `process.env`, so
+   `src/env.js` validates inside the Worker exactly as it does under Node — an
+   env var missing from `.dev.vars` fails the isolate at startup, not at request
+   time.
+3. `pnpm dev:worker`. The API is on `http://localhost:8788/api`; `GET /api/v1/doc`
+   serves the OpenAPI document and needs no auth.
+
+Things that behave differently inside the Worker, by design:
+
+- **No global-scope I/O.** Workers reject sockets, timers and `randomUUID()`
+  during module evaluation. Clients must therefore be built on first use, not in
+  a module-level `const` or a `static` class field — this is why `drizzleDb` is a
+  lazy proxy and why the BullMQ driver defers its queue.
+- **No BullMQ.** `server/queue/index.ts` picks a driver by runtime. Inside a
+  Worker, consumers are not started and `enqueue` throws, until Cloudflare Queue
+  bindings land in Phase 8.
+- **`wrangler dev` writes nothing to Cloudflare.** Never run `wrangler deploy` or
+  `wrangler login` without being asked.
 
 ## Coding Style & Naming Conventions
 

@@ -1,0 +1,62 @@
+/**
+ * Cloudflare Workers configuration for the useSend public API.
+ *
+ * JSONC rather than TOML on purpose: §4.1 of references/serverless-migration.md
+ * pre-declares a queue and a consumer per supported SES region, so this file is
+ * going to be edited by tooling as often as by hand, and JSON survives that far
+ * better than TOML does. JSONC keeps the comments.
+ *
+ * Everything here runs under `wrangler dev` with no Cloudflare account: KV, R2
+ * and Hyperdrive are all simulated locally. See AGENTS.md.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "usesend-api",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-01-01",
+
+  // `nodejs_compat` covers node:crypto (scryptSync, generateKeyPairSync),
+  // node:stream (nodemailer's MIME build) and node:net (postgres-js).
+  // From compatibility_date 2025-04-01 it also populates `process.env` from
+  // vars and secrets, which is what lets `src/env.js` validate unchanged.
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": { "enabled": true },
+
+  // Pooled Postgres. `localConnectionString` is dev-only and is what
+  // `wrangler dev` proxies to; `id` is filled in once the account exists.
+  // The default below is the throwaway container from `pnpm test:infra:up`.
+  // Point it somewhere else for a session with
+  // WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://...
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "REPLACE_WITH_HYPERDRIVE_ID",
+      "localConnectionString": "postgresql://usesend:password@127.0.0.1:54329/usesend_test"
+    }
+  ],
+
+  // Attachments and campaign assets. Replaces the S3 client in
+  // server/service/storage-service.ts (§7, decision 4).
+  "r2_buckets": [
+    {
+      "binding": "STORAGE",
+      "bucket_name": "usesend",
+      "preview_bucket_name": "usesend-dev"
+    }
+  ],
+
+  // Team and usage cache, notification dedup. Explicitly NOT idempotency keys
+  // or rate limit counters — KV is eventually consistent and both of those
+  // need read-after-write (§1).
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+    }
+  ],
+
+  // Local values live in `.dev.vars` (gitignored, see `.dev.vars.example`).
+  // Deployed values are secrets, not vars — nothing here is committed.
+  "vars": {}
+}

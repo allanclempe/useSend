@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev -p 3000 --turbopack",
+    "dev:worker": "wrangler dev --port 8788",
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings 0",
@@ -84,6 +85,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@next/eslint-plugin-next": "^15.5.18",
     "@tailwindcss/postcss": "^4.1.0",
     "@types/eslint": "^9.6.1",
@@ -108,7 +110,8 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.3",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.133.0"
   },
   "overrides": {
     "react-is": "^19.0.0-rc-69d4b800-20241021"
