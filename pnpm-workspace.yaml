@@ -20,8 +20,16 @@ minimumReleaseAgeExclude:
   - miniflare@5.20260916.0-alpha
   - wrangler@4.133.0
 
-# pnpm 10+ reads overrides from the workspace configuration. Keep this in sync
-# with package.json for deployment environments that still use pnpm 9.
+# This file is the only place pnpm reads settings from. The `"pnpm"` field in
+# root package.json used to carry a second copy "for deployment environments
+# still on pnpm 9"; pnpm 11 ignores that field outright, so the copy was inert
+# and a security override lived somewhere edits had no effect (issue #55). Both
+# deployment paths resolve pnpm from `packageManager` via corepack —
+# `docker/Dockerfile` and `nixpacks.toml` — so neither was ever on pnpm 9.
+#
+# `linkify-it@<=5.0.0` is a security floor. It matches nothing today (the tree
+# resolves 5.0.2, already above the vulnerable range); it is here so a future
+# resolution cannot fall back into it.
 overrides:
   "linkify-it@<=5.0.0": "5.0.1"
   "pnpm@<11.11.0": "11.11.0"
