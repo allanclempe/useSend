@@ -53,7 +53,7 @@ Then:
 openssl rand -base64 32
 ```
 
-- Add this to `.env` as `NEXTAUTH_SECRET`.
+- Add this to `.env` as `APP_SECRET`.
 
 - Create symlink for Next.js:
 

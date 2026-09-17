@@ -108,7 +108,12 @@ const authDatabase = (
 
 export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
-  baseURL: env.BETTER_AUTH_URL,
+  // `APP_URL`, not a `BETTER_AUTH_URL` of its own. better-auth's base URL is
+  // the application's public base URL by definition — a second name for it only
+  // created the chance for the two to disagree (issue #59). Always passing it
+  // also means better-auth never has to infer the origin from request headers,
+  // which is the thing that goes wrong behind a reverse proxy.
+  baseURL: env.APP_URL,
   database: authDatabase,
   // `User.id` is `Int @default(autoincrement())` and stays that way — see #8.
   // This makes better-auth leave `id` out of inserts so Postgres assigns it,

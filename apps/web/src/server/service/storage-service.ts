@@ -34,11 +34,16 @@ function requireBucket() {
   return bucket;
 }
 
+/**
+ * Unlike the unsubscribe hashes in `campaign-service.ts`, these signatures live
+ * for an hour, so rotating `APP_SECRET` only costs in-flight uploads here. The
+ * secret is shared, though, so rotation is still governed by those.
+ */
 function signingSecret() {
-  if (!env.NEXTAUTH_SECRET) {
-    throw new Error("NEXTAUTH_SECRET is required to sign upload URLs");
+  if (!env.APP_SECRET) {
+    throw new Error("APP_SECRET is required to sign upload URLs");
   }
-  return env.NEXTAUTH_SECRET;
+  return env.APP_SECRET;
 }
 
 function sign(key: string, contentType: string, expiresAt: number) {
@@ -52,7 +57,7 @@ function sign(key: string, contentType: string, expiresAt: number) {
  * `/storage/*`, so this is the same origin the dashboard already talks to.
  */
 function baseUrl() {
-  return env.NEXTAUTH_URL.replace(/\/$/, "");
+  return env.APP_URL.replace(/\/$/, "");
 }
 
 /** A one-shot URL the browser can `PUT` a file to. */

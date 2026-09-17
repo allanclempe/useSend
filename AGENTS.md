@@ -115,9 +115,16 @@ own `wrangler.*.jsonc` and are never deployed.
 
 ## Dependencies
 
-- pnpm settings live in `pnpm-workspace.yaml` — `overrides`, `packageExtensions`, `allowBuilds`. The
-  `"pnpm"` field in root `package.json` is a duplicate that pnpm 11 ignores (issue #55); edit the
-  workspace file, and mirror into `package.json` only while that issue is open.
+- **`pnpm-workspace.yaml` is the only place pnpm reads settings from** — `overrides`,
+  `packageExtensions`, `allowBuilds`, `minimumReleaseAgeExclude`. There is no second copy: the
+  `"pnpm"` field in root `package.json` was a duplicate pnpm 11 ignores outright, and it is gone
+  (issue #55). Do not add one back "for older pnpm" — both deployment paths resolve pnpm from
+  `packageManager` via corepack (`docker/Dockerfile`, `nixpacks.toml`), and a settings file that is
+  edited but not read is the worst place for a security override to live.
+- **Check `pnpm-lock.yaml`, not the settings file, to confirm a pnpm setting took effect.** The
+  lockfile header records the effective `overrides:` and a `packageExtensionsChecksum:`, and the
+  package entries record the resolved versions — that is the only evidence that the setting was read
+  rather than merely written. A `[WARN]` about ignored settings is easy to miss in install output.
 - **A package that imports something it never declared resolves it by hoist order, so adding an
   unrelated dependency can silently change which version it gets.** `@hookform/resolvers` imports
   `zod` with neither a dependency nor a peer on it. It got zod 3 until `better-auth` put zod 4 in the
@@ -125,7 +132,8 @@ own `wrangler.*.jsonc` and are never deployed.
   broke `typecheck` in six components nobody had edited.
 - Fix that by declaring the missing dependency in `packageExtensions`, not by casting at the call
   sites. A cast hides a real version mismatch and has to be repeated; the declaration states what the
-  package actually needs and survives the next install.
+  package actually needs and survives the next install. The declaration shows up in the lockfile as a
+  `zod:` line under `@hookform/resolvers@<version>(...)`; if it is not there, it was not applied.
 - After adding any dependency, run `pnpm --filter=web typecheck` before assuming the change is
   contained. A new transitive major of a shared library — zod, react, drizzle — surfaces as type
   errors in files the change never touched.
@@ -172,7 +180,32 @@ own `wrangler.*.jsonc` and are never deployed.
   `env` list, `.env.example`, and `.env.selfhost.example` — the last two with the
   command that generates it. Add a placeholder to
   `apps/web/src/test/setup/setup-env.ts` if it is required rather than optional.
-  Never commit a real value.
+  Never commit a real value. Docker and self-host paths carry their own copies —
+  `docker/prod/compose.yml`, `docker/README.md`, `apps/web/.dev.vars.example`,
+  `apps/web/.env.test.example`, `.github/workflows/test-web.yml`, `CONTRIBUTION.md`
+  and `apps/docs/**` — so renaming one is wider than the four places above.
+- **`APP_URL` is the one name for the application's public base URL**, and
+  `APP_SECRET` is the one name for the application-wide signing key. Neither is
+  an auth setting despite having been called `NEXTAUTH_*` until issue #59. Do not
+  reintroduce a `BETTER_AUTH_URL`-style second name for either: better-auth takes
+  `baseURL: env.APP_URL`.
+- **Input limits belong at the service seam, not in a request schema.**
+  `sendEmail`/`sendBulkEmails` in `service/email-service.ts` is what every path
+  that can produce an email goes through — public API, batch, SMTP, the
+  dashboard's test send, double-opt-in — so a limit enforced there cannot be
+  walked around by a second entry point, and is stated once. The public API's Zod
+  schema *documents* the attachment limits (they reach the OpenAPI document and
+  the SDK types from there) but does not enforce them; see
+  `service/attachment-limits.ts`. Regenerate the SDK types with
+  `pnpm --filter=usesend-js openapi-typegen` after touching
+  `apps/docs/api-reference/openapi.json`.
+- **`APP_SECRET` cannot be rotated.** It keys the SHA-256 hashes in campaign
+  unsubscribe, one-click-unsubscribe and double-opt-in links, which are already
+  sitting in delivered inboxes. A new value invalidates all of them, and one-click
+  unsubscribe is an RFC 8058 and Gmail/Yahoo bulk-sender obligation. The same
+  applies to switching the construction from `createHash` to `createHmac`, which
+  is worth doing on its own terms but changes every hash — treat it as a
+  link-invalidating migration, not a cleanup.
 
 ## Testing Guidelines
 

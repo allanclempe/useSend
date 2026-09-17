@@ -185,7 +185,7 @@ describeIntegration("campaign lifecycle", () => {
 
       const id = `${contact.id}-${campaign.id}`;
       const hash = createHash("sha256")
-        .update(`${id}-${process.env.NEXTAUTH_SECRET}`)
+        .update(`${id}-${process.env.APP_SECRET}`)
         .digest("hex");
 
       await subscribeContact(id, hash);

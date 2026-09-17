@@ -72,8 +72,8 @@ export async function createCheckoutSessionForTeam(teamId: number) {
         price: env.STRIPE_BASIC_USAGE_PRICE_ID,
       },
     ],
-    success_url: `${env.NEXTAUTH_URL}/payments?success=true&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${env.NEXTAUTH_URL}/settings/billing`,
+    success_url: `${env.APP_URL}/payments?success=true&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${env.APP_URL}/settings/billing`,
     metadata: {
       teamId,
     },
@@ -115,7 +115,7 @@ export async function getManageSessionUrl(teamId: number) {
 
   const subscriptions = await stripe.billingPortal.sessions.create({
     customer: team.stripeCustomerId,
-    return_url: `${env.NEXTAUTH_URL}`,
+    return_url: `${env.APP_URL}`,
   });
 
   return subscriptions.url;

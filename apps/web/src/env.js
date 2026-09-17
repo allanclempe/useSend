@@ -17,34 +17,45 @@ export const env = createEnv({
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
-    NEXTAUTH_SECRET:
+    // Keys the hashes in the links we put in emails: campaign unsubscribe and
+    // one-click-unsubscribe (`service/campaign-service.ts`), double-opt-in
+    // confirmation tokens (`service/double-opt-in-service.ts`) and signed
+    // upload URLs (`service/storage-service.ts`).
+    //
+    // **Rotating it breaks every unsubscribe link in every email already
+    // delivered**, which is an RFC 8058 / bulk-sender compliance problem and
+    // not merely a dead link. This is why it was renamed from `NEXTAUTH_SECRET`
+    // (issue #59) without regenerating the value: carry the old value over.
+    APP_SECRET:
       process.env.NODE_ENV === "production"
         ? z.string()
         : z.string().optional(),
-    NEXTAUTH_URL: z.preprocess(
-      // This makes Vercel deployments not fail if you don't set NEXTAUTH_URL
-      // Since NextAuth.js automatically uses the VERCEL_URL if present.
+    // The application's public base URL — every absolute link we generate hangs
+    // off it: billing redirects, team invites, domain links, unsubscribe URLs,
+    // the OpenAPI `servers` entry, and better-auth's `baseURL`.
+    //
+    // This is the single name for that concept. `NEXTAUTH_URL` (named after a
+    // library that is gone) and `BETTER_AUTH_URL` (a same-valued override for
+    // one consumer of it) both collapsed into it in issue #59.
+    APP_URL: z.preprocess(
+      // Vercel deployments get the URL for free rather than having to set it.
       (str) => process.env.VERCEL_URL ?? str,
       // VERCEL_URL doesn't include `https` so it cant be validated as a URL
       process.env.VERCEL ? z.string() : z.string().url(),
     ),
     // Signs the better-auth session cookie. Deliberately NOT shared with
-    // NEXTAUTH_SECRET: the two never read each other's tokens, so there is
+    // APP_SECRET: the two never read each other's tokens, so there is
     // nothing to gain from one value and a blast radius to lose. Generate with
     // `openssl rand -base64 32`.
     BETTER_AUTH_SECRET:
       process.env.NODE_ENV === "production"
         ? z.string()
         : z.string().optional(),
-    // Optional. better-auth derives its base URL from the request when this is
-    // unset (`better-auth/dist/utils/url.mjs:68-71`); set it when a proxy makes
-    // the request headers unreliable.
-    BETTER_AUTH_URL: z.string().url().optional(),
     // Keys the HMAC that hashes API keys (`server/crypto.ts`, issue #48).
     // Generate with `openssl rand -hex 32`.
     //
     // Required in every environment, not just production, and deliberately
-    // unlike `NEXTAUTH_SECRET`/`BETTER_AUTH_SECRET` above: those have library
+    // unlike `APP_SECRET`/`BETTER_AUTH_SECRET` above: those have library
     // fallbacks, this has none, and a default would be a hardcoded key that
     // verifies every API key in every install that forgot to set it. Failing to
     // boot is the better failure. Test runs get theirs from
@@ -140,10 +151,9 @@ export const env = createEnv({
   runtimeEnv: {
     DATABASE_URL: process.env.DATABASE_URL,
     NODE_ENV: process.env.NODE_ENV,
-    NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
-    NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+    APP_SECRET: process.env.APP_SECRET,
+    APP_URL: process.env.APP_URL,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
-    BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     API_KEY_HMAC_SECRET: process.env.API_KEY_HMAC_SECRET,
     GITHUB_ID: process.env.GITHUB_ID,
     GITHUB_SECRET: process.env.GITHUB_SECRET,

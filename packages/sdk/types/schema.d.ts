@@ -588,8 +588,10 @@ export interface paths {
                         headers?: {
                             [key: string]: string;
                         };
+                        /** @description Up to 10 attachments totalling at most 25 MB once decoded. The ceiling comes from SES, which rejects any message over 40 MB after base64 encoding. */
                         attachments?: {
                             filename: string;
+                            /** @description File contents, base64-encoded */
                             content: string;
                         }[];
                         /** Format: date-time */
@@ -657,8 +659,10 @@ export interface paths {
                         headers?: {
                             [key: string]: string;
                         };
+                        /** @description Up to 10 attachments totalling at most 25 MB once decoded. The ceiling comes from SES, which rejects any message over 40 MB after base64 encoding. */
                         attachments?: {
                             filename: string;
+                            /** @description File contents, base64-encoded */
                             content: string;
                         }[];
                         /** Format: date-time */

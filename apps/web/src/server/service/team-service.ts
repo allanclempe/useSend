@@ -219,7 +219,7 @@ export class TeamService {
       });
     }
 
-    const teamUrl = `${env.NEXTAUTH_URL}/join-team?inviteId=${teamInvite.id}`;
+    const teamUrl = `${env.APP_URL}/join-team?inviteId=${teamInvite.id}`;
 
     if (sendEmail) {
       await sendTeamInviteEmail(email, teamUrl, teamName);
@@ -379,7 +379,7 @@ export class TeamService {
       });
     }
 
-    const teamUrl = `${env.NEXTAUTH_URL}/join-team?inviteId=${invite.id}`;
+    const teamUrl = `${env.APP_URL}/join-team?inviteId=${invite.id}`;
 
     await sendTeamInviteEmail(invite.email, teamUrl, teamName);
 
@@ -485,7 +485,7 @@ export class TeamService {
         : "daily"
     } limit of ${limit.toLocaleString()} emails.\n\nSending is temporarily paused until your limit resets or ${
       isPaidPlan ? "your team is verified" : "your plan is upgraded"
-    }.\n\nManage plan: ${env.NEXTAUTH_URL}/settings`;
+    }.\n\nManage plan: ${env.APP_URL}/settings`;
 
     const teamUsers = await TeamService.getTeamUsers(teamId);
     const recipients = teamUsers
@@ -580,7 +580,7 @@ export class TeamService {
       limit,
       isPaidPlan,
       period,
-      manageUrl: `${env.NEXTAUTH_URL}/settings`,
+      manageUrl: `${env.APP_URL}/settings`,
     });
 
     const subject =
@@ -592,7 +592,7 @@ export class TeamService {
       isPaidPlan
         ? "verifying your team by replying to this email"
         : "upgrading your plan"
-    }.\n\nManage plan: ${env.NEXTAUTH_URL}/settings`;
+    }.\n\nManage plan: ${env.APP_URL}/settings`;
 
     const teamUsers = await TeamService.getTeamUsers(teamId);
     const recipients = teamUsers
@@ -639,7 +639,7 @@ async function getLimitReachedEmail(
       reason === LimitReason.EMAIL_FREE_PLAN_MONTHLY_LIMIT_REACHED
         ? "monthly"
         : "daily",
-    manageUrl: `${env.NEXTAUTH_URL}/settings`,
+    manageUrl: `${env.APP_URL}/settings`,
   });
   return email;
 }

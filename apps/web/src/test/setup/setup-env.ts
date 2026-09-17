@@ -1,7 +1,7 @@
 const defaultEnv: Record<string, string> = {
   NODE_ENV: "test",
-  NEXTAUTH_URL: "http://localhost:3000",
-  NEXTAUTH_SECRET: "test-secret",
+  APP_URL: "http://localhost:3000",
+  APP_SECRET: "test-secret",
   BETTER_AUTH_SECRET: "test-better-auth-secret",
   // Placeholder. Real deployments generate this with `openssl rand -hex 32`.
   API_KEY_HMAC_SECRET: "test-api-key-hmac-secret-not-a-real-key",

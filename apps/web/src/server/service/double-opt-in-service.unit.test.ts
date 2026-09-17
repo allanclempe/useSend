@@ -79,7 +79,7 @@ import {
 } from "~/server/service/double-opt-in-service";
 
 function getHash(contactId: string, expiresAt: number) {
-  const secret = process.env.NEXTAUTH_SECRET ?? "";
+  const secret = process.env.APP_SECRET ?? "";
   return createHash("sha256")
     .update(`${contactId}-${expiresAt}-${secret}`)
     .digest("hex");

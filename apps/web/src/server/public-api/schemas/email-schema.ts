@@ -1,4 +1,8 @@
 import { z } from "@hono/zod-openapi";
+import {
+  MAX_ATTACHMENTS_PER_EMAIL,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+} from "~/server/service/attachment-limits";
 
 /**
  * Reusable Zod schema for a single email payload used in public API requests.
@@ -22,15 +26,24 @@ export const emailSchema = z
     headers: z.record(z.string().min(1)).optional().openapi({
       description: "Custom headers to included with the emails",
     }),
+    // The count and size limits are documented here but enforced in
+    // `service/attachment-limits.ts`, which every send path goes through --
+    // this schema only sees JSON arriving on the public API. See that module
+    // for why the boundary sits there and where 25 MB comes from.
     attachments: z
       .array(
         z.object({
           filename: z.string().min(1),
-          content: z.string().min(1), // Consider base64 validation if needed
+          content: z.string().min(1).openapi({
+            description: "File contents, base64-encoded",
+          }),
         })
       )
-      .max(10) // Limit attachments array size if desired
-      .optional(),
+      .optional()
+      .openapi({
+        maxItems: MAX_ATTACHMENTS_PER_EMAIL,
+        description: `Up to ${MAX_ATTACHMENTS_PER_EMAIL} attachments totalling at most ${MAX_TOTAL_ATTACHMENT_BYTES / (1024 * 1024)} MB once decoded. The ceiling comes from SES, which rejects any message over 40 MB after base64 encoding.`,
+      }),
     scheduledAt: z.string().datetime({ offset: true }).optional(), // Ensure ISO 8601 format with offset
     inReplyToId: z.string().optional().nullable(),
   })

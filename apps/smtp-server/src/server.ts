@@ -135,6 +135,12 @@ const serverOptions: SMTPServerOptions = {
       callback(new Error("Invalid username or password"));
     }
   },
+  // 10 MB of SMTP DATA, advertised via the SIZE extension so a client is told
+  // before it uploads. This is measured on the wire (already MIME-encoded), so
+  // it is strictly tighter than the 25 MB raw-attachment cap the API enforces
+  // in `service/attachment-limits.ts` -- this path cannot be used to get around
+  // it. Raising it means re-reading that derivation first: SES rejects anything
+  // over 40 MB post-base64 and will not raise the ceiling.
   size: 10485760,
 };
 
