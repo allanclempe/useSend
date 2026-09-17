@@ -1,6 +1,9 @@
 # Cloudflare migration plan
 
-Status: **plan / not started**
+Status: **in progress — Phases 0–3, 5 and 8 landed; 4, 6, 7, 9 and 10 outstanding.**
+Sections marked **Done** record what was actually built and where it differed from the plan; the
+rest is still a plan. Nothing here has run on a Cloudflare account — every measurement is local
+`workerd` under `wrangler dev`.
 
 **Target stack**
 
@@ -433,8 +436,39 @@ requires a Cloudflare account.
   `domain-verification` → `webhook-cleanup` → `usage-reporting` → `cleanup-email-bodies`
   (pure cron) → `ses-webhook` → `webhook-dispatch` (DO, deletes the lock) → `contact-bulk-add`
   → `campaign-*` → `campaign-scheduler` (DO alarm) → email send queues last.
-  - The `ses-webhook` cutover must **batch**: `sendBatch` from the SNS route, and one multi-row
-    INSERT per consumer batch rather than 100 round trips (§12).
+
+  **Largely done.** Every queue is cut over, both Durable Objects exist, the Redis lock is deleted
+  and the whole of it has been exercised in a real `workerd` isolate under `wrangler dev` with no
+  Cloudflare account. What the seam looks like now:
+
+  | Piece | Where it lives |
+  |---|---|
+  | Queue producers and the `queue()` consumer | `server/queue/workers-driver.ts`, `src/worker/queue-consumer.ts` |
+  | Which queues exist, and their batch/retry settings | `server/queue/queue-registry.ts`, checked against `wrangler.jsonc` by a unit test |
+  | Which crons exist | `server/queue/cron-registry.ts`, same check |
+  | Webhook ordering | `src/worker/webhook-dispatcher.ts` (DO per `webhookId`) |
+  | The scheduler tick | `src/worker/campaign-scheduler.ts` (DO alarm, 30s) |
+  | Scheduled emails | `server/service/scheduled-email-sweeper.ts` + the claim in `email-queue-service.ts` |
+  | Supported SES regions | `server/queue/ses-regions.ts` |
+
+  **Left over, in the order they matter:**
+
+  1. **The batched `EmailEvent` INSERT** (§12, optimization 3). The consumer still writes one row
+     per message. This is the largest remaining cost lever in the whole migration — 78% of queue
+     and request load — and it means restructuring `parseSesHook`, which carries engagement dedup,
+     campaign analytics and webhook emission per event. Note that **`sendBatch` from the SNS route
+     is not possible**: SNS HTTP/S delivery posts exactly one notification per request, so the
+     producer has exactly one message to send. The win is entirely consumer-side.
+  2. **`SUPPORTED_SES_REGIONS` needs a product decision.** Thirteen regions are pre-declared; the
+     list is a default, not an answer.
+  3. **Domain verification is blocked on Phase 9** — see below.
+  4. **Idempotency for the remaining consumers.** The send path has its claim-UPDATE (§4.5) and
+     webhook delivery is serialised by its Durable Object, but `contact-bulk-add` and
+     `campaign-batch` are at-least-once with no guard beyond the natural idempotence of an upsert
+     and a `campaignEmail` existence check.
+  5. **DLQ alerting.** The dead letter queue is declared and consumed, and every dead message is
+     logged at error severity with its source queue — which is §11's alerting path. Nobody has
+     written the alert.
 - **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
   - **`domain-service.ts` blocks domain verification on Workers, and Phase 8 cannot fix it.**
     `getDomainVerificationState` (`domain-service.ts:130`) reads three keys from Redis on every
@@ -671,8 +705,12 @@ volume — campaign sends spike it. Storage compounds: ~3.5M `EmailEvent` rows/m
    row writes and storage. Config change. → Phase 0
 2. **`EmailEvent` retention policy.** Otherwise storage growth is unbounded and monotonic. The
    existing `cleanup-email-bodies` job is the pattern to follow. → Phase 0
-3. **Batch the event ingest path.** `sendBatch` from the SNS route; one multi-row INSERT per
-   consumer batch. Cuts queue operations and Neon write load together. → Phase 8
+3. **Batch the event ingest path.** ~~`sendBatch` from the SNS route;~~ one multi-row INSERT per
+   consumer batch. Cuts queue operations and Neon write load together. → Phase 8, **not done**.
+   The `sendBatch` half is **impossible**: SNS HTTP/S delivery posts exactly one notification per
+   request, so the producer never has more than one message to send. Batching on `Publish` is a
+   different thing and is not what SES uses here. The consumer-side INSERT is the whole win, and
+   the consumer already receives batches of up to 100 (`max_batch_size`, `max_batch_timeout: 5`).
 4. **~~Cache API key verification.~~ Done — #48.** `scryptSync` was 18.7ms of synchronous CPU on
    *every* public-API request, 97% of a transactional send. Two options were on the table: cache
    the verified `clientId → team` mapping, or move to a keyed HMAC over a high-entropy token (these
