@@ -2,7 +2,7 @@ import { env } from "~/env";
 import { EmailAttachment } from "~/types";
 import { convert as htmlToText } from "html-to-text";
 import { getConfigurationSetName } from "~/utils/ses-utils";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";
 import { withUpdatedAt } from "../drizzle/touch";
@@ -15,6 +15,13 @@ import {
   type TeamJob,
   type Worker,
 } from "../queue";
+import {
+  SEND_QUEUE_MAX_ATTEMPTS,
+  SEND_QUEUE_SUFFIXES,
+  sendQueueName,
+  SUPPORTED_SES_REGIONS,
+} from "../queue/ses-regions";
+import { isWorkersRuntime } from "../runtime";
 import { logger } from "../logger/log";
 import { LimitService } from "./limit-service";
 import { recordAcceptedSends, reverseAcceptedSend } from "./usage-service";
@@ -37,6 +44,26 @@ type QueueEmailJob = TeamJob<{
   unsubUrl?: string;
   isBulk?: boolean;
 }>;
+
+/**
+ * Why a region can be missing, which is now a product answer rather than a bug.
+ *
+ * Adding an SES region in the admin UI used to be enough: BullMQ created the
+ * queue on demand. Cloudflare Queues are declared in `wrangler.jsonc`, so a
+ * region outside `SUPPORTED_SES_REGIONS` has no queue and no binding and cannot
+ * be sent from until someone adds it to the list and deploys (§4.1).
+ */
+function unknownRegion(region: string): string {
+  if (!isWorkersRuntime()) {
+    return `Queue for region ${region} not found`;
+  }
+
+  return (
+    `No send queue for SES region "${region}". Cloudflare Queues are declared at deploy time, ` +
+    `so a region has to be in SUPPORTED_SES_REGIONS (server/queue/ses-regions.ts) and deployed ` +
+    `before it can send. Supported: ${SUPPORTED_SES_REGIONS.join(", ")}.`
+  );
+}
 
 function createQueueAndWorker(region: string, quota: number, suffix: string) {
   const queueName = `${region}-${suffix}`;
@@ -66,6 +93,19 @@ export class EmailQueueService {
     quota: number,
     transactionalQuotaPercentage: number
   ) {
+    if (isWorkersRuntime()) {
+      // Deliberately does nothing. `max_concurrency` on a Queues consumer is
+      // deploy-time configuration, so a quota change made in the admin UI is
+      // recorded in the database and takes effect at the next deploy (§11,
+      // decision 1). `updateSesSetting` and its UI say so; this logs it in case
+      // anyone reaches the method another way.
+      logger.info(
+        { region, quota, transactionalQuotaPercentage },
+        `[EmailQueueService]: Quota recorded; consumer concurrency changes at the next deploy`
+      );
+      return;
+    }
+
     logger.info(
       { region },
       `[EmailQueueService]: Initializing queue for region`
@@ -131,8 +171,7 @@ export class EmailQueueService {
     teamId: number,
     region: string,
     transactional: boolean,
-    unsubUrl?: string,
-    delay?: number
+    unsubUrl?: string
   ) {
     if (!this.initialized) {
       await this.init();
@@ -142,7 +181,7 @@ export class EmailQueueService {
       : this.marketingQueue.get(region);
     const isBulk = !transactional;
     if (!queue) {
-      throw new Error(`Queue for region ${region} not found`);
+      throw new Error(unknownRegion(region));
     }
     await queue.enqueue(
       emailId,
@@ -152,8 +191,7 @@ export class EmailQueueService {
         unsubUrl,
         isBulk,
         teamId,
-      },
-      { jobId: emailId, delay }
+      }
     );
 
     // This is where a send becomes billable. Every path -- the public API, the
@@ -182,7 +220,6 @@ export class EmailQueueService {
       region: string;
       transactional: boolean;
       unsubUrl?: string;
-      delay?: number;
       timestamp?: number; // Optional: pass timestamp if needed for data
     }[]
   ): Promise<void> {
@@ -252,10 +289,6 @@ export class EmailQueueService {
           isBulk,
           teamId: job.teamId,
         },
-        options: {
-          jobId: job.emailId, // Use emailId as jobId
-          delay: job.delay,
-        },
       }));
 
       logger.info(
@@ -286,52 +319,26 @@ export class EmailQueueService {
     );
   }
 
-  public static async changeDelay(
-    emailId: string,
-    region: string,
-    transactional: boolean,
-    delay: number
-  ) {
-    if (!this.initialized) {
-      await this.init();
-    }
-    const queue = transactional
-      ? this.transactionalQueue.get(region)
-      : this.marketingQueue.get(region);
-    if (!queue) {
-      throw new Error(`Queue for region ${region} not found`);
-    }
-
-    const job = await queue.getJob(emailId);
-    if (!job) {
-      throw new Error(`Job ${emailId} not found`);
-    }
-    await job.changeDelay(delay);
-  }
-
-  public static async chancelEmail(
-    emailId: string,
-    region: string,
-    transactional: boolean
-  ) {
-    if (!this.initialized) {
-      await this.init();
-    }
-    const queue = transactional
-      ? this.transactionalQueue.get(region)
-      : this.marketingQueue.get(region);
-    if (!queue) {
-      throw new Error(`Queue for region ${region} not found`);
-    }
-
-    const job = await queue.getJob(emailId);
-    if (!job) {
-      throw new Error(`Job ${emailId} not found`);
-    }
-    await job.remove();
-  }
+  /*
+   * `changeDelay` and `chancelEmail` used to live here. Both are deleted.
+   *
+   * Neither has a Cloudflare Queues equivalent -- a queued message cannot be
+   * looked up, moved or withdrawn -- and neither was ever needed: Postgres was
+   * already the source of truth, and the queue mutation was redundant
+   * bookkeeping that could not even do its job, since a message already picked
+   * up by a worker sent regardless of what the row said. `updateEmail` and
+   * `cancelEmail` are plain UPDATEs now, and the claim below is what makes them
+   * authoritative. See §4.5.
+   */
 
   public static async init() {
+    if (isWorkersRuntime()) {
+      // Already done at module load, and it cannot depend on the database: the
+      // set of queues is deploy-time config, not a query result (§4.1).
+      this.initialized = true;
+      return;
+    }
+
     const sesSettings = await drizzleDb.select().from(schema.sesSetting);
     for (const sesSetting of sesSettings) {
       this.initializeQueue(
@@ -342,6 +349,104 @@ export class EmailQueueService {
     }
     this.initialized = true;
   }
+
+  /**
+   * Builds a queue handle and registers a consumer for every supported region,
+   * without reading a row.
+   *
+   * On BullMQ the set of send queues came from `SesSetting`: whatever region a
+   * user added in the admin UI got a queue, created on demand. Cloudflare
+   * cannot do that — the queue, its consumer and its binding are all declared
+   * in `wrangler.jsonc` — so the set is `SUPPORTED_SES_REGIONS` and it is known
+   * before any query. Doing it at module load rather than in `init()` is what
+   * puts a handler behind each declared consumer before the first message
+   * arrives; `init()` is lazy and runs on the first *send*, which is too late
+   * for a consumer invocation.
+   */
+  public static registerSupportedRegions() {
+    for (const region of SUPPORTED_SES_REGIONS) {
+      for (const suffix of SEND_QUEUE_SUFFIXES) {
+        const queueName = sendQueueName(region, suffix);
+        const queue = createQueue<QueueEmailJob["data"]>(queueName);
+
+        // Concurrency is `max_concurrency` on the consumer, which is
+        // deploy-time (§11, decision 1). Passing a number here would only be
+        // read by the inert setter on the Workers driver.
+        createWorker(queueName, createWorkerHandler(executeEmail));
+
+        if (suffix === "transaction") {
+          this.transactionalQueue.set(region, queue);
+        } else {
+          this.marketingQueue.set(region, queue);
+        }
+      }
+    }
+  }
+}
+
+if (isWorkersRuntime()) {
+  EmailQueueService.registerSupportedRegions();
+}
+
+/**
+ * Takes an email out of SCHEDULED, or reports that it could not.
+ *
+ * This one statement is the whole idempotency story for the send path (§4.4,
+ * §4.5). Cloudflare Queues are at-least-once where BullMQ was effectively
+ * at-most-once per attempt, so the same message can arrive twice — most often
+ * because a handler succeeded and the ack was lost — and without this that is a
+ * second copy of someone's email.
+ *
+ * `SCHEDULED` is the only pre-send state, which is why `sendEmail` writes it
+ * even for an immediate send. That makes the transition a one-way gate, and it
+ * covers three things at once:
+ *
+ * - **duplicate delivery** — the second arrival finds the row already QUEUED
+ *   and updates nothing
+ * - **cancellation** — a CANCELLED row cannot be claimed, so `cancelEmail` now
+ *   stops a send that is already in flight, which removing a job from a queue
+ *   never could
+ * - **a stale message left by a reschedule** — same mechanism
+ *
+ * Returns false when zero rows came back: someone else has it, or nobody
+ * should. Ack the message and drop it.
+ */
+export async function claimEmailForSending(emailId: string): Promise<boolean> {
+  const claimed = await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ latestStatus: "QUEUED" as const }))
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "SCHEDULED"),
+      ),
+    )
+    .returning({ id: schema.email.id });
+
+  return claimed.length > 0;
+}
+
+/**
+ * Puts an unsent email back where the claim found it.
+ *
+ * Without this the claim would turn every retryable failure into a lost email:
+ * the row is QUEUED, the redelivery cannot claim it, and it sits there forever
+ * -- never sent, never FAILED, with nothing to say so. Seen for real on the
+ * first local run, where `getConfigurationSetName` threw after the claim.
+ *
+ * The `WHERE` clause matters. Only a row still sitting in QUEUED is released:
+ * anything the handler already moved on -- SENT, FAILED -- is left alone.
+ */
+async function releaseEmailClaim(emailId: string) {
+  await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ latestStatus: "SCHEDULED" as const }))
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "QUEUED"),
+      ),
+    );
 }
 
 async function executeEmail(job: QueueEmailJob) {
@@ -350,6 +455,74 @@ async function executeEmail(job: QueueEmailJob) {
     `[EmailQueueService]: Executing email job`
   );
 
+  const claimed = await claimEmailForSending(job.data.emailId);
+
+  if (!claimed) {
+    logger.info(
+      { emailId: job.data.emailId },
+      `[EmailQueueService]: Email is not claimable (already sent, claimed or cancelled); dropping`
+    );
+    return;
+  }
+
+  try {
+    await sendClaimedEmail(job);
+  } catch (error) {
+    if (job.attemptsMade + 1 >= SEND_QUEUE_MAX_ATTEMPTS) {
+      // Out of attempts. Releasing the claim here would put the row back in
+      // SCHEDULED, where the sweeper would find it due and enqueue it again --
+      // every 30 seconds, forever. A terminal status ends that, and the message
+      // still reaches the dead letter queue on the way out.
+      await failEmail(job.data.emailId, error);
+    } else {
+      // Hand the claim back so the redelivery can take it, then let the queue
+      // see the failure and count the attempt.
+      await releaseEmailClaim(job.data.emailId);
+    }
+
+    throw error;
+  }
+}
+
+async function failEmail(emailId: string, error: unknown) {
+  const [email] = await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ latestStatus: "FAILED" as const }))
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "QUEUED"),
+      ),
+    )
+    .returning({ teamId: schema.email.teamId });
+
+  if (!email) {
+    return;
+  }
+
+  await drizzleDb.insert(schema.emailEvent).values({
+    id: createId(),
+    emailId,
+    status: "FAILED" as const,
+    data: { error: error instanceof Error ? error.message : String(error) },
+    teamId: email.teamId,
+  });
+
+  // Accepted but never delivered to SES. Same reasoning as the other two
+  // failure branches: we bill for accepted sends, not for sends we failed.
+  await reverseAcceptedSend(emailId);
+
+  logger.error(
+    { err: error, emailId },
+    `[EmailQueueService]: Email failed on its last attempt; marked FAILED`
+  );
+}
+
+/**
+ * Everything after the claim. Split out only so the claim can be released if
+ * this throws -- there is one caller.
+ */
+async function sendClaimedEmail(job: QueueEmailJob) {
   const [email] = await drizzleDb
     .select()
     .from(schema.email)

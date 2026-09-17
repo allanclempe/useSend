@@ -1,11 +1,21 @@
 import type { ExecutionContext } from "hono";
+import type { MessageBatch } from "@cloudflare/workers-types";
 import app from "~/server/public-api";
 import { createDrizzleClient, withDrizzleClient } from "~/server/drizzle";
 import {
   withWorkerBindings,
   type WorkerBindings,
 } from "~/server/worker-bindings";
+import { handleQueueBatch } from "./queue-consumer";
+import { handleScheduled } from "./scheduled";
 import { handleStorageRequest, isStorageRequest } from "./storage-routes";
+
+/**
+ * Durable Object classes have to be exported from the Worker's entry module for
+ * `wrangler.jsonc` to bind them by class name.
+ */
+export { CampaignScheduler } from "./campaign-scheduler";
+export { WebhookDispatcher } from "./webhook-dispatcher";
 
 /**
  * The public API, served from a Cloudflare Worker.
@@ -15,7 +25,13 @@ import { handleStorageRequest, isStorageRequest } from "./storage-routes";
  * connection and its bindings. The API's routes, request shapes and responses
  * are the external contract and are untouched.
  *
- * See references/serverless-migration.md §7.
+ * The same Worker is also the consumer for every queue it declares. That is not
+ * a packaging compromise — a Cloudflare Queues consumer *is* a `queue()` export
+ * on a Worker, and putting it here means producer and consumer share one
+ * bundle, one set of bindings and one deploy, so a payload shape cannot drift
+ * between the two halves.
+ *
+ * See references/serverless-migration.md §2 and §7.
  */
 export default {
   async fetch(
@@ -48,5 +64,21 @@ export default {
       // The socket is torn down with the request context either way.
       ctx.waitUntil(close());
     }
+  },
+
+  async queue(
+    batch: MessageBatch<unknown>,
+    env: WorkerBindings,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    await handleQueueBatch(batch, env, ctx);
+  },
+
+  async scheduled(
+    controller: { cron: string; scheduledTime: number },
+    env: WorkerBindings,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    await handleScheduled(controller, env, ctx);
   },
 };

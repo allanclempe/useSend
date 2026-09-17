@@ -16,3 +16,9 @@ NEXT_PUBLIC_IS_CLOUD="false"
 AWS_ACCESS_KEY_ID="local"
 AWS_SECRET_ACCESS_KEY="local"
 AWS_DEFAULT_REGION="us-east-1"
+
+# Keys the HMAC that hashes API keys (#48). Required -- `src/env.js` refuses to
+# validate without it, so the isolate fails at startup rather than at request
+# time. Generate a throwaway one for local dev with:
+#   openssl rand -hex 32
+API_KEY_HMAC_SECRET=""

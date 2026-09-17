@@ -284,9 +284,11 @@ describeIntegration("campaign batch", () => {
   });
 
   describe("batch worker", () => {
-    async function runBatch(campaignId: string) {
+    async function runBatch(campaignId: string, remaining?: number) {
       if (!capturedBatchHandler.fn) throw new Error("handler not captured");
-      return capturedBatchHandler.fn({ data: { campaignId, teamId } });
+      return capturedBatchHandler.fn({
+        data: { campaignId, teamId, ...(remaining ? { remaining } : {}) },
+      });
     }
 
     it("sends one batch, advances the cursor and queues each email", async () => {
@@ -372,6 +374,71 @@ describeIntegration("campaign batch", () => {
       expect(await drizzleDb.$count(schema.campaignEmail)).toBe(1);
     });
 
+    /**
+     * §4.3: `batchSize` is the user's pacing unit and does not fit in a Worker
+     * invocation at its default of 500. The window keeps the user's number; the
+     * invocation is capped and continues itself.
+     */
+    describe("splitting a window across invocations", () => {
+      it("continues a window it could not finish, without restarting the clock", async () => {
+        const campaign = await makeCampaign({
+          status: "RUNNING",
+          batchSize: 500,
+          batchWindowMinutes: 60,
+        });
+        for (let i = 0; i < 3; i++) {
+          await makeContact(`b_split_${i}`);
+        }
+
+        // `remaining: 2` stands in for a window already part-spent, so one
+        // invocation takes what is left of it.
+        await runBatch(campaign.id, 2);
+
+        const [stored] = await drizzleDb
+          .select()
+          .from(schema.campaign)
+          .where(eq(schema.campaign.id, campaign.id))
+          .limit(1);
+
+        // Two contacts, so the window is spent and the pacing clock starts.
+        expect(await drizzleDb.$count(schema.campaignEmail)).toBe(2);
+        expect(stored?.lastSentAt).not.toBeNull();
+        expect(mockBatchEnqueue).not.toHaveBeenCalled();
+      });
+
+      it("caps the invocation at 100 and continues, leaving lastSentAt alone", async () => {
+        const campaign = await makeCampaign({
+          status: "RUNNING",
+          batchSize: 500,
+          batchWindowMinutes: 60,
+        });
+        // One past the invocation cap, which is the boundary under test: a
+        // window of 500 cannot be one invocation.
+        for (let i = 0; i < 101; i++) {
+          await makeContact(`b_cap_${String(i).padStart(3, "0")}`);
+        }
+
+        await runBatch(campaign.id);
+
+        const [stored] = await drizzleDb
+          .select()
+          .from(schema.campaign)
+          .where(eq(schema.campaign.id, campaign.id))
+          .limit(1);
+
+        expect(await drizzleDb.$count(schema.campaignEmail)).toBe(100);
+        expect(stored?.lastCursor).toBe("b_cap_099");
+        // Writing this mid-window is what would silently turn a 500-per-hour
+        // campaign into a 100-per-hour one.
+        expect(stored?.lastSentAt).toBeNull();
+        expect(mockBatchEnqueue).toHaveBeenCalledWith(
+          `campaign-${campaign.id}`,
+          expect.objectContaining({ remaining: 400 }),
+          undefined,
+        );
+      });
+    });
+
     it("does nothing for a paused campaign", async () => {
       const campaign = await makeCampaign({ status: "PAUSED" });
       await makeContact("b_paused");
@@ -384,7 +451,7 @@ describeIntegration("campaign batch", () => {
   });
 
   describe("queueBatch", () => {
-    it("enqueues with a stable, queue-safe job id", async () => {
+    it("enqueues the campaign by id, with no dedup key", async () => {
       const campaign = await makeCampaign({
         status: "SCHEDULED",
         batchWindowMinutes: 0,
@@ -392,11 +459,15 @@ describeIntegration("campaign batch", () => {
 
       await CampaignBatchService.queueBatch({ campaignId: campaign.id, teamId });
 
-      // The job id is what makes re-queuing the same campaign idempotent.
+      // `EnqueueOptions.jobId` is gone: Cloudflare Queues has no dedup key, so
+      // nothing may be built on one (§4.4). What keeps a re-queue harmless is
+      // the batch window above and the consumer advancing `lastCursor`.
+      // The trailing `undefined` is the seam passing `options` straight
+      // through; there are no options left to pass.
       expect(mockBatchEnqueue).toHaveBeenCalledWith(
         `campaign-${campaign.id}`,
         { campaignId: campaign.id, teamId },
-        expect.objectContaining({ jobId: `campaign-batch-${campaign.id}` }),
+        undefined,
       );
     });
 

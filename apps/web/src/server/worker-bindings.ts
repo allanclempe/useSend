@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { KVNamespace, R2Bucket } from "@cloudflare/workers-types";
+import type {
+  KVNamespace,
+  Queue as CfQueue,
+  R2Bucket,
+} from "@cloudflare/workers-types";
 
 /**
  * The bindings declared in `apps/web/wrangler.jsonc`.
@@ -15,7 +19,20 @@ export type WorkerBindings = {
   STORAGE: R2Bucket;
   /** Team and usage cache only. Never idempotency or rate limits (§1). */
   CACHE: KVNamespace;
+} & {
+  /**
+   * Queue producers, one per entry in `server/queue/queue-registry.ts`.
+   *
+   * An index signature rather than a name per queue because the set is data:
+   * §4.1 pre-declares a queue pair per supported SES region, so the names are
+   * derived from a list, not written out. `getQueueBinding` is the only thing
+   * that should index this, and it validates what it finds.
+   */
+  readonly [binding: string]: unknown;
 };
+
+/** The producer half of a queue binding, narrowed to what the driver uses. */
+export type QueueProducer = CfQueue<unknown>;
 
 /**
  * Bindings are only readable inside a request handler, so they cannot live in a

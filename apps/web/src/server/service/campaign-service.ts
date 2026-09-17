@@ -1140,7 +1140,31 @@ export { updateCampaignAnalytics } from "./campaign-analytics-service";
 // Simple campaign batch queue
 // ---------------------------
 
-type CampaignBatchJob = TeamJob<{ campaignId: string }>;
+/**
+ * Contacts processed in one invocation.
+ *
+ * `Campaign.batchSize` is the user's pacing unit -- "send 500, then wait
+ * `batchWindowMinutes`" -- and at its default of 500 it does not fit in a
+ * Worker invocation. Each contact renders an email, inserts two rows and
+ * enqueues a send, so 500 is comfortably past the 1000-subrequest cap and well
+ * into the 30s CPU budget at 5.7ms a render (§4.3, §12).
+ *
+ * So the *window* stays the user's number and the *invocation* is capped here.
+ * A batch that does not finish in one invocation carries what is left on a
+ * continuation message and keeps going immediately; `lastSentAt` -- which is
+ * what gates the next window -- is only written once the whole window's worth
+ * is done. Pacing is unchanged; only the number of invocations it takes is.
+ */
+const MAX_CONTACTS_PER_INVOCATION = 100;
+
+type CampaignBatchJob = TeamJob<{
+  campaignId: string;
+  /**
+   * Contacts still owed for this window. Absent on the message that starts one,
+   * which is how the handler tells a fresh window from a continuation.
+   */
+  remaining?: number;
+}>;
 
 export class CampaignBatchService {
   private static batchQueue = createQueue<CampaignBatchJob["data"]>(
@@ -1150,7 +1174,7 @@ export class CampaignBatchService {
   static worker = createWorker(
     CAMPAIGN_BATCH_QUEUE,
     createWorkerHandler(async (job: CampaignBatchJob) => {
-      const { campaignId } = job.data;
+      const { campaignId, remaining } = job.data;
 
       const [campaignRow] = await drizzleDb
         .select()
@@ -1176,7 +1200,10 @@ export class CampaignBatchService {
           .where(eq(schema.campaign.id, campaignId));
       }
 
-      const batchSize = campaign.batchSize ?? 500;
+      // What this window still owes, and what this invocation will actually
+      // take out of it.
+      const windowRemaining = remaining ?? campaign.batchSize ?? 500;
+      const batchSize = Math.min(windowRemaining, MAX_CONTACTS_PER_INVOCATION);
 
       // Prisma paged with cursor + skip:1. Contact.id is unique and the order
       // is id asc, so the keyset is just "after the last id seen".
@@ -1289,12 +1316,33 @@ export class CampaignBatchService {
         }
       }
 
-      // Advance cursor and timestamp
       const newCursor = contacts[contacts.length - 1]?.id;
+      const stillOwed = windowRemaining - contacts.length;
+      // A short page means the contact book ran out, so the window is over
+      // whatever it still owed.
+      const hasMoreThisWindow = stillOwed > 0 && contacts.length === batchSize;
+
       await drizzleDb
         .update(schema.campaign)
-        .set(withUpdatedAt({ lastCursor: newCursor, lastSentAt: new Date() }))
+        .set(
+          withUpdatedAt({
+            lastCursor: newCursor,
+            // Only when the window is finished. Writing it on every
+            // continuation would restart the pacing clock mid-window and make a
+            // `batchWindowMinutes` campaign send `MAX_CONTACTS_PER_INVOCATION`
+            // per window instead of `batchSize`.
+            ...(hasMoreThisWindow ? {} : { lastSentAt: new Date() }),
+          }),
+        )
         .where(eq(schema.campaign.id, campaignId));
+
+      if (hasMoreThisWindow) {
+        await CampaignBatchService.continueBatch({
+          campaignId,
+          teamId: job.data.teamId,
+          remaining: stillOwed,
+        });
+      }
     }),
     { concurrency: 20 },
   );
@@ -1338,10 +1386,38 @@ export class CampaignBatchService {
       );
     }
 
-    await this.batchQueue.enqueue(
-      `campaign-${campaignId}`,
-      { campaignId, teamId },
-      { jobId: `campaign-batch-${campaignId}` },
-    );
+    // The `jobId` dedup key is gone with the rest of `EnqueueOptions.jobId`:
+    // Cloudflare has no equivalent, so nothing may be built on it. The window
+    // it protected -- two scheduler ticks enqueueing one campaign -- is closed
+    // by the `batchWindowMinutes` check above and by the consumer advancing
+    // `lastCursor`, not by the queue.
+    await this.batchQueue.enqueue(`campaign-${campaignId}`, {
+      campaignId,
+      teamId,
+    });
+  }
+
+  /**
+   * The next slice of a window already in progress.
+   *
+   * Separate from `queueBatch` because it must *not* re-check the batch window:
+   * the window was already opened, and `lastSentAt` has deliberately not been
+   * written yet, so the defensive check there would either let it through on a
+   * stale timestamp or block it on a fresh one.
+   */
+  static async continueBatch({
+    campaignId,
+    teamId,
+    remaining,
+  }: {
+    campaignId: string;
+    teamId?: number;
+    remaining: number;
+  }) {
+    await this.batchQueue.enqueue(`campaign-${campaignId}`, {
+      campaignId,
+      teamId,
+      remaining,
+    });
   }
 }

@@ -122,7 +122,9 @@ export const EditSesSettingsForm: React.FC<SesSettingsProps> = ({
                 <FormMessage />
               ) : (
                 <FormDescription>
-                  The number of emails to send per second.
+                  The number of emails to send per second. Saved immediately,
+                  but the send workers are only resized on the next deploy —
+                  queue concurrency is deploy-time configuration.
                 </FormDescription>
               )}
             </FormItem>
@@ -142,7 +144,8 @@ export const EditSesSettingsForm: React.FC<SesSettingsProps> = ({
               ) : (
                 <FormDescription>
                   The percentage of the quota to be used for transactional
-                  emails (0-100%).
+                  emails (0-100%). Takes effect on the next deploy, for the
+                  same reason as the send rate.
                 </FormDescription>
               )}
             </FormItem>

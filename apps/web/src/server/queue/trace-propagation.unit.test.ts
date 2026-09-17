@@ -23,7 +23,6 @@ vi.mock("./bullmq-driver", () => ({
       enqueue: mockEnqueue,
       enqueueBulk: mockEnqueueBulk,
       schedule: vi.fn(),
-      getJob: vi.fn(),
       getStats: vi.fn(),
       close: vi.fn(),
     }),
@@ -120,5 +119,22 @@ describe("queue trace propagation", () => {
     await registered.handler!(job({ emailId: "e_1" }));
 
     expect(traceId).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("joins the caller's trace when invoked directly, not over a queue", async () => {
+    // A Cron Trigger has no message and no traceparent: `scheduled()` opens a
+    // trace and calls the handler. Starting a second trace here would split a
+    // single job's log lines across two trace ids.
+    let traceId: string | undefined;
+    createWorker<{ emailId: string }>("test-queue", async () => {
+      traceId = getTraceContext()?.traceId;
+    });
+
+    const caller = newTraceContext();
+    await withTraceContext(caller, () =>
+      registered.handler!(job({ emailId: "e_1" })),
+    );
+
+    expect(traceId).toBe(caller.traceId);
   });
 });

@@ -46,7 +46,7 @@ From `apps/web/src/server/queue/queue-constants.ts`:
 | `{region}-transactional` | CF Queue → consumer Worker | `max_concurrency` = `transactionalQuota` |
 | `{region}-marketing` | CF Queue → consumer Worker | `max_concurrency` = `marketingQuota` |
 | `webhook-dispatch` | **Durable Object per `webhookId`** | serialization is free; DO alarm drives retry backoff |
-| `campaign-emails-processing` | CF Queue | |
+| ~~`campaign-emails-processing`~~ | — | **Does not exist.** `CAMPAIGN_MAIL_PROCESSING_QUEUE` is a constant nothing reads: no `createQueue`, no `createWorker`, no enqueue. Nothing to cut over. |
 | `campaign-batch` | CF Queue | must self-chunk, §4.3 |
 | `contact-bulk-add` | CF Queue | must self-chunk, §4.3 |
 | `ses-webhook` | HTTP route → CF Queue | SNS already POSTs to `setting.callbackUrl`; keep the HTTP hop |
@@ -68,7 +68,18 @@ Three of the hardest problems collapse into one primitive:
 
 - **Webhook ordering.** A DO is single-threaded per object ID. `webhook-service.ts:536-703` —
   `acquireLock`, `releaseLock`, the Lua script, `WEBHOOK_LOCK_TTL_MS`, `WEBHOOK_LOCK_RETRY_DELAY_MS`,
-  and the lock-not-acquired retry path all **delete**.
+  and the lock-not-acquired retry path all **delete**. **Done.**
+  `src/worker/webhook-dispatcher.ts`. Two consequences the plan did not call out:
+  - **Retry is an alarm, not a redelivery.** A queue would put a failed message back at an
+    arbitrary position relative to the messages behind it, which is the ordering the lock existed
+    to protect. The DO keeps the failed call at the head and re-arms.
+  - **That means head-of-line blocking**, which the Redis lock did *not* have: a dead endpoint now
+    stalls its own webhook's backlog for the full retry ladder (~2.5 minutes over 6 attempts)
+    instead of letting later events past. Bounded by auto-disable at 30 consecutive failures, and
+    per-webhook — one bad endpoint cannot affect another, because it is a different object.
+  - **Under Node the lock is replaced by concurrency 1**, not by a port. Stronger than the lock
+    (global serialisation) and slower. Node is being deleted; keeping the lock alive for it is not
+    worth it.
 - **The 1.5s scheduler tick.** `setAlarm()` is millisecond-precision. No 1-minute floor.
 - **Delayed sends and idempotency.** Transactional DO storage with strong consistency, plus alarms.
 
@@ -84,6 +95,17 @@ SES region in the UI (`ses-settings-service.ts:127`, `:193`). Queue bindings are
 **Resolution:** a fixed `SUPPORTED_SES_REGIONS` list in `wrangler.toml`, with queue + consumer pairs
 pre-declared for each. Idle queues cost nothing. Adding a region becomes a deploy — a real product
 behaviour change that needs UI copy.
+
+**Done.** `server/queue/ses-regions.ts`, thirteen regions, twenty-six send queues, derived into
+`queue-registry.ts` and declared in `wrangler.jsonc`. **The contents of that list are a product
+decision that has not been made** — what is there is AWS's commercial SES regions minus the opt-in
+ones, which is a defensible default and not an answer about where anyone sends from. Sending from a
+region outside it now fails at the seam with a message naming the file and the supported set.
+
+The registration also had to move. On BullMQ the set of send queues came from `SesSetting` rows, so
+`init()` read the database to learn which queues to create. A Queues consumer has to be registered
+before the first message arrives, which is earlier than the first send, so on Workers the pair for
+every supported region is registered at module load and `init()` reads nothing.
 
 `max_concurrency` is also deploy-time, while `sesEmailRateLimit` is a DB column editable in the UI.
 **Decided: deploy-time only.** Changing the rate limit in the UI no longer takes effect until a
@@ -104,6 +126,22 @@ interval past 10s the object is evicted between every alarm, measured. The cost 
 scheduling jitter, which is invisible against `batchWindowMinutes` (minutes) and scheduled sends
 (minute precision) — and §4.5 already accepts one tick of jitter on the same path.
 
+**Done.** `src/worker/campaign-scheduler.ts`. Confirmed against the real scheduler under `wrangler
+dev`, not just the prototype: five consecutive 30s ticks each ran on a **fresh instance**
+(`alarmsHandledByThisInstance: 1`, five distinct `instanceId`s), so the object is evicted between
+every alarm with a real queue `send()` inside it. Sending to a queue binding does not pin the object
+the way a held socket does.
+
+Two things the plan did not anticipate:
+
+- **Something has to arm the first alarm.** A Worker has no startup hook, and an alarm chain that
+  fails permanently stops with nothing to say so. There is now a `*/10 * * * *` Cron Trigger whose
+  only job is to call `ensureRunning()` on the object, which arms the alarm if none is set.
+- **Which makes the Durable Object's margin thin.** With the tick at 30s, the DO buys **30 seconds
+  of latency over what that keepalive cron could do on its own** — and the design needs the cron
+  regardless. The alarm is still the right call while the tick is sub-minute, but if the tick ever
+  moves to 60s the object stops earning its place and the cron should simply do the sweep.
+
 Two constraints on the DO follow, and neither is optional:
 
 - **It must not hold a Postgres connection.** A held-open outbound socket makes a Durable Object
@@ -116,15 +154,31 @@ Two constraints on the DO follow, and neither is optional:
 
 ### 4.3 Workers CPU and subrequest limits vs unbounded loops
 
-Three handlers iterate unbounded result sets in a single job:
-- `runDueDomainVerifications()` — iterates **every** domain sequentially (`domain-verification-job.ts:17-38`)
-- `contact-bulk-add` — bulk contact import
-- `campaign-batch` — campaign fan-out
+Three handlers were named as iterating unbounded result sets in a single job. Two of them do; the
+third turned out not to. Each real one must **fan out or self-continue**: process a bounded page,
+enqueue a continuation with a cursor. Two separate ceilings apply — CPU time *and* the
+per-invocation **subrequest limit** (1000 on paid).
 
-Each must **fan out or self-continue**: process a bounded page, enqueue a continuation with a cursor.
-Two separate ceilings apply — CPU time *and* the per-invocation **subrequest limit** (1000 on paid).
-`runDueDomainVerifications` makes AWS calls per domain, so it hits the subrequest cap well before CPU.
-This is the largest behavioural code change in the migration and is not optional.
+- **`runDueDomainVerifications()`** — iterated **every** domain sequentially, with AWS calls per
+  domain, so it hits the subrequest cap well before CPU. **Done**: 25 domains per invocation,
+  keyset-paged on `Domain.id` (unique, so a page boundary cannot repeat or skip a row — the old
+  `createdAt asc` ordering was not). The hourly Cron Trigger runs page one and the handler enqueues
+  its own continuations, which makes `domain-verification` both a cron name and a queue —
+  `CRON_CONTINUED_QUEUES`.
+- **`campaign-batch`** — already paged on `lastCursor`, but at `batchSize` per invocation, default
+  **500**, which is past the subrequest cap and deep into the CPU budget at 5.7ms a render.
+  **Done**, and the subtlety is that `batchSize` is not a page size: it is the user's pacing unit,
+  "send 500, then wait `batchWindowMinutes`". So the *window* keeps the user's number and the
+  *invocation* is capped at 100, with what is left carried on a continuation message. `lastSentAt`
+  — which is what gates the next window — is written only when the window is fully spent. Writing
+  it per invocation would quietly turn a 500-per-hour campaign into a 100-per-hour one.
+- **`contact-bulk-add`** — **not actually unbounded, and not on a Worker path at all.** The
+  consumer takes one contact per message at a batch of 25. The public API producer is capped at
+  1000 contacts per request (`bulk-add-contacts.ts`) and the driver already splits a bulk enqueue
+  into `sendBatch` calls of 100, so it costs 10 subrequests. The one path that could hurt is the
+  **tRPC** `contacts.addContacts`, capped at **50,000** — 500 `sendBatch` calls, half the
+  subrequest budget — and tRPC runs on Node today and is retired entirely in Phase 7 (§11,
+  decision 3). **That cap needs revisiting when the route becomes a server function**, not now.
 
 ### 4.4 At-least-once delivery
 
@@ -168,8 +222,26 @@ RETURNING id
 Zero rows returned means already-claimed or cancelled: ack the message and drop it. One atomic
 statement covers duplicate delivery, cancellation, and any stale message left by a reschedule.
 
-**Trade-off:** up to one alarm tick (~1.5s) of scheduling jitter, on an email scheduled hours out.
-In exchange the current race disappears.
+**Trade-off:** up to one alarm tick (30s, §4.2) of scheduling jitter, on an email scheduled hours
+out. In exchange the current race disappears.
+
+**Done**, with two corrections the plan as written needed. Both were found by running it.
+
+- **The claim as specified loses emails.** `SCHEDULED → QUEUED` is one-way, so a handler that
+  throws *after* claiming and *before* reaching a terminal status leaves the row in QUEUED, where
+  the redelivery cannot claim it: never sent, never FAILED, nothing to say so. It reproduced on the
+  first local run, when `getConfigurationSetName` threw for an unconfigured region. The handler now
+  **releases the claim** (`QUEUED → SCHEDULED`, only if still QUEUED) before rethrowing, so the
+  redelivery can take it.
+- **Releasing it forever is a loop.** A row back in SCHEDULED and still due is re-enqueued by the
+  next sweep, every 30 seconds, for as long as the failure lasts. So on its *last* attempt the
+  handler marks the email FAILED terminally instead of releasing, which ends the loop and still
+  lets the message reach the dead letter queue on the way out.
+
+One more consequence: with `SCHEDULED` as the only pre-send state, `sendEmail` writes it for
+**immediate** sends too, and `QUEUED` now means "a consumer has claimed this". An immediate send is
+therefore briefly `SCHEDULED` with a null `scheduledAt` — and, less obviously, becomes cancellable
+in that window, which it was not before.
 
 **Rejected:** a Durable Object per scheduled email would give an exact `changeDelay` equivalent
 (`setAlarm()` moves freely and can be cleared), but that is one billed object per scheduled email to
@@ -364,6 +436,14 @@ requires a Cloudflare account.
   - The `ses-webhook` cutover must **batch**: `sendBatch` from the SNS route, and one multi-row
     INSERT per consumer batch rather than 100 round trips (§12).
 - **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
+  - **`domain-service.ts` blocks domain verification on Workers, and Phase 8 cannot fix it.**
+    `getDomainVerificationState` (`domain-service.ts:130`) reads three keys from Redis on every
+    domain, and `server/redis.ts` caches the ioredis connection in a module-level `let`. Under
+    `wrangler dev` that works for exactly one invocation and then hangs: measured, the hourly cron's
+    first page ran and its continuation and the next cron both stalled, which is §8's "a cached
+    connection serves exactly one request" in the wild. Nothing in Phase 8 touches it — the queue
+    and the paging around it are correct — so **domain verification is not usable on Workers until
+    this moves to KV**. It is the only job in Phase 8 with that dependency.
 - **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
   from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
 

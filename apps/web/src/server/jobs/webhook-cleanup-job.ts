@@ -4,6 +4,7 @@ import { env } from "~/env";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { isWebhookCallRetentionEnabled } from "~/utils/common";
 import { createQueue, createWorker, WEBHOOK_CLEANUP_QUEUE } from "../queue";
+import { CRON_TRIGGERS } from "../queue/cron-registry";
 import { logger } from "../logger/log";
 
 /**
@@ -62,9 +63,8 @@ export async function initWebhookCleanupJob() {
     },
   );
 
-  // daily at 03:00 UTC
   await webhookCleanupQueue.schedule("webhook-cleanup-daily", {
-    cron: "0 3 * * *",
+    cron: CRON_TRIGGERS[WEBHOOK_CLEANUP_QUEUE],
     tz: "UTC",
   });
 

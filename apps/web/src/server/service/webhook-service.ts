@@ -1,5 +1,5 @@
 import { WebhookCallStatus, WebhookStatus } from "~/types/db";
-import { createHmac, randomUUID, randomBytes } from "crypto";
+import { createHmac, randomBytes } from "crypto";
 import {
   WebhookEventData,
   WebhookPayloadData,
@@ -21,7 +21,7 @@ import {
 import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";
 import { withUpdatedAt } from "../drizzle/touch";
-import { getRedis, redisKey } from "../redis";
+import { currentTraceparent } from "../logger/trace-context";
 import {
   createQueue,
   createWorker,
@@ -29,15 +29,27 @@ import {
   WEBHOOK_DISPATCH_QUEUE,
   type TeamJob,
 } from "../queue";
+import { isWorkersRuntime } from "../runtime";
+import { getWorkerBindings } from "../worker-bindings";
 import { logger } from "../logger/log";
 import { LimitService } from "./limit-service";
 import { UnsendApiError } from "../public-api/api-error";
 
-const WEBHOOK_DISPATCH_CONCURRENCY = 25;
-const WEBHOOK_MAX_ATTEMPTS = 6;
+/**
+ * One delivery at a time, and the reason is ordering rather than load.
+ *
+ * A webhook endpoint is told about events in the order they happened, which
+ * used to be enforced by a Redis `SET NX PX` lock per `webhookId` plus a Lua
+ * release and a retry path for losing the race. On Workers that lock is
+ * replaced by a Durable Object per `webhookId`, which is single-threaded by
+ * construction (§3). Under Node the same property comes from running the
+ * dispatch worker at concurrency 1 — a stronger guarantee than the lock gave,
+ * since it serialises globally, and a slower one, which is the trade. Node is
+ * on its way out and the lock is not worth keeping alive for it.
+ */
+const WEBHOOK_DISPATCH_CONCURRENCY = 1;
+export const WEBHOOK_MAX_ATTEMPTS = 6;
 const WEBHOOK_BASE_BACKOFF_MS = 5_000;
-const WEBHOOK_LOCK_TTL_MS = 15_000;
-const WEBHOOK_LOCK_RETRY_DELAY_MS = 2_000;
 const WEBHOOK_AUTO_DISABLE_THRESHOLD = 30;
 const WEBHOOK_REQUEST_TIMEOUT_MS = 10_000;
 const WEBHOOK_RESPONSE_TEXT_LIMIT = 4_096;
@@ -52,44 +64,86 @@ type WebhookCallJob = TeamJob<WebhookCallJobData>;
 type WebhookEventInput<TType extends WebhookEventType> =
   WebhookPayloadData<TType>;
 
-export class WebhookQueueService {
-  private static queue = createQueue<WebhookCallJobData>(
-    WEBHOOK_DISPATCH_QUEUE,
-    {
+/**
+ * The BullMQ half. Absent inside a Worker, where dispatch is a Durable Object
+ * and there is no `webhook-dispatch` queue to create or consume.
+ */
+const dispatchQueue = isWorkersRuntime()
+  ? undefined
+  : createQueue<WebhookCallJobData>(WEBHOOK_DISPATCH_QUEUE, {
       attempts: WEBHOOK_MAX_ATTEMPTS,
       backoff: {
         type: "exponential",
         delay: WEBHOOK_BASE_BACKOFF_MS,
       },
+    });
+
+if (dispatchQueue) {
+  createWorker(WEBHOOK_DISPATCH_QUEUE, createWorkerHandler(processWebhookCall), {
+    concurrency: WEBHOOK_DISPATCH_CONCURRENCY,
+    onError: (error) => {
+      logger.error({ error }, "[WebhookQueueService]: Worker error");
     },
-  );
+  });
+}
 
-  private static worker = createWorker(
-    WEBHOOK_DISPATCH_QUEUE,
-    createWorkerHandler(processWebhookCall),
-    {
-      concurrency: WEBHOOK_DISPATCH_CONCURRENCY,
-      onError: (error) => {
-        logger.error({ error }, "[WebhookQueueService]: Worker error");
-      },
-    },
-  );
+export class WebhookQueueService {
+  /**
+   * Hands a call to whatever delivers webhooks in this runtime.
+   *
+   * `webhookId` is new in the signature and is the whole point: it is the
+   * Durable Object's name, so every call for one webhook lands on one object
+   * and is delivered in order. Every caller already had it — `emit` from the
+   * webhook row it just matched, `retryCall` from the call row it just read.
+   */
+  public static async enqueueCall(
+    callId: string,
+    webhookId: string,
+    teamId: number,
+  ) {
+    const dispatcher = getWorkerBindings()?.WEBHOOK_DISPATCHER as
+      | WebhookDispatcherNamespace
+      | undefined;
 
-  static {
-    logger.info("[WebhookQueueService]: Initialized webhook queue service");
-  }
+    if (dispatcher) {
+      const stub = dispatcher.get(dispatcher.idFromName(webhookId));
+      // The trace does not ride on a message body here — there is no message —
+      // so it is passed explicitly, the way the queue seam does it implicitly.
+      await stub.deliver(callId, teamId, currentTraceparent() ?? null);
+      return;
+    }
 
-  public static async enqueueCall(callId: string, teamId: number) {
-    await this.queue.enqueue(
-      callId,
-      {
-        callId,
-        teamId,
-      },
-      { jobId: callId },
-    );
+    if (!dispatchQueue) {
+      throw new Error(
+        "Webhook dispatch has nowhere to go: no WEBHOOK_DISPATCHER binding and no BullMQ queue. " +
+          "Declare the Durable Object in wrangler.jsonc.",
+      );
+    }
+
+    await dispatchQueue.enqueue(callId, { callId, teamId });
   }
 }
+
+/**
+ * The Durable Object binding, typed structurally.
+ *
+ * The class itself lives in `src/worker/webhook-dispatcher.ts` and extends
+ * `DurableObject` from `cloudflare:workers`, which must never reach a module
+ * Next.js bundles — and this one is imported all over the dashboard. A
+ * structural type needs no import and describes exactly what is called.
+ */
+/* eslint-disable no-unused-vars -- parameter names in a type signature */
+type WebhookDispatcherNamespace = {
+  idFromName(name: string): unknown;
+  get(id: unknown): {
+    deliver(
+      callId: string,
+      teamId: number,
+      traceparent: string | null,
+    ): Promise<void>;
+  };
+};
+/* eslint-enable no-unused-vars */
 
 export class WebhookService {
   public static async emit<TType extends WebhookEventType>(
@@ -153,7 +207,7 @@ export class WebhookService {
         throw new Error("Failed to create webhook call");
       }
 
-      await WebhookQueueService.enqueueCall(call.id, webhook.teamId);
+      await WebhookQueueService.enqueueCall(call.id, webhook.id, webhook.teamId);
     }
   }
 
@@ -188,7 +242,7 @@ export class WebhookService {
       )
       .where(eq(schema.webhookCall.id, call.id));
 
-    await WebhookQueueService.enqueueCall(call.id, params.teamId);
+    await WebhookQueueService.enqueueCall(call.id, call.webhookId, params.teamId);
 
     return call.id;
   }
@@ -237,7 +291,7 @@ export class WebhookService {
       throw new Error("Failed to create webhook call");
     }
 
-    await WebhookQueueService.enqueueCall(call.id, webhook.teamId);
+    await WebhookQueueService.enqueueCall(call.id, webhook.id, webhook.teamId);
 
     return call.id;
   }
@@ -633,7 +687,7 @@ function stringifyPayload(payload: unknown) {
   }
 }
 
-async function processWebhookCall(job: WebhookCallJob) {
+export async function processWebhookCall(job: WebhookCallJob) {
   const attempt = job.attemptsMade + 1;
   const [row] = await drizzleDb
     .select({ call: schema.webhookCall, webhook: schema.webhook })
@@ -672,25 +726,11 @@ async function processWebhookCall(job: WebhookCallJob) {
     .set(withUpdatedAt({ status: WebhookCallStatus.IN_PROGRESS, attempt }))
     .where(eq(schema.webhookCall.id, call.id));
 
-  const lockKey = redisKey(`webhook:lock:${call.webhookId}`);
-  const redis = getRedis();
-  const lockValue = randomUUID();
-
-  const lockAcquired = await acquireLock(redis, lockKey, lockValue);
-  if (!lockAcquired) {
-    await drizzleDb
-      .update(schema.webhookCall)
-      .set(
-        withUpdatedAt({
-          nextAttemptAt: new Date(Date.now() + WEBHOOK_LOCK_RETRY_DELAY_MS),
-          status: WebhookCallStatus.PENDING,
-        }),
-      )
-      .where(eq(schema.webhookCall.id, call.id));
-    // Let BullMQ handle retry timing; this records observability.
-    throw new Error("Webhook lock not acquired");
-  }
-
+  // No lock. Ordering per webhook is a property of where this runs, not
+  // something to acquire: on Workers a Durable Object per `webhookId` is
+  // single-threaded by construction, and under Node the dispatch worker runs at
+  // concurrency 1. The Redis `SET NX PX`, its Lua release and the
+  // lock-not-acquired retry path are gone (§3).
   try {
     const body = buildPayload(call, attempt);
     const { responseStatus, responseTimeMs, responseText } = await postWebhook({
@@ -832,40 +872,16 @@ async function processWebhookCall(job: WebhookCallJob) {
     }
 
     throw error;
-  } finally {
-    await releaseLock(redis, lockKey, lockValue);
   }
 }
 
-async function acquireLock(
-  redis: ReturnType<typeof getRedis>,
-  key: string,
-  value: string,
-) {
-  const result = await redis.set(key, value, "PX", WEBHOOK_LOCK_TTL_MS, "NX");
-  return result === "OK";
-}
-
-async function releaseLock(
-  redis: ReturnType<typeof getRedis>,
-  key: string,
-  value: string,
-) {
-  const script = `
-    if redis.call("GET", KEYS[1]) == ARGV[1] then
-      return redis.call("DEL", KEYS[1])
-    else
-      return 0
-    end
-  `;
-  try {
-    await redis.eval(script, 1, key, value);
-  } catch (error) {
-    logger.error({ error }, "[WebhookQueueService]: Failed to release lock");
-  }
-}
-
-function computeBackoff(attempt: number) {
+/**
+ * Backoff for the next attempt, in milliseconds.
+ *
+ * Exported because on Workers the retry is scheduled by a Durable Object alarm
+ * rather than by a queue: the delivery loop asks for the delay and re-arms.
+ */
+export function computeBackoff(attempt: number) {
   const base = WEBHOOK_BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
   const jitter = base * 0.3 * Math.random();
   return base + jitter;

@@ -28,11 +28,12 @@ export type BackoffStrategy = {
 
 export type EnqueueOptions = {
   /**
-   * Dedup key. Enqueueing again with the same id while the job still exists is
-   * a no-op — this is what makes `emailId` usable as a job identity.
+   * Milliseconds before the job becomes available to a consumer.
+   *
+   * Capped at 12 hours on Cloudflare, which is what `delaySeconds` allows.
+   * Anything further out is a database row a sweeper finds when it is due, not
+   * a delayed message — see §4.5.
    */
-  jobId?: string;
-  /** Milliseconds before the job becomes available to a consumer. */
   delay?: number;
   attempts?: number;
   backoff?: BackoffStrategy;
@@ -40,14 +41,6 @@ export type EnqueueOptions = {
 
 /** Cron expression, or a fixed interval in milliseconds. */
 export type ScheduleSpec = { cron: string; tz?: string } | { every: number };
-
-/** Handle to a job that has already been enqueued. */
-export type EnqueuedJob = {
-  readonly id?: string;
-  readonly delay: number;
-  changeDelay(delayMs: number): Promise<void>;
-  remove(): Promise<void>;
-};
 
 export type QueueStats = {
   waiting: number;
@@ -68,7 +61,6 @@ export interface Queue<T> {
   enqueueBulk(jobs: Array<BulkJob<T>>): Promise<void>;
   /** Register (or update) a recurring job. Idempotent per `id`. */
   schedule(id: string, spec: ScheduleSpec): Promise<void>;
-  getJob(id: string): Promise<EnqueuedJob | undefined>;
   getStats(): Promise<QueueStats>;
   close(): Promise<void>;
 }
