@@ -1,6 +1,6 @@
 # Cloudflare migration plan
 
-Status: **in progress — Phases 0–3, 5 and 8 landed; 4, 6, 7, 9 and 10 outstanding.**
+Status: **in progress — Phases 0–3, 5, 8 and 9 landed; 4, 6, 7 and 10 outstanding.**
 Sections marked **Done** record what was actually built and where it differed from the plan; the
 rest is still a plan. Nothing here has run on a Cloudflare account — every measurement is local
 `workerd` under `wrangler dev`.
@@ -17,7 +17,7 @@ rest is still a plan. Nothing here has run on a Cloudflare account — every mea
 | Scheduling | BullMQ repeatable jobs | **Cron Triggers** + **Durable Object alarms** |
 | Locks / ordering | Redis `SET NX PX` + Lua | **Durable Objects** (single-threaded by construction) |
 | Cache / idempotency | Redis | **Workers KV** + **Durable Objects** |
-| API rate limits | Redis `INCR` | **Rate Limiting binding** or a Durable Object |
+| API rate limits | Redis `INCR` | **Durable Object** (exact; the Rate Limiting binding is per-colo) |
 | Object storage | MinIO / S3 | **R2** |
 | IaC | — | **wrangler** |
 | SMTP relay | `apps/smtp-server` container | **unchanged**, stays a container (see §7) |
@@ -33,8 +33,8 @@ Redis carries five unrelated responsibilities. Only the first is a queue.
 |---|---|---|---|
 | 1 | Job queues | BullMQ, 8 queues | **Cloudflare Queues** + **Cron Triggers** |
 | 2 | Per-webhook ordering lock | `SET NX PX` + Lua release (`webhook-service.ts:681-703`) | **Durable Object per `webhookId`** — the lock is deleted, not ported |
-| 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** (needs strong consistency) |
-| 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Rate Limiting binding**, or a DO for exact counts |
+| 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** — `server/idempotency/`, **done** |
+| 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Durable Object**, one per bucket — `server/rate-limit/`, **done** |
 | 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` (`team-service.ts:398`) | **Workers KV** with TTL — `server/cache/`, **done** |
 
 **Do not use KV for #3 or #4.** KV is eventually consistent (~60s global propagation). Idempotency
@@ -470,7 +470,10 @@ requires a Cloudflare account.
      logged at error severity with its source queue — which is §11's alerting path. Nobody has
      written the alert.
 - **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
-  **In progress.** The cache half is done and **the domain verification blocker is cleared**.
+  **Done**, and **the domain verification blocker is cleared**. Nothing outside
+  `server/queue/bullmq-driver.ts` imports `server/redis` any more; what is left of it is three
+  drivers (`server/cache`, `server/rate-limit`, `server/idempotency`) and the integration test
+  helper, all of which Phase 10 deletes.
 
   `getDomainVerificationState` used to read three Redis keys per domain, through the module-level
   `let` in `server/redis.ts` — which on Workers serves exactly one invocation and then hangs, so
@@ -483,6 +486,36 @@ requires a Cloudflare account.
   there from `server/redis.ts` unchanged. Two KV properties the callers have to live with, and do:
   **no TTL below 60 seconds**, and **no conditional write** — so `CacheStore.add` is exact on Redis
   and best-effort on KV, which is only ever used for notification cooldowns.
+
+  **Rate limits are a Durable Object per bucket** (`server/rate-limit/`), and the plan's "**Rate
+  Limiting binding**, or a DO" is settled as the DO. The Rate Limiting binding is per-colo and
+  approximate; `Team.apiRateLimit` defaults to **two requests per second**, so a customer spread
+  over ten colos would be granted twenty — an over-grant of the same order as the limit itself. It
+  also reports no count, no remaining and no reset, and the API returns all three as headers. What
+  the DO costs instead is latency: an object lives in one place, and a caller far from it pays the
+  round trip on every request. Verified exact in a real isolate — twenty concurrent calls on one
+  bucket return the counts 1..20 with no duplicate, and exactly `limit` of them come back allowed
+  (`pnpm --filter=web bindings:check`).
+
+  There is deliberately **no alarm on the rate limit object**, so an abandoned bucket leaves one
+  small row behind forever. Reclaiming it would cost a Durable Object request per window per
+  bucket, and the busiest bucket has a one-second window — roughly doubling requests on the hottest
+  path in the API to recover tens of bytes.
+
+  **Idempotency is a Durable Object per `teamId` + key** (`server/idempotency/`). The lock is
+  deleted rather than ported, for the reason §3 gives about the webhook lock: a Durable Object is
+  single-threaded per object id, so "only one caller may be deciding this" is a property of where
+  the code runs. What was `GET` → `SET NX` → a second `GET` to cover the winner finishing in
+  between — three round trips and a race the second `GET` only narrows — is one `begin` that
+  returns one of four answers: `acquired`, `hit`, `conflict`, `in-progress`. The Redis driver
+  answers the same four, which is why the lock now holds the body hash instead of `"1"`.
+
+  This object *does* get an alarm, unlike the rate limiter: keys are client-supplied and unbounded,
+  and the alarm is one request per key per day rather than per second.
+
+  Verified in a real isolate: ten concurrent `withIdempotency` calls on one key run the operation
+  **once**, one caller gets the result and nine are refused, and a later duplicate replays rather
+  than runs (`pnpm --filter=web bindings:check`).
 - **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
   from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
 
@@ -518,6 +551,14 @@ webhook, campaign and domain services.
    worker reading exactly these records. W3C `traceparent` is propagated by the queue seam
    (`server/queue/index.ts`), so an API request, the message it enqueues and the consumer that runs
    it share one `trace_id` — no tracer SDK, and nothing to rip out when #7 adds one.
+
+7. **Rate limiting fails open; the waitlist fails closed.** The API limiter and the auth-email
+   limiter both let a request through when the limiter itself errors, which is what they already
+   did on Redis. The reasoning is that a rate limiter here is a cost control, not a security
+   control — authentication and authorisation have already run by the time any of them do — so an
+   outage of the limiter should degrade billing accuracy rather than take out sign-in and the whole
+   public API. The waitlist keeps its throw: it is one user submitting one form, and what it
+   protects is the founder's inbox. Revisit if abuse ever becomes the reason a limiter exists.
 
 ## 12. Cost model
 

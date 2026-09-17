@@ -3,7 +3,10 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { Context, Next } from "hono";
 import { handleError } from "./api-error";
 import { env } from "~/env";
-import { getRedis, redisKey } from "~/server/redis";
+import {
+  consumeRateLimitFailOpen,
+  rateLimitBucket,
+} from "~/server/rate-limit";
 import { getTeamFromToken } from "~/server/public-api/auth";
 import { isSelfHosted } from "~/utils/common";
 import { UnsendApiError } from "./api-error";
@@ -84,47 +87,31 @@ export function getApp() {
 
     const team = c.var.team;
     const limit = team.apiRateLimit ?? 2; // Default limit from your previous setup
-    const key = redisKey(`rl:${team.id}`); // Rate limit key for Redis
-    const redis = getRedis();
 
-    let currentRequests: number;
-    let ttl: number;
+    // Fail open: a limiter that is down should not take the API down with it.
+    // The reasoning, and the one call site that does not do this, are in
+    // `server/rate-limit/index.ts`.
+    const result = await consumeRateLimitFailOpen(
+      rateLimitBucket.api(team.id),
+      { limit, windowSeconds: RATE_LIMIT_WINDOW_SECONDS },
+      (error) => logger.error({ err: error }, "Rate limiter failed"),
+    );
 
-    try {
-      // Increment the key. If the key does not exist, it is created and set to 1.
-      currentRequests = await redis.incr(key);
-
-      if (currentRequests === 1) {
-        // This is the first request in the window, set the expiry.
-        await redis.expire(key, RATE_LIMIT_WINDOW_SECONDS);
-      }
-      // Get the TTL (time to live) of the key to know when it resets.
-      // If the key does not exist or has no expiry, TTL returns -1 or -2.
-      // We rely on expire being set for new keys.
-      ttl = await redis.ttl(key);
-    } catch (error) {
-      logger.error({ err: error }, "Redis error during rate limiting");
-      // Alternatively, you could fail closed by throwing an error here.
+    if (!result) {
       return next();
     }
 
-    const resetTime =
-      Math.floor(Date.now() / 1000) +
-      (ttl > 0 ? ttl : RATE_LIMIT_WINDOW_SECONDS);
-    const remainingRequests = Math.max(0, limit - currentRequests);
+    const resetTime = Math.floor(Date.now() / 1000) + result.resetSeconds;
 
-    c.res.headers.set("X-RateLimit-Limit", String(limit));
-    c.res.headers.set("X-RateLimit-Remaining", String(remainingRequests));
+    c.res.headers.set("X-RateLimit-Limit", String(result.limit));
+    c.res.headers.set("X-RateLimit-Remaining", String(result.remaining));
     c.res.headers.set("X-RateLimit-Reset", String(resetTime));
 
-    if (currentRequests > limit) {
-      c.res.headers.set(
-        "Retry-After",
-        String(ttl > 0 ? ttl : RATE_LIMIT_WINDOW_SECONDS)
-      );
+    if (result.limited) {
+      c.res.headers.set("Retry-After", String(result.resetSeconds));
       throw new UnsendApiError({
         code: "RATE_LIMITED",
-        message: `Rate limit exceeded. Try again in ${ttl > 0 ? ttl : RATE_LIMIT_WINDOW_SECONDS} seconds.`,
+        message: `Rate limit exceeded. Try again in ${result.resetSeconds} seconds.`,
       });
     }
 

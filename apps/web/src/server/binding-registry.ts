@@ -38,6 +38,17 @@ export const DURABLE_OBJECT_BINDINGS = {
   WEBHOOK_DISPATCHER: "WebhookDispatcher",
   /** A singleton on one object id. The 30s tick (§4.2). */
   CAMPAIGN_SCHEDULER: "CampaignScheduler",
+  /**
+   * One object per rate limit bucket: a team for the public API, an IP for the
+   * auth email limit, a user for the waitlist. Exact counts, which is why this
+   * is not Cloudflare's Rate Limiting binding — see `server/rate-limit/types.ts`.
+   */
+  RATE_LIMITER: "RateLimiter",
+  /**
+   * One object per `teamId` + `Idempotency-Key`. A dedup guard needs
+   * read-after-write and KV has none — see `server/idempotency/types.ts`.
+   */
+  IDEMPOTENCY_KEEPER: "IdempotencyKeeper",
 } as const satisfies Record<string, string>;
 
 export type DurableObjectBindingName = keyof typeof DURABLE_OBJECT_BINDINGS;

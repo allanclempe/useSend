@@ -46,9 +46,10 @@
     }
   ],
 
-  // Team and usage cache, notification dedup. Explicitly NOT idempotency keys
-  // or rate limit counters — KV is eventually consistent and both of those
-  // need read-after-write (§1).
+  // Team and usage cache, notification cooldowns, domain verification
+  // bookkeeping — everything behind `server/cache`. Explicitly NOT idempotency
+  // keys or rate limit counters: KV is eventually consistent and both of those
+  // need read-after-write (§1), so both are Durable Objects below.
   "kv_namespaces": [
     {
       "binding": "CACHE",
@@ -73,6 +74,22 @@
       {
         "name": "CAMPAIGN_SCHEDULER",
         "class_name": "CampaignScheduler"
+      },
+      // One object per rate limit bucket (§1, item 4). Not the Rate Limiting
+      // binding: that one is per-colo and approximate, and the public API's
+      // default limit is two requests per second, so ten colos would grant
+      // twenty. A DO is single-threaded per object id, so the count is exact.
+      {
+        "name": "RATE_LIMITER",
+        "class_name": "RateLimiter"
+      },
+      // One object per `teamId:Idempotency-Key` (§1, item 3). KV would let two
+      // identical sends inside its propagation window both read "no record"
+      // and both send — the header that exists to prevent a duplicate would
+      // have caused one.
+      {
+        "name": "IDEMPOTENCY_KEEPER",
+        "class_name": "IdempotencyKeeper"
       }
     ]
   },
@@ -83,6 +100,14 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["WebhookDispatcher", "CampaignScheduler"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["RateLimiter"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["IdempotencyKeeper"]
     }
   ],
 

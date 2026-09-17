@@ -3,16 +3,49 @@ import { UnsendApiError } from "~/server/public-api/api-error";
 
 const {
   mockGetTeamFromToken,
-  mockRedis,
+  mockRateLimit,
   mockGetContactBook,
   mockUpdateContactBook,
 } = vi.hoisted(() => ({
   mockGetTeamFromToken: vi.fn(),
-  mockRedis: {
-    incr: vi.fn(),
-    expire: vi.fn(),
-    ttl: vi.fn(),
-  },
+  mockRateLimit: (() => {
+    /**
+     * An in-memory fixed window, not a mocked Redis client — the middleware no
+     * longer knows which backend it is on, so the test mocks the seam.
+     */
+    const windows = new Map<string, { count: number; expiresAt: number }>();
+
+    return {
+      windows,
+      consume: vi.fn(
+        async (
+          bucket: string,
+          window: { limit: number; windowSeconds: number },
+        ) => {
+          const now = Date.now();
+          const existing = windows.get(bucket);
+          const current =
+            existing && existing.expiresAt > now
+              ? existing
+              : { count: 0, expiresAt: now + window.windowSeconds * 1000 };
+
+          current.count += 1;
+          windows.set(bucket, current);
+
+          return {
+            count: current.count,
+            limit: window.limit,
+            remaining: Math.max(0, window.limit - current.count),
+            resetSeconds: Math.max(
+              1,
+              Math.ceil((current.expiresAt - now) / 1000),
+            ),
+            limited: current.count > window.limit,
+          };
+        },
+      ),
+    };
+  })(),
   mockGetContactBook: vi.fn(),
   mockUpdateContactBook: vi.fn(),
 }));
@@ -21,9 +54,12 @@ vi.mock("~/server/public-api/auth", () => ({
   getTeamFromToken: mockGetTeamFromToken,
 }));
 
-vi.mock("~/server/redis", () => ({
-  getRedis: () => mockRedis,
-  redisKey: (key: string) => key,
+vi.mock("~/server/rate-limit", () => ({
+  rateLimitBucket: { api: (teamId: number) => `api:team:${teamId}` },
+  consumeRateLimit: (bucket: string, window: unknown) =>
+    mockRateLimit.consume(bucket, window as never),
+  consumeRateLimitFailOpen: (bucket: string, window: unknown) =>
+    mockRateLimit.consume(bucket, window as never),
 }));
 
 // The route layer is what is under test here; whether the lookup is actually
@@ -63,9 +99,8 @@ function buildContactBook(overrides?: Record<string, unknown>) {
 describe("PATCH /v1/contactBooks/{contactBookId}", () => {
   beforeEach(() => {
     mockGetTeamFromToken.mockReset();
-    mockRedis.incr.mockReset();
-    mockRedis.expire.mockReset();
-    mockRedis.ttl.mockReset();
+    mockRateLimit.windows.clear();
+    mockRateLimit.consume.mockClear();
     mockGetContactBook.mockReset();
     mockUpdateContactBook.mockReset();
 
@@ -76,9 +111,6 @@ describe("PATCH /v1/contactBooks/{contactBookId}", () => {
       apiKey: { domainId: null },
     });
 
-    mockRedis.incr.mockResolvedValue(1);
-    mockRedis.expire.mockResolvedValue(1);
-    mockRedis.ttl.mockResolvedValue(1);
 
     mockGetContactBook.mockResolvedValue({
       id: "cb_1",

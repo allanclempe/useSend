@@ -1,15 +1,15 @@
-import { getRedis, redisKey } from "~/server/redis";
+/* eslint-disable no-unused-vars -- parameter names in type signatures */
+
+import {
+  idempotencyStore,
+  LOCK_TTL_SECONDS,
+  RESULT_TTL_SECONDS,
+} from "~/server/idempotency";
 import { canonicalizePayload } from "~/server/utils/idempotency";
 import { UnsendApiError } from "~/server/public-api/api-error";
 import { logger } from "~/server/logger/log";
 
-const IDEMPOTENCY_RESULT_TTL_SECONDS = 24 * 60 * 60; // 24h
-const IDEMPOTENCY_LOCK_TTL_SECONDS = 60; // 60s
-
-export type IdempotencyRecord = {
-  bodyHash: string;
-  emailIds: string[];
-};
+export type { IdempotencyRecord } from "~/server/idempotency";
 
 export type IdempotencyHandlerOptions<TPayload, TResult> = {
   teamId: number;
@@ -21,68 +21,18 @@ export type IdempotencyHandlerOptions<TPayload, TResult> = {
   logContext: string;
 };
 
-function resultKey(teamId: number, key: string) {
-  return redisKey(`idem:${teamId}:${key}`);
-}
-
-function lockKey(teamId: number, key: string) {
-  return redisKey(`idemlock:${teamId}:${key}`);
-}
-
 export const IdempotencyService = {
-  async getResult(
-    teamId: number,
-    key: string,
-  ): Promise<IdempotencyRecord | null> {
-    const redis = getRedis();
-    const raw = await redis.get(resultKey(teamId, key));
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof (parsed as any).bodyHash === "string" &&
-        Array.isArray((parsed as any).emailIds)
-      ) {
-        return parsed as IdempotencyRecord;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  },
-
-  async setResult(
-    teamId: number,
-    key: string,
-    record: IdempotencyRecord,
-  ): Promise<void> {
-    const redis = getRedis();
-    await redis.setex(
-      resultKey(teamId, key),
-      IDEMPOTENCY_RESULT_TTL_SECONDS,
-      JSON.stringify(record),
-    );
-  },
-
-  async acquireLock(teamId: number, key: string): Promise<boolean> {
-    const redis = getRedis();
-    const ok = await redis.set(
-      lockKey(teamId, key),
-      "1",
-      "EX",
-      IDEMPOTENCY_LOCK_TTL_SECONDS,
-      "NX",
-    );
-    return ok === "OK";
-  },
-
-  async releaseLock(teamId: number, key: string): Promise<void> {
-    const redis = getRedis();
-    await redis.del(lockKey(teamId, key));
-  },
-
+  /**
+   * Runs `operation` at most once per `Idempotency-Key`, and replays its result
+   * for anyone who asks again with the same payload.
+   *
+   * The store underneath is a Durable Object on Workers and Redis under Node
+   * (`server/idempotency`). What used to be four calls and a re-check here —
+   * read the result, take a lock, read the result again because the lock might
+   * have been released in between, release the lock in a `finally` — is now one
+   * `begin` that returns the decision, because on a Durable Object there is no
+   * window between reading and claiming for anything to happen in.
+   */
   async withIdempotency<TPayload, TResult>(
     options: IdempotencyHandlerOptions<TPayload, TResult>,
   ): Promise<TResult> {
@@ -96,7 +46,6 @@ export const IdempotencyService = {
       logContext,
     } = options;
 
-    // Validate idempotency key length
     if (idemKey !== undefined && (idemKey.length < 1 || idemKey.length > 256)) {
       throw new UnsendApiError({
         code: "BAD_REQUEST",
@@ -104,48 +53,26 @@ export const IdempotencyService = {
       });
     }
 
-    // If no idempotency key, just execute the operation
     if (!idemKey) {
       return await operation();
     }
 
-    // Calculate payload hash
-    const { bodyHash: payloadHash } = canonicalizePayload(payload);
+    const { bodyHash } = canonicalizePayload(payload);
+    const begin = await idempotencyStore.begin(teamId, idemKey, bodyHash);
 
-    // Check for existing result
-    const existing = await this.getResult(teamId, idemKey);
-    if (existing) {
-      if (existing.bodyHash === payloadHash) {
-        logger.info({ teamId }, `Idempotency hit for ${logContext}`);
-        return formatCachedResponse(existing.emailIds);
-      }
+    if (begin.status === "hit") {
+      logger.info({ teamId }, `Idempotency hit for ${logContext}`);
+      return formatCachedResponse(begin.emailIds);
+    }
 
+    if (begin.status === "conflict") {
       throw new UnsendApiError({
         code: "NOT_UNIQUE",
         message: "Idempotency-Key already used with a different payload",
       });
     }
 
-    // Try to acquire lock
-    const lockAcquired = await this.acquireLock(teamId, idemKey);
-    if (!lockAcquired) {
-      // Check again in case another request completed
-      const again = await this.getResult(teamId, idemKey);
-      if (again) {
-        if (again.bodyHash === payloadHash) {
-          logger.info(
-            { teamId },
-            `Idempotency hit after contention for ${logContext}`,
-          );
-          return formatCachedResponse(again.emailIds);
-        }
-
-        throw new UnsendApiError({
-          code: "NOT_UNIQUE",
-          message: "Idempotency-Key already used with a different payload",
-        });
-      }
-
+    if (begin.status === "in-progress") {
       throw new UnsendApiError({
         code: "NOT_UNIQUE",
         message:
@@ -153,25 +80,33 @@ export const IdempotencyService = {
       });
     }
 
+    let completed = false;
+
     try {
-      // Execute the operation
       const result = await operation();
 
-      // Store the result for future idempotency checks
-      await this.setResult(teamId, idemKey, {
-        bodyHash: payloadHash,
-        emailIds: extractEmailIds(result),
-      });
+      // Records the result and releases the claim together, so there is no
+      // moment where the key is free but the work has been done.
+      await idempotencyStore.complete(
+        teamId,
+        idemKey,
+        bodyHash,
+        extractEmailIds(result),
+      );
+      completed = true;
 
       return result;
     } finally {
-      // Always release the lock
-      await this.releaseLock(teamId, idemKey);
+      // An operation that threw leaves nothing to replay, and holding the key
+      // for the full claim TTL would block the client's retry for no reason.
+      if (!completed) {
+        await idempotencyStore.abandon(teamId, idemKey);
+      }
     }
   },
 };
 
 export const IDEMPOTENCY_CONSTANTS = {
-  RESULT_TTL_SECONDS: IDEMPOTENCY_RESULT_TTL_SECONDS,
-  LOCK_TTL_SECONDS: IDEMPOTENCY_LOCK_TTL_SECONDS,
+  RESULT_TTL_SECONDS,
+  LOCK_TTL_SECONDS,
 };

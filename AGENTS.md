@@ -105,6 +105,17 @@ Things that behave differently inside the Worker, by design:
   `CacheStore.add` is therefore exact on Redis and best-effort on KV; the only
   callers are notification cooldowns, where losing the race costs a duplicate
   email.
+- **Rate limits are a Durable Object**, one object per bucket, through
+  `server/rate-limit`. Not Cloudflare's Rate Limiting binding: that one is
+  per-colo and approximate, and the public API's default is two requests per
+  second, so ten colos would grant twenty. All three limiters **fail open**
+  except the waitlist — the reasoning is in `server/rate-limit/index.ts` and it
+  is a decision, not an accident.
+- **Idempotency is a Durable Object**, one per `teamId` + `Idempotency-Key`,
+  through `server/idempotency`. `begin` returns `acquired`, `hit`, `conflict` or
+  `in-progress` in one call; there is no lock to take and release. KV would let
+  two identical sends inside its propagation window both read "no record" and
+  both send.
 - **KV namespaces and Durable Object bindings live in `server/binding-registry.ts`**,
   and `binding-registry.unit.test.ts` fails if `wrangler.jsonc` disagrees. Same
   rule as queues: **adding one means editing both**, plus a `migrations` entry
@@ -120,8 +131,17 @@ Run it after changing anything in the Worker's dependency tree.
 same way (`src/worker/queue-check.ts`, port 8791): enqueue through the real
 driver, consume through the real `queue()` export, and observe `delaySeconds`,
 the retry backoff, the dead letter hop and webhook ordering through the Durable
-Object. Both are fixture Workers with their own `wrangler.*.jsonc` and are never
-deployed.
+Object.
+
+`pnpm --filter=web bindings:check` does the same for the Phase 9 seams
+(`src/worker/binding-check.ts`, port 8792): the KV cache binding, a rate limit
+counted in a Durable Object under twenty concurrent callers — the exactness
+claim that justifies not using the Rate Limiting binding — and ten concurrent
+duplicate requests under one `Idempotency-Key`. All three
+are fixture Workers with their own `wrangler.*.jsonc` and are never deployed.
+None of them can prove KV's *eventual consistency* — `wrangler dev` simulates KV
+on local disk, where a read after a write is always fresh — so the 60-second
+window is reasoned about at the call sites instead.
 
 To exercise a Cron Trigger locally, POST the expression to the dev server —
 `wrangler dev` does not fire them on schedule:
