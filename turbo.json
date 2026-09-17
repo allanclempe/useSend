@@ -28,6 +28,7 @@
         "NEXTAUTH_SECRET",
         "BETTER_AUTH_SECRET",
         "BETTER_AUTH_URL",
+        "API_KEY_HMAC_SECRET",
         "NODE_ENV",
         "LOG_LEVEL",
         "VERCEL_URL",

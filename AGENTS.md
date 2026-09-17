@@ -74,6 +74,19 @@
   BullMQ affordance and Cloudflare Queues has no equivalent, so anything built
   on it stops working mid-migration — silently, and in the direction of
   overcharging.
+- **Match the hash to the secret's entropy.** A password-hashing KDF (scrypt,
+  bcrypt, argon2) exists to suppress guess rates against *low-entropy* secrets.
+  Applying one to a high-entropy random token buys no security and costs
+  milliseconds per request: `scryptSync` over a 128-bit API key was 18.7 CPU-ms
+  under Node and ~14ms in a `workerd` isolate, against Workers' **10ms Free-tier
+  CPU budget per request** (issue #48). Use a keyed HMAC for tokens we generate;
+  keep the KDF for secrets a human chose.
+- **Every new secret has to be declared in four places** or something breaks
+  quietly: `apps/web/src/env.js` (schema *and* `runtimeEnv`), `turbo.json`'s
+  `env` list, `.env.example`, and `.env.selfhost.example` — the last two with the
+  command that generates it. Add a placeholder to
+  `apps/web/src/test/setup/setup-env.ts` if it is required rather than optional.
+  Never commit a real value.
 
 ## Testing Guidelines
 

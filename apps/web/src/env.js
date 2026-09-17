@@ -40,6 +40,20 @@ export const env = createEnv({
     // unset (`better-auth/dist/utils/url.mjs:68-71`); set it when a proxy makes
     // the request headers unreliable.
     BETTER_AUTH_URL: z.string().url().optional(),
+    // Keys the HMAC that hashes API keys (`server/crypto.ts`, issue #48).
+    // Generate with `openssl rand -hex 32`.
+    //
+    // Required in every environment, not just production, and deliberately
+    // unlike `NEXTAUTH_SECRET`/`BETTER_AUTH_SECRET` above: those have library
+    // fallbacks, this has none, and a default would be a hardcoded key that
+    // verifies every API key in every install that forgot to set it. Failing to
+    // boot is the better failure. Test runs get theirs from
+    // `src/test/setup/setup-env.ts`.
+    //
+    // Rotating it invalidates every existing API key.
+    API_KEY_HMAC_SECRET: z
+      .string()
+      .min(32, "API_KEY_HMAC_SECRET must be at least 32 characters"),
     GITHUB_ID: z.string().optional(),
     GITHUB_SECRET: z.string().optional(),
     AWS_ACCESS_KEY_ID: z.string().optional(),
@@ -127,6 +141,7 @@ export const env = createEnv({
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
+    API_KEY_HMAC_SECRET: process.env.API_KEY_HMAC_SECRET,
     GITHUB_ID: process.env.GITHUB_ID,
     GITHUB_SECRET: process.env.GITHUB_SECRET,
     AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY,
