@@ -135,7 +135,8 @@ describeIntegration("team-service", () => {
     );
 
     expect(invite.email).toBe("invitee@example.com");
-    expect(invite.id).toMatch(/^[0-9a-z]{24}$/);
+    // Same shape as the cuid1 values already in this column.
+    expect(invite.id).toMatch(/^c[0-9a-z]{24}$/);
     expect(mockSendTeamInviteEmail).toHaveBeenCalledTimes(1);
 
     const invites = await TeamService.getTeamInvites(team!.id);
