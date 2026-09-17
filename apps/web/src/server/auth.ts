@@ -1,7 +1,6 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import {
   getServerSession,
-  type Account,
   type DefaultSession,
   type NextAuthOptions,
 } from "next-auth";
@@ -14,82 +13,12 @@ import { Provider } from "next-auth/providers/index";
 import { sendSignUpEmail } from "~/server/mailer";
 import { env } from "~/env";
 import { db } from "~/server/db";
+import {
+  canRegisterSelfHostedUser,
+  createSelfHostedUser,
+} from "~/server/self-hosted-registration";
 
 const GITHUB_OAUTH_ISSUER = "https://github.com/login/oauth";
-
-/**
- * PostgreSQL advisory-lock namespace for self-hosted user creation.
- *
- * The lock serializes only transactions that request this same key; it does not
- * lock the User table or any rows. Because pg_advisory_xact_lock is scoped to
- * the current transaction, PostgreSQL releases it automatically on commit,
- * rollback, or connection loss. A concurrent registration may wait briefly for
- * the active registration transaction to finish.
- */
-const SELF_HOSTED_REGISTRATION_LOCK_ID = 1431520590;
-
-export class SelfHostedRegistrationError extends Error {
-  constructor() {
-    super("A team invitation is required to create an account");
-    this.name = "SelfHostedRegistrationError";
-  }
-}
-
-export async function canRegisterSelfHostedUser(
-  email?: string | null,
-  account?: Pick<Account, "provider" | "providerAccountId" | "type"> | null,
-) {
-  if (env.NEXT_PUBLIC_IS_CLOUD) {
-    return true;
-  }
-
-  if (account?.type === "oauth") {
-    const existingAccount = await db.account.findUnique({
-      where: {
-        provider_providerAccountId: {
-          provider: account.provider,
-          providerAccountId: account.providerAccountId,
-        },
-      },
-      select: { id: true },
-    });
-
-    if (existingAccount) {
-      return true;
-    }
-  }
-
-  if (email) {
-    const existingUser = await db.user.findUnique({
-      where: { email },
-      select: { id: true },
-    });
-
-    if (existingUser) {
-      return true;
-    }
-  }
-
-  const registeredUser = await db.user.findFirst({
-    select: { id: true },
-  });
-
-  // An empty installation always allows its bootstrap account.
-  if (!registeredUser) {
-    return true;
-  }
-
-  if (!email) {
-    return false;
-  }
-
-  const invite = await db.teamInvite.findFirst({
-    where: { email },
-    select: { id: true },
-  });
-
-  return Boolean(invite);
-}
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -208,40 +137,7 @@ export const authOptions: NextAuthOptions = {
           return prismaAdapter.createUser(user);
         }
 
-        return db.$transaction(async (tx) => {
-          // Acquire the lock before checking for the first user. Without this,
-          // two concurrent callbacks could both observe an empty User table and
-          // both create an account without an invitation.
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${SELF_HOSTED_REGISTRATION_LOCK_ID})`;
-
-          const registeredUser = await tx.user.findFirst({
-            select: { id: true },
-          });
-
-          if (registeredUser) {
-            if (!user.email) {
-              throw new SelfHostedRegistrationError();
-            }
-
-            const invite = await tx.teamInvite.findFirst({
-              where: { email: user.email },
-              select: { id: true },
-            });
-
-            if (!invite) {
-              throw new SelfHostedRegistrationError();
-            }
-          }
-
-          return tx.user.create({
-            data: {
-              name: user.name,
-              email: user.email,
-              emailVerified: user.emailVerified,
-              image: user.image,
-            },
-          });
-        });
+        return createSelfHostedUser(user);
       },
     } as Adapter;
   })(),
