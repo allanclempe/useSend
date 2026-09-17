@@ -1,6 +1,6 @@
 import { EmailRenderer } from "@usesend/email-editor/src/renderer";
-import { and, eq, sql } from "drizzle-orm";
-import { db } from "../db";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";
 import { withUpdatedAt } from "../drizzle/touch";
@@ -901,74 +901,83 @@ export async function recordCampaignContactFailure({
 }: CampaignContactFailureInput) {
   const failureMessage = getFailureMessage(error);
 
-  await db.$transaction(async (tx) => {
-    const existingCampaignEmail = await tx.campaignEmail.findUnique({
-      where: {
-        campaignId_contactId: {
-          campaignId: campaign.id,
-          contactId: contact.id,
-        },
-      },
-      select: { emailId: true },
-    });
+  await drizzleDb.transaction(async (tx) => {
+    const [existingCampaignEmail] = await tx
+      .select({ emailId: schema.campaignEmail.emailId })
+      .from(schema.campaignEmail)
+      .where(
+        and(
+          eq(schema.campaignEmail.campaignId, campaign.id),
+          eq(schema.campaignEmail.contactId, contact.id),
+        ),
+      )
+      .limit(1);
 
     let emailId = existingCampaignEmail?.emailId;
 
     if (!emailId) {
-      const existingEmail = await tx.email.findFirst({
-        where: {
-          campaignId: campaign.id,
-          contactId: contact.id,
-        },
-        orderBy: { createdAt: "desc" },
-        select: { id: true },
-      });
+      const [existingEmail] = await tx
+        .select({ id: schema.email.id })
+        .from(schema.email)
+        .where(
+          and(
+            eq(schema.email.campaignId, campaign.id),
+            eq(schema.email.contactId, contact.id),
+          ),
+        )
+        .orderBy(desc(schema.email.createdAt))
+        .limit(1);
 
       if (existingEmail) {
         emailId = existingEmail.id;
       } else {
-        const failedEmail = await tx.email.create({
-          data: {
-            to: [contact.email],
-            replyTo: emailConfig.replyTo ?? [],
-            cc: emailConfig.cc ?? [],
-            bcc: emailConfig.bcc ?? [],
-            from: campaign.from,
-            subject: campaign.subject,
-            html: campaign.html,
-            text: campaign.previewText,
-            teamId: emailConfig.teamId,
-            campaignId: campaign.id,
-            contactId: contact.id,
-            domainId: emailConfig.domainId,
-            latestStatus: "FAILED",
-          },
-          select: { id: true },
-        });
+        const [failedEmail] = await tx
+          .insert(schema.email)
+          .values(
+            withUpdatedAt({
+              id: createId(),
+              to: [contact.email],
+              replyTo: emailConfig.replyTo ?? [],
+              cc: emailConfig.cc ?? [],
+              bcc: emailConfig.bcc ?? [],
+              from: campaign.from,
+              subject: campaign.subject,
+              html: campaign.html,
+              text: campaign.previewText,
+              teamId: emailConfig.teamId,
+              campaignId: campaign.id,
+              contactId: contact.id,
+              domainId: emailConfig.domainId,
+              latestStatus: "FAILED" as const,
+            }),
+          )
+          .returning({ id: schema.email.id });
+
+        if (!failedEmail) {
+          throw new Error("Failed to create campaign failure email");
+        }
+
         emailId = failedEmail.id;
       }
 
-      await tx.campaignEmail.create({
-        data: {
-          campaignId: campaign.id,
-          contactId: contact.id,
-          emailId,
-        },
+      await tx.insert(schema.campaignEmail).values({
+        campaignId: campaign.id,
+        contactId: contact.id,
+        emailId,
       });
     }
 
-    await tx.email.update({
-      where: { id: emailId },
-      data: { latestStatus: "FAILED" },
-    });
+    await tx
+      .update(schema.email)
+      .set(withUpdatedAt({ latestStatus: "FAILED" as const }))
+      .where(eq(schema.email.id, emailId));
 
-    await tx.emailEvent.create({
-      data: {
-        emailId,
-        status: "FAILED",
-        data: { error: failureMessage },
-        teamId: emailConfig.teamId,
-      },
+    await tx.insert(schema.emailEvent).values({
+      id: createId(),
+      emailId,
+      status: "FAILED" as const,
+      data: { error: failureMessage },
+      teamId: emailConfig.teamId,
     });
   });
 }
@@ -1034,41 +1043,46 @@ async function processContactEmail(jobData: CampaignEmailJob) {
       "Contact email is suppressed. Creating suppressed email record.",
     );
 
-    const email = await db.email.create({
+    const [email] = await drizzleDb
+      .insert(schema.email)
+      .values(
+        withUpdatedAt({
+          id: createId(),
+          to: toEmails,
+          replyTo: emailConfig.replyTo,
+          ...(ccEmails.length > 0 ? { cc: ccEmails } : {}),
+          ...(bccEmails.length > 0 ? { bcc: bccEmails } : {}),
+          from: emailConfig.from,
+          subject,
+          html,
+          text: emailConfig.previewText,
+          teamId: emailConfig.teamId,
+          campaignId: emailConfig.campaignId,
+          contactId: contact.id,
+          domainId: emailConfig.domainId,
+          latestStatus: "SUPPRESSED" as const,
+        }),
+      )
+      .returning();
+
+    if (!email) {
+      throw new Error("Failed to create suppressed email record");
+    }
+
+    await drizzleDb.insert(schema.emailEvent).values({
+      id: createId(),
+      emailId: email.id,
+      status: "SUPPRESSED" as const,
       data: {
-        to: toEmails,
-        replyTo: emailConfig.replyTo,
-        cc: ccEmails.length > 0 ? ccEmails : undefined,
-        bcc: bccEmails.length > 0 ? bccEmails : undefined,
-        from: emailConfig.from,
-        subject,
-        html,
-        text: emailConfig.previewText,
-        teamId: emailConfig.teamId,
-        campaignId: emailConfig.campaignId,
-        contactId: contact.id,
-        domainId: emailConfig.domainId,
-        latestStatus: "SUPPRESSED",
+        error: "Contact email is suppressed. No email sent.",
       },
+      teamId: emailConfig.teamId,
     });
 
-    await db.emailEvent.create({
-      data: {
-        emailId: email.id,
-        status: "SUPPRESSED",
-        data: {
-          error: "Contact email is suppressed. No email sent.",
-        },
-        teamId: emailConfig.teamId,
-      },
-    });
-
-    await db.campaignEmail.create({
-      data: {
-        campaignId: emailConfig.campaignId,
-        contactId: contact.id,
-        emailId: email.id,
-      },
+    await drizzleDb.insert(schema.campaignEmail).values({
+      campaignId: emailConfig.campaignId,
+      contactId: contact.id,
+      emailId: email.id,
     });
 
     return;
@@ -1100,29 +1114,37 @@ async function processContactEmail(jobData: CampaignEmailJob) {
   }
 
   // Create email with filtered recipients
-  const email = await db.email.create({
-    data: {
-      to: filteredToEmails,
-      replyTo: emailConfig.replyTo,
-      cc: filteredCcEmails.length > 0 ? filteredCcEmails : undefined,
-      bcc: filteredBccEmails.length > 0 ? filteredBccEmails : undefined,
-      from: emailConfig.from,
-      subject,
-      html,
-      text: emailConfig.previewText,
-      teamId: emailConfig.teamId,
-      campaignId: emailConfig.campaignId,
-      contactId: contact.id,
-      domainId: emailConfig.domainId,
-    },
-  });
+  const [email] = await drizzleDb
+    .insert(schema.email)
+    .values(
+      withUpdatedAt({
+        id: createId(),
+        to: filteredToEmails,
+        replyTo: emailConfig.replyTo,
+        // Prisma read `undefined` as "use the column default"; spread instead of
+        // writing an explicit undefined.
+        ...(filteredCcEmails.length > 0 ? { cc: filteredCcEmails } : {}),
+        ...(filteredBccEmails.length > 0 ? { bcc: filteredBccEmails } : {}),
+        from: emailConfig.from,
+        subject,
+        html,
+        text: emailConfig.previewText,
+        teamId: emailConfig.teamId,
+        campaignId: emailConfig.campaignId,
+        contactId: contact.id,
+        domainId: emailConfig.domainId,
+      }),
+    )
+    .returning();
 
-  await db.campaignEmail.create({
-    data: {
-      campaignId: emailConfig.campaignId,
-      contactId: contact.id,
-      emailId: email.id,
-    },
+  if (!email) {
+    throw new Error("Failed to create campaign email");
+  }
+
+  await drizzleDb.insert(schema.campaignEmail).values({
+    campaignId: emailConfig.campaignId,
+    contactId: contact.id,
+    emailId: email.id,
   });
 
   // Queue email for sending
@@ -1140,46 +1162,58 @@ export async function updateCampaignAnalytics(
   emailStatus: EmailStatus,
   hardBounce: boolean = false,
 ) {
-  const campaign = await db.campaign.findUnique({
-    where: { id: campaignId },
-  });
+  const [campaign] = await drizzleDb
+    .select({ id: schema.campaign.id })
+    .from(schema.campaign)
+    .where(eq(schema.campaign.id, campaignId))
+    .limit(1);
 
   if (!campaign) {
     throw new Error("Campaign not found");
   }
 
-  const updateData: Record<string, any> = {};
+  // Every counter is incremented in SQL. These run once per inbound SES event,
+  // so several can land on the same campaign at once and a read-then-write
+  // would drop them.
+  const bump = (column: AnyPgColumn) => sql`${column} + 1`;
+
+  const updateData: Record<string, unknown> = {};
 
   switch (emailStatus) {
     case EmailStatus.SENT:
-      updateData.sent = { increment: 1 };
+      updateData.sent = bump(schema.campaign.sent);
       break;
     case EmailStatus.DELIVERED:
-      updateData.delivered = { increment: 1 };
+      updateData.delivered = bump(schema.campaign.delivered);
       break;
     case EmailStatus.OPENED:
-      updateData.opened = { increment: 1 };
+      updateData.opened = bump(schema.campaign.opened);
       break;
     case EmailStatus.CLICKED:
-      updateData.clicked = { increment: 1 };
+      updateData.clicked = bump(schema.campaign.clicked);
       break;
     case EmailStatus.BOUNCED:
-      updateData.bounced = { increment: 1 };
+      updateData.bounced = bump(schema.campaign.bounced);
       if (hardBounce) {
-        updateData.hardBounced = { increment: 1 };
+        updateData.hardBounced = bump(schema.campaign.hardBounced);
       }
       break;
     case EmailStatus.COMPLAINED:
-      updateData.complained = { increment: 1 };
+      updateData.complained = bump(schema.campaign.complained);
       break;
     default:
       break;
   }
 
-  await db.campaign.update({
-    where: { id: campaignId },
-    data: updateData,
-  });
+  // Prisma accepted an empty update as a no-op; an empty SET is invalid SQL.
+  if (Object.keys(updateData).length === 0) {
+    return;
+  }
+
+  await drizzleDb
+    .update(schema.campaign)
+    .set(withUpdatedAt(updateData))
+    .where(eq(schema.campaign.id, campaignId));
 }
 
 // ---------------------------
@@ -1198,10 +1232,13 @@ export class CampaignBatchService {
     createWorkerHandler(async (job: CampaignBatchJob) => {
       const { campaignId } = job.data;
 
-      const campaign = await db.campaign.findUnique({
-        where: { id: campaignId },
-      });
-      if (!campaign) return;
+      const [campaignRow] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaignId))
+        .limit(1);
+      if (!campaignRow) return;
+      const campaign = toCampaign(campaignRow);
       if (!campaign.contactBookId) return;
 
       // Skip paused campaigns
@@ -1213,33 +1250,36 @@ export class CampaignBatchService {
 
       // First touch moves SCHEDULED -> RUNNING
       if (campaign.status === "SCHEDULED") {
-        await db.campaign.update({
-          where: { id: campaignId },
-          data: { status: "RUNNING" },
-        });
+        await drizzleDb
+          .update(schema.campaign)
+          .set(withUpdatedAt({ status: "RUNNING" as const }))
+          .where(eq(schema.campaign.id, campaignId));
       }
 
       const batchSize = campaign.batchSize ?? 500;
 
-      const where = {
-        contactBookId: campaign.contactBookId,
-        subscribed: true,
-      } as const;
-      const pagination: any = {
-        take: batchSize,
-        orderBy: { id: "asc" as const },
-      };
-      if (campaign.lastCursor) {
-        pagination.cursor = { id: campaign.lastCursor };
-        pagination.skip = 1; // do not include the cursor row
-      }
+      // Prisma paged with cursor + skip:1. Contact.id is unique and the order
+      // is id asc, so the keyset is just "after the last id seen".
+      const contacts = await drizzleDb
+        .select()
+        .from(schema.contact)
+        .where(
+          and(
+            eq(schema.contact.contactBookId, campaign.contactBookId),
+            eq(schema.contact.subscribed, true),
+            campaign.lastCursor
+              ? gt(schema.contact.id, campaign.lastCursor)
+              : undefined,
+          ),
+        )
+        .orderBy(asc(schema.contact.id))
+        .limit(batchSize);
 
-      const contacts = await db.contact.findMany({ where, ...pagination });
-
-      const contactBook = await db.contactBook.findUnique({
-        where: { id: campaign.contactBookId },
-        select: { variables: true },
-      });
+      const [contactBook] = await drizzleDb
+        .select({ variables: schema.contactBook.variables })
+        .from(schema.contactBook)
+        .where(eq(schema.contactBook.id, campaign.contactBookId))
+        .limit(1);
 
       const allowedVariables = [
         ...BUILT_IN_CONTACT_VARIABLES,
@@ -1248,27 +1288,34 @@ export class CampaignBatchService {
 
       if (contacts.length === 0) {
         // No more contacts -> mark SENT
-        await db.campaign.update({
-          where: { id: campaignId },
-          data: { status: "SENT" },
-        });
+        await drizzleDb
+          .update(schema.campaign)
+          .set(withUpdatedAt({ status: "SENT" as const }))
+          .where(eq(schema.campaign.id, campaignId));
         return;
       }
 
       // Fetch domain for region and id
-      const domain = await db.domain.findUnique({
-        where: { id: campaign.domainId },
-      });
+      const [domain] = await drizzleDb
+        .select()
+        .from(schema.domain)
+        .where(eq(schema.domain.id, campaign.domainId))
+        .limit(1);
       if (!domain) return;
 
       // Bulk existence check to avoid duplicates while unique is not enforced
-      const existing = await db.campaignEmail.findMany({
-        where: {
-          campaignId: campaign.id,
-          contactId: { in: contacts.map((c) => c.id) },
-        },
-        select: { contactId: true },
-      });
+      const existing = await drizzleDb
+        .select({ contactId: schema.campaignEmail.contactId })
+        .from(schema.campaignEmail)
+        .where(
+          and(
+            eq(schema.campaignEmail.campaignId, campaign.id),
+            inArray(
+              schema.campaignEmail.contactId,
+              contacts.map((c) => c.id),
+            ),
+          ),
+        );
       const existingSet = new Set(existing.map((e) => e.contactId));
 
       // Process each contact in this batch
@@ -1277,7 +1324,7 @@ export class CampaignBatchService {
 
         try {
           await processContactEmail({
-            contact,
+            contact: toContact(contact),
             campaign,
             allowedVariables,
             emailConfig: {
@@ -1300,7 +1347,7 @@ export class CampaignBatchService {
           );
           try {
             await recordCampaignContactFailure({
-              contact,
+              contact: toContact(contact),
               campaign,
               emailConfig: {
                 replyTo: Array.isArray(campaign.replyTo)
@@ -1324,10 +1371,10 @@ export class CampaignBatchService {
 
       // Advance cursor and timestamp
       const newCursor = contacts[contacts.length - 1]?.id;
-      await db.campaign.update({
-        where: { id: campaignId },
-        data: { lastCursor: newCursor, lastSentAt: new Date() },
-      });
+      await drizzleDb
+        .update(schema.campaign)
+        .set(withUpdatedAt({ lastCursor: newCursor, lastSentAt: new Date() }))
+        .where(eq(schema.campaign.id, campaignId));
     }),
     { concurrency: 20 },
   );
@@ -1341,10 +1388,15 @@ export class CampaignBatchService {
   }) {
     // Defensive check: avoid enqueue if window not elapsed (scheduler already enforces)
     try {
-      const campaign = await db.campaign.findUnique({
-        where: { id: campaignId },
-        select: { lastSentAt: true, batchWindowMinutes: true, status: true },
-      });
+      const [campaign] = await drizzleDb
+        .select({
+          lastSentAt: schema.campaign.lastSentAt,
+          batchWindowMinutes: schema.campaign.batchWindowMinutes,
+          status: schema.campaign.status,
+        })
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaignId))
+        .limit(1);
       if (!campaign) return;
       if (campaign.status === "PAUSED" || campaign.status === "SENT") return;
       const windowMin = campaign.batchWindowMinutes ?? 0;
