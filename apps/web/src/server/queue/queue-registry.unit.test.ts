@@ -11,6 +11,11 @@ import {
   queueNameFor,
   retryDelaySeconds,
 } from "./queue-registry";
+import {
+  SEND_QUEUE_SUFFIXES,
+  sendQueueName,
+  SUPPORTED_SES_REGIONS,
+} from "./ses-regions";
 
 /**
  * The registry and `wrangler.jsonc` have to agree, and nothing else enforces
@@ -103,6 +108,23 @@ describe("wrangler.jsonc agrees with the registry", () => {
     expect(deadLetter).toBeDefined();
     expect(deadLetter!.max_retries).toBe(0);
     expect(deadLetter!.dead_letter_queue).toBeUndefined();
+  });
+
+  it("pre-declares a queue pair for every supported SES region", () => {
+    // §4.1: the set is fixed at deploy time, so adding a region is a deploy.
+    for (const region of SUPPORTED_SES_REGIONS) {
+      for (const suffix of SEND_QUEUE_SUFFIXES) {
+        const name = sendQueueName(region, suffix);
+        expect(
+          QUEUES.find((queue) => queue.name === name),
+          `no queue for ${name}`,
+        ).toBeDefined();
+      }
+    }
+
+    expect(QUEUES.filter((q) => q.maxConcurrency !== null).length).toBe(
+      SUPPORTED_SES_REGIONS.length * SEND_QUEUE_SUFFIXES.length + 1,
+    );
   });
 
   it("declares no consumer for a queue that is not in the registry", () => {

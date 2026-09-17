@@ -96,6 +96,17 @@ SES region in the UI (`ses-settings-service.ts:127`, `:193`). Queue bindings are
 pre-declared for each. Idle queues cost nothing. Adding a region becomes a deploy — a real product
 behaviour change that needs UI copy.
 
+**Done.** `server/queue/ses-regions.ts`, thirteen regions, twenty-six send queues, derived into
+`queue-registry.ts` and declared in `wrangler.jsonc`. **The contents of that list are a product
+decision that has not been made** — what is there is AWS's commercial SES regions minus the opt-in
+ones, which is a defensible default and not an answer about where anyone sends from. Sending from a
+region outside it now fails at the seam with a message naming the file and the supported set.
+
+The registration also had to move. On BullMQ the set of send queues came from `SesSetting` rows, so
+`init()` read the database to learn which queues to create. A Queues consumer has to be registered
+before the first message arrives, which is earlier than the first send, so on Workers the pair for
+every supported region is registered at module load and `init()` reads nothing.
+
 `max_concurrency` is also deploy-time, while `sesEmailRateLimit` is a DB column editable in the UI.
 **Decided: deploy-time only.** Changing the rate limit in the UI no longer takes effect until a
 deploy. `updateSesSetting` (`ses-settings-service.ts:193`) must stop implying an immediate effect,

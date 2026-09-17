@@ -122,7 +122,33 @@
       { "queue": "usesend-ses-webhook", "binding": "QUEUE_SES_WEBHOOK" },
       { "queue": "usesend-contact-bulk-add", "binding": "QUEUE_CONTACT_BULK_ADD" },
       { "queue": "usesend-campaign-batch", "binding": "QUEUE_CAMPAIGN_BATCH" },
-      { "queue": "usesend-campaign-scheduler", "binding": "QUEUE_CAMPAIGN_SCHEDULER" }
+      { "queue": "usesend-campaign-scheduler", "binding": "QUEUE_CAMPAIGN_SCHEDULER" },
+      { "queue": "usesend-us-east-1-transaction", "binding": "QUEUE_US_EAST_1_TRANSACTION" },
+      { "queue": "usesend-us-east-1-marketing", "binding": "QUEUE_US_EAST_1_MARKETING" },
+      { "queue": "usesend-us-east-2-transaction", "binding": "QUEUE_US_EAST_2_TRANSACTION" },
+      { "queue": "usesend-us-east-2-marketing", "binding": "QUEUE_US_EAST_2_MARKETING" },
+      { "queue": "usesend-us-west-2-transaction", "binding": "QUEUE_US_WEST_2_TRANSACTION" },
+      { "queue": "usesend-us-west-2-marketing", "binding": "QUEUE_US_WEST_2_MARKETING" },
+      { "queue": "usesend-ca-central-1-transaction", "binding": "QUEUE_CA_CENTRAL_1_TRANSACTION" },
+      { "queue": "usesend-ca-central-1-marketing", "binding": "QUEUE_CA_CENTRAL_1_MARKETING" },
+      { "queue": "usesend-eu-west-1-transaction", "binding": "QUEUE_EU_WEST_1_TRANSACTION" },
+      { "queue": "usesend-eu-west-1-marketing", "binding": "QUEUE_EU_WEST_1_MARKETING" },
+      { "queue": "usesend-eu-west-2-transaction", "binding": "QUEUE_EU_WEST_2_TRANSACTION" },
+      { "queue": "usesend-eu-west-2-marketing", "binding": "QUEUE_EU_WEST_2_MARKETING" },
+      { "queue": "usesend-eu-central-1-transaction", "binding": "QUEUE_EU_CENTRAL_1_TRANSACTION" },
+      { "queue": "usesend-eu-central-1-marketing", "binding": "QUEUE_EU_CENTRAL_1_MARKETING" },
+      { "queue": "usesend-eu-north-1-transaction", "binding": "QUEUE_EU_NORTH_1_TRANSACTION" },
+      { "queue": "usesend-eu-north-1-marketing", "binding": "QUEUE_EU_NORTH_1_MARKETING" },
+      { "queue": "usesend-ap-south-1-transaction", "binding": "QUEUE_AP_SOUTH_1_TRANSACTION" },
+      { "queue": "usesend-ap-south-1-marketing", "binding": "QUEUE_AP_SOUTH_1_MARKETING" },
+      { "queue": "usesend-ap-southeast-1-transaction", "binding": "QUEUE_AP_SOUTHEAST_1_TRANSACTION" },
+      { "queue": "usesend-ap-southeast-1-marketing", "binding": "QUEUE_AP_SOUTHEAST_1_MARKETING" },
+      { "queue": "usesend-ap-southeast-2-transaction", "binding": "QUEUE_AP_SOUTHEAST_2_TRANSACTION" },
+      { "queue": "usesend-ap-southeast-2-marketing", "binding": "QUEUE_AP_SOUTHEAST_2_MARKETING" },
+      { "queue": "usesend-ap-northeast-1-transaction", "binding": "QUEUE_AP_NORTHEAST_1_TRANSACTION" },
+      { "queue": "usesend-ap-northeast-1-marketing", "binding": "QUEUE_AP_NORTHEAST_1_MARKETING" },
+      { "queue": "usesend-sa-east-1-transaction", "binding": "QUEUE_SA_EAST_1_TRANSACTION" },
+      { "queue": "usesend-sa-east-1-marketing", "binding": "QUEUE_SA_EAST_1_MARKETING" }
     ],
     "consumers": [
       {
@@ -154,10 +180,214 @@
         "max_concurrency": 1,
         "dead_letter_queue": "usesend-dead-letter"
       },
-      // The shared dead letter queue. No producer binding: Cloudflare routes to
-      // it, nothing in this codebase sends to it. `max_retries` is 0 because a
-      // dead letter queue that retries is just another queue — the consumer
-      // logs one error record per message and acks (§11's alerting path).
+      {
+        "queue": "usesend-us-east-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-us-east-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-us-east-2-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-us-east-2-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-us-west-2-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-us-west-2-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ca-central-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ca-central-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-west-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-west-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-west-2-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-west-2-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-central-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-central-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-north-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-eu-north-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-south-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-south-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-southeast-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-southeast-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-southeast-2-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-southeast-2-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-northeast-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-ap-northeast-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-sa-east-1-transaction",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-sa-east-1-marketing",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 2,
+        "max_concurrency": 20,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
       {
         "queue": "usesend-dead-letter",
         "max_batch_size": 100,

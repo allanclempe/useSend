@@ -30,6 +30,8 @@ import { withWorkerBindings, type WorkerBindings } from "~/server/worker-binding
 import "~/server/jobs/campaign-scheduler-job";
 import "~/server/service/campaign-service";
 import "~/server/service/contact-queue-service";
+// Registers a consumer for both send queues of every supported SES region.
+import "~/server/service/email-queue-service";
 import "~/server/service/ses-hook-parser";
 // `webhook-service` is deliberately absent: on Workers webhook delivery is the
 // WEBHOOK_DISPATCHER Durable Object, not a queue, and it registers no consumer.

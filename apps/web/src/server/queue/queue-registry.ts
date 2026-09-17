@@ -26,6 +26,12 @@ import {
   SES_WEBHOOK_QUEUE,
   WEBHOOK_DISPATCH_QUEUE,
 } from "./queue-constants";
+import {
+  SEND_QUEUE_MAX_CONCURRENCY,
+  SEND_QUEUE_SUFFIXES,
+  sendQueueName,
+  SUPPORTED_SES_REGIONS,
+} from "./ses-regions";
 
 /**
  * Not a queue on Cloudflare at all: `webhook-dispatch` becomes one Durable
@@ -100,6 +106,32 @@ function define(
  */
 export const DEAD_LETTER_QUEUE_NAME = queueNameFor("dead-letter");
 
+/**
+ * The send queues, one pair per supported SES region.
+ *
+ * Derived rather than written out because the set is data, and because the
+ * whole of §4.1 is that this list is fixed at deploy time: a region a user adds
+ * in the admin UI that is not in `SUPPORTED_SES_REGIONS` has no queue, no
+ * consumer and no binding, and sending from it fails at the seam with a message
+ * that says so.
+ *
+ * `maxBatchSize` is 1. A send renders, builds MIME and calls SES, so two in one
+ * invocation would share a 30s CPU budget and a 1000-subrequest cap — and
+ * batching buys nothing here anyway, since each message is one SES call.
+ */
+const SEND_QUEUES: readonly QueueDefinition[] = SUPPORTED_SES_REGIONS.flatMap(
+  (region) =>
+    SEND_QUEUE_SUFFIXES.map((suffix) =>
+      define(sendQueueName(region, suffix), {
+        maxAttempts: 3,
+        retry: { type: "exponential", delayMs: 30_000 },
+        maxBatchSize: 1,
+        maxBatchTimeout: 1,
+        maxConcurrency: SEND_QUEUE_MAX_CONCURRENCY,
+      }),
+    ),
+);
+
 export const QUEUES: readonly QueueDefinition[] = [
   /**
    * The SES event pipeline — 78% of all queue load in §12, and the reason the
@@ -154,6 +186,7 @@ export const QUEUES: readonly QueueDefinition[] = [
     maxBatchTimeout: 1,
     maxConcurrency: 1,
   }),
+  ...SEND_QUEUES,
 ];
 
 const byName = new Map(QUEUES.map((queue) => [queue.name, queue]));
