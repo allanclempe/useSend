@@ -1,0 +1,369 @@
+# Cloudflare migration plan
+
+Status: **plan / not started**
+
+**Target stack**
+
+| Layer | From | To |
+|---|---|---|
+| Runtime | Next.js 15 (App Router) on Node | **TanStack Start on Cloudflare Workers** |
+| ORM | Prisma 6 | **Drizzle** |
+| Database | Postgres (self-hosted / RDS) | **Neon** via **Hyperdrive** |
+| Auth | NextAuth v4 + `@auth/prisma-adapter` | **better-auth** + Drizzle adapter |
+| Queues | BullMQ / Redis | **Cloudflare Queues** |
+| Scheduling | BullMQ repeatable jobs | **Cron Triggers** + **Durable Object alarms** |
+| Locks / ordering | Redis `SET NX PX` + Lua | **Durable Objects** (single-threaded by construction) |
+| Cache / idempotency | Redis | **Workers KV** + **Durable Objects** |
+| API rate limits | Redis `INCR` | **Rate Limiting binding** or a Durable Object |
+| Object storage | MinIO / S3 | **R2** |
+| IaC | — | **wrangler** |
+| SMTP relay | `apps/smtp-server` container | **unchanged**, stays a container (see §7) |
+| Email delivery | AWS SES | **AWS SES** (unchanged; CF Email Service adapter is a later, large ticket) |
+
+---
+
+## 1. What Redis is doing today, and where each piece lands
+
+Redis carries five unrelated responsibilities. Only the first is a queue.
+
+| # | Responsibility | Today | Target |
+|---|---|---|---|
+| 1 | Job queues | BullMQ, 8 queues | **Cloudflare Queues** + **Cron Triggers** |
+| 2 | Per-webhook ordering lock | `SET NX PX` + Lua release (`webhook-service.ts:681-703`) | **Durable Object per `webhookId`** — the lock is deleted, not ported |
+| 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** (needs strong consistency) |
+| 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Rate Limiting binding**, or a DO for exact counts |
+| 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` (`team-service.ts:398`) | **Workers KV** with TTL |
+
+**Do not use KV for #3 or #4.** KV is eventually consistent (~60s global propagation). Idempotency
+and rate limiting both need read-after-write. KV is correct for #5 only.
+
+## 2. Queue-by-queue mapping
+
+From `apps/web/src/server/queue/queue-constants.ts`:
+
+| BullMQ queue | Target | Notes |
+|---|---|---|
+| `{region}-transactional` | CF Queue → consumer Worker | `max_concurrency` = `transactionalQuota` |
+| `{region}-marketing` | CF Queue → consumer Worker | `max_concurrency` = `marketingQuota` |
+| `webhook-dispatch` | **Durable Object per `webhookId`** | serialization is free; DO alarm drives retry backoff |
+| `campaign-emails-processing` | CF Queue | |
+| `campaign-batch` | CF Queue | must self-chunk, §4.3 |
+| `contact-bulk-add` | CF Queue | must self-chunk, §4.3 |
+| `ses-webhook` | HTTP route → CF Queue | SNS already POSTs to `setting.callbackUrl`; keep the HTTP hop |
+| `campaign-scheduler` | **Durable Object alarm** | preserves the 1.5s tick exactly, §4.2 |
+| `domain-verification` | Cron Trigger `0 * * * *` | 1:1 with today's pattern |
+| `webhook-cleanup` | Cron Trigger | clean fit |
+| `usage-reporting` | Cron Trigger | clean fit |
+| `cleanup-email-bodies` | Cron Trigger | clean fit |
+
+**Delayed sends.** CF Queues `delaySeconds` caps at 12 hours — far better than SQS's 15 minutes.
+- delay ≤ 12h → `delaySeconds` on send
+- delay > 12h (scheduled campaigns) → **Durable Object alarm** that enqueues at fire time
+
+**Scheduled emails are not enqueued at all — see §4.5.**
+
+## 3. Why Durable Objects, specifically
+
+Three of the hardest problems collapse into one primitive:
+
+- **Webhook ordering.** A DO is single-threaded per object ID. `webhook-service.ts:536-703` —
+  `acquireLock`, `releaseLock`, the Lua script, `WEBHOOK_LOCK_TTL_MS`, `WEBHOOK_LOCK_RETRY_DELAY_MS`,
+  and the lock-not-acquired retry path all **delete**.
+- **The 1.5s scheduler tick.** `setAlarm()` is millisecond-precision. No 1-minute floor.
+- **Delayed sends and idempotency.** Transactional DO storage with strong consistency, plus alarms.
+
+This is the main reason Cloudflare beats the AWS/SQS design for this codebase.
+
+## 4. The five things that are genuinely hard
+
+### 4.1 Queues are static in `wrangler.toml`; SES regions are dynamic
+
+`EmailQueueService.initializeQueue(region, quota, ...)` is called **at runtime** when a user adds an
+SES region in the UI (`ses-settings-service.ts:127`, `:193`). Queue bindings are deploy-time config.
+
+**Resolution:** a fixed `SUPPORTED_SES_REGIONS` list in `wrangler.toml`, with queue + consumer pairs
+pre-declared for each. Idle queues cost nothing. Adding a region becomes a deploy — a real product
+behaviour change that needs UI copy.
+
+`max_concurrency` is also deploy-time, while `sesEmailRateLimit` is a DB column editable in the UI.
+**Decided: deploy-time only.** Changing the rate limit in the UI no longer takes effect until a
+deploy. `updateSesSetting` (`ses-settings-service.ts:193`) must stop implying an immediate effect,
+and the settings UI needs copy saying so.
+
+### 4.2 The campaign scheduler ticks every 1.5s
+
+`campaign-scheduler-job.ts:12` — `SCHEDULER_TICK_MS = 1500`. Cron Triggers floor at 1 minute, so
+this one job must be a **Durable Object with a self-rescheduling alarm**, not a Cron Trigger.
+No behaviour change required, unlike the EventBridge design.
+
+### 4.3 Workers CPU and subrequest limits vs unbounded loops
+
+Three handlers iterate unbounded result sets in a single job:
+- `runDueDomainVerifications()` — iterates **every** domain sequentially (`domain-verification-job.ts:17-38`)
+- `contact-bulk-add` — bulk contact import
+- `campaign-batch` — campaign fan-out
+
+Each must **fan out or self-continue**: process a bounded page, enqueue a continuation with a cursor.
+Two separate ceilings apply — CPU time *and* the per-invocation **subrequest limit** (1000 on paid).
+`runDueDomainVerifications` makes AWS calls per domain, so it hits the subrequest cap well before CPU.
+This is the largest behavioural code change in the migration and is not optional.
+
+### 4.4 At-least-once delivery
+
+CF Queues are at-least-once; BullMQ was effectively at-most-once per attempt. Every consumer must be
+idempotent. `IdempotencyService` covers the public API send path but **not** internal job handlers —
+those need the same treatment. Configure a DLQ (`dead_letter_queue`) and `max_retries` per queue.
+
+**Queue message size caps at 128 KB.** Current payloads are ID references only
+(`emailId`, `callId`, `contactBookId`) so this is fine — but it is now a constraint: never put an
+email body or attachment in a message.
+
+### 4.5 Scheduled emails: sweeper, not queue mutation
+
+Neither `changeDelay` (`email-queue-service.ts:279`) nor `chancelEmail` (`:301`, note the typo)
+has a Cloudflare Queues equivalent — a queued message cannot be moved or withdrawn.
+
+They do not need one. **Postgres is already the source of truth**: `updateEmail`
+(`email-service.ts:304`) writes `scheduledAt` to the DB and only then mutates the queue;
+`cancelEmail` (`:336`) sets `latestStatus = 'CANCELLED'` and only then removes the job. The queue
+mutation is redundant bookkeeping, and it is racy today — a job already picked up by a worker sends
+regardless of what the DB says.
+
+**Design:**
+- **Immediate sends** (no `scheduledAt`) → enqueue directly, as today.
+- **Scheduled sends** → write the DB row and nothing else. The campaign-scheduler Durable Object
+  from §4.2 sweeps `WHERE latestStatus = 'SCHEDULED' AND scheduledAt <= now()` on each alarm tick
+  and enqueues what is due. This is the pattern `campaign-scheduler-job.ts:34` already uses for
+  campaigns — extend it to cover emails rather than inventing a second mechanism.
+
+Reschedule and cancel become **pure DB writes**. `EmailQueueService.changeDelay` and
+`chancelEmail` are deleted, along with the `jobId: emailId` coupling that exists only to support them.
+
+**Pair it with a claim-UPDATE**, which is required for §4.4 regardless:
+
+```sql
+UPDATE "Email" SET "latestStatus" = 'QUEUED'
+WHERE id = $1 AND "latestStatus" = 'SCHEDULED'
+RETURNING id
+```
+
+Zero rows returned means already-claimed or cancelled: ack the message and drop it. One atomic
+statement covers duplicate delivery, cancellation, and any stale message left by a reschedule.
+
+**Trade-off:** up to one alarm tick (~1.5s) of scheduling jitter, on an email scheduled hours out.
+In exchange the current race disappears.
+
+**Rejected:** a Durable Object per scheduled email would give an exact `changeDelay` equivalent
+(`setAlarm()` moves freely and can be cleared), but that is one billed object per scheduled email to
+replicate what a `WHERE` clause already does. Keep DOs for webhook ordering and for the >12h delay
+case in §2, where they are load-bearing.
+
+## 5. Database: Neon + Hyperdrive + Drizzle
+
+**Driver choice is settled by existing code.** There are 6 interactive transactions
+(`auth.ts:211`, `campaign-service.ts:712`, `:774`, `webhook-service.ts:605`,
+`create-contact-book.ts:57`, plus an array form at `webhook-service.ts:567`) and 8 raw-SQL sites
+(`admin.ts:438`, `email.ts:97`, `:139`, `dashboard-service.ts:28`, `usage-service.ts:38`, `:48`,
+`ses-hook-parser.ts:117`).
+
+Interactive transactions rule out `drizzle-orm/neon-http`. Use:
+- **Hyperdrive + `postgres-js`** (recommended) — real transactions, session affinity, edge pooling.
+  Disable Hyperdrive query caching; this workload is write-heavy and read-your-writes matters.
+- Fallback: `@neondatabase/serverless` WebSocket driver + `drizzle-orm/neon-serverless`.
+
+`auth.ts:215` runs `pg_advisory_xact_lock` inside a transaction. Transaction-scoped advisory locks are
+pool-safe, so this survives Hyperdrive unchanged — but it must stay `_xact_` scoped. A session-scoped
+advisory lock would break under pooling.
+
+**Scope:** 24 models, ~265 Prisma call sites. Use `drizzle-kit pull` to introspect the live database
+rather than hand-porting `schema.prisma`. Migration history does not transfer — baseline Drizzle at
+current state and keep the Prisma migration folder read-only for reference.
+
+## 6. Auth: NextAuth v4 → better-auth
+
+37 call sites. NextAuth v4 survives neither the framework change nor the ORM change, so this is its
+own ticket, not a sub-task.
+
+- Providers in use: GitHub, Google, and `EmailProvider` (magic link) — `auth.ts:8-11`.
+- Requires a **data migration** across `User`, `Account`, `Session`, `VerificationToken`. Get the
+  session table shape right or every user is logged out at cutover.
+- OAuth callback URLs must be re-registered with GitHub and Google.
+- `sendSignUpEmail` (`server/mailer.ts`) must be wired to better-auth's email hooks.
+- Self-hosted registration gating (`canRegisterSelfHostedUser`, `SelfHostedRegistrationError`) is
+  custom logic in a NextAuth `signIn` callback — it needs a deliberate port to a better-auth hook,
+  including the advisory lock.
+- **Scope is user / session / account / verification only.** Team, TeamUser and TeamInvite stay
+  exactly as they are.
+
+  better-auth's `organization` plugin was evaluated and **rejected**: it expects string IDs, while
+  `Team.id` and `User.id` are `Int @default(autoincrement())` with `teamId` as a foreign key in 37
+  places in the schema and `teamId: number` threaded through every service signature and
+  `TeamJob<T>`. Adopting it would force an Int→String PK migration across nearly every table to
+  re-implement invitations, roles and membership that already work (`routers/invitiation.ts`,
+  `TeamInvite`, the `Role` enum). Not worth it.
+
+  Consequence: **Int primary keys are preserved end to end.** Do not let the Drizzle port (Phase 3)
+  quietly change ID types.
+
+## 7. What does not move
+
+- **`apps/smtp-server`** — a raw TCP SMTP listener on :465/:587 with a TLS cert. Workers cannot listen
+  on arbitrary TCP ports. It talks to useSend only over the public HTTP API
+  (`apps/smtp-server/src/server.ts:20-35`), so it is fully decoupled and needs **no changes**.
+  Leave it where it is; move to Fly.io at leisure. It is a product feature (documented at
+  `apps/docs/get-started/smtp.mdx`, surfaced at `dev-settings/smtp/page.tsx:15`), not infrastructure.
+- **The public API.** `server/public-api/hono.ts` is already Hono and runs natively on Workers.
+  Rehost it; do not rewrite it. This is the single biggest free win in the migration.
+- **AWS SES.** Delivery, identity management, configuration sets, SES tenants, suppression lists all
+  stay. A Cloudflare Email Service adapter is a large future ticket — it must replace all of
+  `aws/ses.ts` and the domain lifecycle in `domain-service.ts`, not just a send call.
+- **R2 is nearly free.** `storage-service.ts` already takes an S3-compatible endpoint with
+  `forcePathStyle` for MinIO. **Decided: native R2 binding**, not presigned URLs — drop
+  `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` and proxy uploads/downloads through a
+  Worker route. Removes request-signing overhead and two SDK dependencies from the bundle.
+
+## 8. Runtime compatibility gotchas
+
+| Item | Location | Action |
+|---|---|---|
+| **pino** | `server/logger/log.ts` | Worker threads / transports don't run on Workers. `AsyncLocalStorage` is fine under `nodejs_compat`. Keep the `logger` Proxy and `withLogger` API identical; swap only the implementation. Contained — do it early. |
+| **Stripe SDK** | `billing/payments.ts:14`, `billing/usage.ts:8` | Needs `Stripe.createFetchHttpClient()`. Webhook verification must become `constructEventAsync` + `createSubtleCryptoProvider()`. Silently broken if missed. |
+| **`generateKeyPairSync`** | `aws/ses.ts:17` | BYODKIM keypair generation. Verify under `nodejs_compat`; may need WebCrypto `generateKey`. |
+| **`scryptSync`** | `server/crypto.ts:1` | Sync and CPU-heavy — exactly what the Workers CPU budget punishes. Benchmark, consider a WebCrypto KDF. |
+| Other `node:crypto` | 9 more files | `randomBytes`, `createHash`, `createHmac`, `randomUUID`, `timingSafeEqual` — expected to work under `nodejs_compat`. |
+| **`jsx-email`** | email preview rendering | Verify SSR on Workers. |
+| **`@isaacs/ttlcache`** | in-process cache | Isolates are ephemeral and per-colo; hit rates drop sharply. Move to KV or a DO rather than assuming in-memory carries load. |
+| **Attachment size** | email attachments | Check against Workers request body limits. |
+| **SNS signature verification** | `ses-hook-parser.ts` | Must work via WebCrypto. |
+
+## 9. Sequencing
+
+**Do not run the three migrations concurrently.** ORM, framework, and infra are each independently
+large; done together there is no working intermediate state and no way to bisect a regression.
+
+Phases 0–3 land on the **current Next.js app, in production, incrementally**. Nothing below Phase 4
+requires a Cloudflare account.
+
+- **Phase 0 — Shrink the event pipeline.** Pure cost work, independent of everything else, and it
+  reduces the load every later phase has to carry. See §12.
+  - Prune SES event types (`aws/ses.ts`, `ses-hook-parser.ts:600-616`) — highest leverage change
+    available, and it is config.
+  - `EmailEvent` retention policy, extending the `cleanup-email-bodies` pattern.
+  *Ships on Next.js.*
+- **Phase 1 — Logger.** pino → Workers-compatible structured logger behind the existing API.
+  Small, contained, unblocks everything. *Ships on Next.js.*
+- **Phase 2 — Queue seam.** A `Queue` interface (`enqueue`, `enqueueDelayed`, `schedule`) with BullMQ
+  as the only driver. Route all call sites through it. *Ships on Next.js, no behaviour change.*
+  Worth doing even if the migration stalls.
+- **Phase 3 — Prisma → Drizzle.** `drizzle-kit pull` to introspect, then port ~265 call sites and the
+  8 raw-SQL sites. *Ships on Next.js.* The single largest ticket — split it per router/service.
+- **Phase 4 — Neon.** Data migration off the current Postgres. Still on Next.js, still on Node.
+- **Phase 5 — Cloudflare foundation.** `wrangler.toml`, Hyperdrive binding, R2 bucket, KV namespace.
+  Deploy the **Hono public API** to Workers first — it is already compatible and proves the stack
+  end-to-end with the smallest blast radius.
+  - **Instrument CPU-ms per send and per event here.** It is the one number in §12 that is estimated
+    rather than measured, and this phase is the cheapest place to measure it.
+  - **Prototype Durable Object hibernation** under a 1.5s alarm before committing to the scheduler
+    design. A 30x cost swing rides on it (§12).
+- **Phase 6 — better-auth.** Auth swap plus session/account data migration. Sequence before the
+  framework rip, since TanStack Start has no NextAuth story.
+- **Phase 7 — TanStack Start.** Rip Next.js: 126 files under `src/app`. **All 17 tRPC routers are
+  retired** in favour of TanStack Start server functions; `@trpc/*` leaves the dependency tree.
+  The Hono public API (`server/public-api/`) is untouched and remains the external contract.
+- **Phase 8 — Jobs to Queues + DOs**, easiest first:
+  `domain-verification` → `webhook-cleanup` → `usage-reporting` → `cleanup-email-bodies`
+  (pure cron) → `ses-webhook` → `webhook-dispatch` (DO, deletes the lock) → `contact-bulk-add`
+  → `campaign-*` → `campaign-scheduler` (DO alarm) → email send queues last.
+  - The `ses-webhook` cutover must **batch**: `sendBatch` from the SNS route, and one multi-row
+    INSERT per consumer batch rather than 100 round trips (§12).
+- **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
+- **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
+  from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
+
+## 10. Test impact
+
+Integration tests require real Redis today (`AGENTS.md:37`, `docker/testing/compose.yml`,
+`test/setup/setup-env.ts`). Target: `@cloudflare/vitest-pool-workers` / Miniflare for Queues, DOs,
+KV and R2, against Neon branches for Postgres.
+
+Affected: `hono.integration.test.ts`, `idempotency-service.integration.test.ts`,
+`api-service.integration.test.ts`, `trpc.integration.test.ts`, `helpers.ts` (uses `$queryRaw` +
+`$executeRawUnsafe` for table truncation — needs a Drizzle port), plus the mocked unit tests for
+webhook, campaign and domain services.
+
+## 11. Decisions (settled 2026-09-17)
+
+1. **`max_concurrency` is deploy-time only.** Changing `sesEmailRateLimit` in the UI no longer takes
+   effect until a deploy. The settings UI (`ses-settings-service.ts:193`) needs copy saying so, and
+   `updateSesSetting` should stop implying an immediate effect.
+2. **No `organization` plugin.** better-auth covers user / session / account / verification only;
+   Team, TeamUser and TeamInvite stay as-is. Int primary keys are preserved throughout — see §6.
+3. **TanStack Start server functions** for the dashboard. All 17 tRPC routers are retired; the Hono
+   public API (`server/public-api/`) is untouched and stays the external contract.
+4. **Native R2 binding**, not presigned URLs. `storage-service.ts` drops `@aws-sdk/client-s3` and
+   `@aws-sdk/s3-request-presigner`; uploads/downloads proxy through a Worker route.
+5. **Scheduled emails move to a sweeper** — see §4.5. `changeDelay` and `chancelEmail` are deleted.
+
+## 12. Cost model
+
+Verified against Cloudflare and Neon pricing, September 2026.
+
+### The multiplier
+
+`ses-hook-parser.ts:600-616` handles nine SES event types. A typical marketing email fires
+**Send + Delivery + Open + Click ≈ 3.5 events**. Each is an SNS POST → Worker request → queue
+message → consumer invocation → one `EmailEvent` insert + one `Email` update.
+
+Per email sent: **~4.5 Worker requests, ~13.5 queue operations**. Only one of each is the actual
+send. **The event pipeline is ~78% of infrastructure load.**
+
+### Where the free tiers run out
+
+| Resource | Included (Workers Paid) | Per email | Free until | Cost after |
+|---|---|---|---|---|
+| Queue operations | 1M/mo | ~13.5 | **~75K emails/mo** | ~$5.40 / 1M emails |
+| Worker requests | 10M/mo | ~4.5 | **~2.2M emails/mo** | ~$1.35 / 1M emails |
+| Worker CPU | 30M CPU-ms | ~35ms *(estimated)* | **~850K emails/mo** | ~$0.70 / 1M emails |
+| DO requests | 1M/mo | ~3 | ~330K emails/mo | ~$0.45 / 1M emails |
+
+**At 10M emails/month the entire Cloudflare bill is roughly $80.** Queues is the first tier to go,
+at ~75K emails — but at $0.40/million operations, crossing it costs pocket change. There is no
+cliff anywhere on the Cloudflare side.
+
+### The two things that actually bite
+
+**1. Durable Object duration — bites on day one, not at scale.**
+
+DO duration bills wall-clock time while running *or idle but unable to hibernate*: 400,000 GB-s
+included, then $12.50/million GB-s.
+
+The campaign-scheduler DO alarms every 1.5s forever (§4.2). If it stays resident it burns
+~328,000 GB-s/month — **82% of the entire allowance at zero email volume**. If it hibernates
+cleanly between alarms it is ~11,000 GB-s. A 30x swing decided by implementation detail.
+
+This is a **fixed cost independent of volume**, which makes it the only thing here that can
+surprise you while still small. Prototype it in Phase 5.
+
+**2. Neon — the real cost center, at every scale.**
+
+At 1M emails/month: ~8M row writes (1M `Email` inserts + 3.5M `EmailEvent` inserts + 3.5M `Email`
+updates). Compute $0.106/CU-hour on Launch, $0.222 on Scale; storage $0.35/GB-month.
+
+Realistically **$40–150/mo at 1M emails**, scaling with *burst concurrency* rather than steady
+volume — campaign sends spike it. Storage compounds: ~3.5M `EmailEvent` rows/month, forever.
+
+### Optimizations, by leverage
+
+1. **Prune SES event types.** If `Send` does not drive product behaviour — the `Email` row already
+   records it — dropping it removes ~25% of the entire event pipeline: requests, queue ops, CPU,
+   row writes and storage. Config change. → Phase 0
+2. **`EmailEvent` retention policy.** Otherwise storage growth is unbounded and monotonic. The
+   existing `cleanup-email-bodies` job is the pattern to follow. → Phase 0
+3. **Batch the event ingest path.** `sendBatch` from the SNS route; one multi-row INSERT per
+   consumer batch. Cuts queue operations and Neon write load together. → Phase 8
+
+### Caveat
+
+The CPU figure is **estimated, not measured**. It depends on `html-to-text` conversion and
+`jsx-email` rendering against real payloads, and is the one number here that could be off by 3x in
+either direction. `scryptSync` (§8) is a further unknown on the same axis. Measure in Phase 5.
