@@ -58,6 +58,22 @@
 ## Rules
 
 - Prefer to use trpc alway unless asked otherwise
+- **Do not add work to the SES event pipeline to learn something we already
+  know.** Every subscribed SES event costs an SNS POST, a queue message and a
+  consumer invocation per email, and the pipeline is the single largest line in
+  the cost model. `SEND` was dropped for exactly this reason (issue #2): the
+  facts it carried — `DailyEmailUsage.sent`, `Email.latestStatus = SENT`, the
+  `email.sent` webhook, `Campaign.sent` — are all recorded locally now, at
+  enqueue and at the SES handoff, where they arrive sooner and cannot be
+  delayed, dropped or replayed. Reach for an SES subscription only for facts
+  that originate at SES: bounces, complaints, deliveries, rejects.
+- **Counters that feed billing need a database-side idempotency guard, not a
+  queue-side one.** `DailyEmailUsage.sent` is gated on `Email.usageCountedAt`
+  making a one-way transition in the same statement as the increment.
+  `EnqueueOptions.jobId` dedup looks like it would do the job, but it is a
+  BullMQ affordance and Cloudflare Queues has no equivalent, so anything built
+  on it stops working mid-migration — silently, and in the direction of
+  overcharging.
 
 ## Testing Guidelines
 
