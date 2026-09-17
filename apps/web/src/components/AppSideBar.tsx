@@ -19,7 +19,6 @@ import {
   UserRoundX,
   Webhook,
 } from "lucide-react";
-import { signOut } from "next-auth/react";
 
 import {
   Sidebar,
@@ -36,7 +35,7 @@ import {
 } from "@usesend/ui/src/sidebar";
 import Link from "next/link";
 import { MiniThemeSwitcher, ThemeSwitcher } from "./theme/ThemeSwitcher";
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "~/lib/auth-client";
 import { isCloud, isSelfHosted } from "~/utils/common";
 import { usePathname } from "next/navigation";
 import { Badge } from "@usesend/ui/src/badge";
@@ -369,7 +368,17 @@ export function NavUser({
               </div>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => signOut()}>
+            <DropdownMenuItem
+              onClick={() =>
+                signOut({
+                  fetchOptions: {
+                    onSuccess: () => {
+                      window.location.href = "/login";
+                    },
+                  },
+                })
+              }
+            >
               <LogOutIcon />
               Log out
             </DropdownMenuItem>

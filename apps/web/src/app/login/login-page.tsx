@@ -6,7 +6,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { authClient } from "~/lib/auth-client";
 import {
   Form,
   FormControl,
@@ -101,19 +101,19 @@ export default function LoginPage({
     emailForm.clearErrors("email");
 
     try {
-      const result = await signIn("email", {
+      const { error } = await authClient.emailOtp.sendVerificationOtp({
         email: values.email.toLowerCase(),
-        redirect: false,
+        type: "sign-in",
       });
 
-      if (!result || result.error) {
+      if (error) {
         setEmailStatus("idle");
         emailForm.setError(
           "email",
           {
             type: "server",
             message:
-              getAuthErrorMessage(result?.error) ?? GENERIC_AUTH_ERROR_MESSAGE,
+              getAuthErrorMessage(error.code) ?? GENERIC_AUTH_ERROR_MESSAGE,
           },
           { shouldFocus: true },
         );
@@ -135,15 +135,29 @@ export default function LoginPage({
   }
 
   async function onOTPSubmit(values: z.infer<typeof otpSchema>) {
-    const { origin: callbackUrl } = window.location;
-    const email = emailForm.getValues().email;
+    const email = emailForm.getValues().email.toLowerCase();
 
-    const finalCallbackUrl = inviteId
+    const { error } = await authClient.signIn.emailOtp({
+      email,
+      otp: values.otp.toLowerCase(),
+    });
+
+    if (error) {
+      otpForm.setError(
+        "otp",
+        {
+          type: "server",
+          message:
+            getAuthErrorMessage(error.code) ?? GENERIC_AUTH_ERROR_MESSAGE,
+        },
+        { shouldFocus: true },
+      );
+      return;
+    }
+
+    window.location.href = inviteId
       ? `/join-team?inviteId=${inviteId}`
-      : `${callbackUrl}/dashboard`;
-    window.location.href = `/api/auth/callback/email?email=${encodeURIComponent(
-      email.toLowerCase(),
-    )}&token=${values.otp.toLowerCase()}&callbackUrl=${encodeURIComponent(finalCallbackUrl)}`;
+      : "/dashboard";
   }
 
   const emailEnabled = providers?.email ?? false;
@@ -161,10 +175,14 @@ export default function LoginPage({
 
   const handleSubmit = (provider: string) => {
     setSubmittedProvider(provider);
-    const callbackUrl = inviteId
-      ? `/join-team?inviteId=${inviteId}`
-      : "/dashboard";
-    signIn(provider, { callbackUrl });
+    authClient.signIn.social({
+      provider,
+      callbackURL: inviteId ? `/join-team?inviteId=${inviteId}` : "/dashboard",
+      // Without this better-auth sends failures to `/api/auth/error`, which is
+      // not a page. The gate's rejection has to land somewhere that can render
+      // it, and `getAuthErrorMessage` reads `?error=` here.
+      errorCallbackURL: "/login",
+    });
   };
 
   return (

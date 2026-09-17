@@ -2,33 +2,23 @@
 
 import React from "react";
 
-import type { Session } from "next-auth";
-import { SessionProvider, useSession } from "next-auth/react";
 import LoginPage from "~/app/login/login-page";
 import { FullScreenLoading } from "~/components/FullScreenLoading";
 import { Rocket } from "lucide-react";
 import { WaitListForm } from "~/app/wait-list/waitlist-form";
+import { useSession } from "~/lib/auth-client";
 
-export type NextAuthProviderProps = {
-  session?: Session | null | undefined;
-  children: React.ReactNode;
-};
+/**
+ * Gates the dashboard on a session.
+ *
+ * There is no provider component any more: better-auth keeps the session in a
+ * nanostore inside the client, so `useSession()` works without a
+ * `SessionProvider` above it. What is left is the gate itself.
+ */
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const { data: session, isPending } = useSession();
 
-export const NextAuthProvider = ({
-  session,
-  children,
-}: NextAuthProviderProps) => {
-  return (
-    <SessionProvider session={session}>
-      <AppAuthProvider>{children}</AppAuthProvider>
-    </SessionProvider>
-  );
-};
-
-const AppAuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const { data: session, status } = useSession({ required: true });
-
-  if (status === "loading") {
+  if (isPending) {
     return <FullScreenLoading />;
   }
 

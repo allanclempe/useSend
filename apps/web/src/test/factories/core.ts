@@ -19,6 +19,7 @@ export async function createUser(data?: Partial<UserInsert>) {
     .insert(schema.user)
     .values(
       withUpdatedAt({
+        name: `User ${n}`,
         email: `user-${n}@example.com`,
         isBetaUser: true,
         isWaitlisted: false,

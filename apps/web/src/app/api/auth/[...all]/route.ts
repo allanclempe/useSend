@@ -1,13 +1,20 @@
-import NextAuth from "next-auth";
+import { toNextJsHandler } from "better-auth/next-js";
 
-import { authOptions } from "~/server/auth";
+import { auth } from "~/server/auth";
 import { env } from "~/env";
 import { getRedis, redisKey } from "~/server/redis";
 import { logger } from "~/server/logger/log";
 
-const handler = NextAuth(authOptions);
+/**
+ * better-auth's endpoint that sends a sign-in code. This is the one that costs
+ * an email, so it is the one worth rate limiting — the NextAuth equivalent was
+ * `/signin/email`.
+ */
+const SEND_OTP_PATH = "/email-otp/send-verification-otp";
 
-export { handler as GET };
+const handler = toNextJsHandler(auth);
+
+export const { GET } = handler;
 
 function getClientIp(req: Request): string | null {
   const h = req.headers;
@@ -49,15 +56,15 @@ function getClientIp(req: Request): string | null {
   return ip || null;
 }
 
-export async function POST(req: Request, ctx: any) {
+export async function POST(req: Request) {
   if (env.AUTH_EMAIL_RATE_LIMIT > 0) {
     const url = new URL(req.url);
-    if (url.pathname.endsWith("/signin/email")) {
+    if (url.pathname.endsWith(SEND_OTP_PATH)) {
       try {
         const ip = getClientIp(req);
         if (!ip) {
           logger.warn("Auth email rate limit skipped: missing client IP");
-          return handler(req, ctx);
+          return handler.POST(req);
         }
         const redis = getRedis();
         const key = redisKey(`auth-rl:${ip}`);
@@ -81,5 +88,5 @@ export async function POST(req: Request, ctx: any) {
       }
     }
   }
-  return handler(req, ctx);
+  return handler.POST(req);
 }

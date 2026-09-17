@@ -1,6 +1,5 @@
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
-import { env } from "~/env";
 import { drizzleDb, schema } from "~/server/drizzle";
 
 /**
@@ -21,90 +20,12 @@ export class SelfHostedRegistrationError extends Error {
   }
 }
 
-/**
- * The parts of a provider account the gate needs. Narrower than NextAuth's
- * `Account` on purpose: this module is the half of `auth.ts` that outlives
- * NextAuth (issue #8), so it must not depend on NextAuth's types.
- */
-export type RegistrationAccount = {
-  provider: string;
-  providerAccountId: string;
-  type: string;
-};
-
 export type NewSelfHostedUser = {
+  email: string;
   name?: string | null;
-  email?: string | null;
-  emailVerified?: Date | null;
+  emailVerified?: boolean | null;
   image?: string | null;
 };
-
-/**
- * Cheap pre-check: may this identity register on a self-hosted installation?
- *
- * Advisory only. It reads outside any transaction, so a `true` here can be
- * stale by the time the row is written — {@link createSelfHostedUser} re-checks
- * under the advisory lock and is the actual gate.
- */
-export async function canRegisterSelfHostedUser(
-  email?: string | null,
-  account?: RegistrationAccount | null,
-) {
-  if (env.NEXT_PUBLIC_IS_CLOUD) {
-    return true;
-  }
-
-  if (account?.type === "oauth") {
-    const [existingAccount] = await drizzleDb
-      .select({ id: schema.account.id })
-      .from(schema.account)
-      .where(
-        and(
-          eq(schema.account.provider, account.provider),
-          eq(schema.account.providerAccountId, account.providerAccountId),
-        ),
-      )
-      .limit(1);
-
-    if (existingAccount) {
-      return true;
-    }
-  }
-
-  if (email) {
-    const [existingUser] = await drizzleDb
-      .select({ id: schema.user.id })
-      .from(schema.user)
-      .where(eq(schema.user.email, email))
-      .limit(1);
-
-    if (existingUser) {
-      return true;
-    }
-  }
-
-  const [registeredUser] = await drizzleDb
-    .select({ id: schema.user.id })
-    .from(schema.user)
-    .limit(1);
-
-  // An empty installation always allows its bootstrap account.
-  if (!registeredUser) {
-    return true;
-  }
-
-  if (!email) {
-    return false;
-  }
-
-  const [invite] = await drizzleDb
-    .select({ id: schema.teamInvite.id })
-    .from(schema.teamInvite)
-    .where(eq(schema.teamInvite.email, email))
-    .limit(1);
-
-  return Boolean(invite);
-}
 
 /**
  * Creates a user on a self-hosted installation, enforcing the invitation rule
@@ -113,6 +34,13 @@ export async function canRegisterSelfHostedUser(
  * Callers must have already established that this is not cloud mode; there is
  * no `NEXT_PUBLIC_IS_CLOUD` short-circuit here, because a caller that reaches
  * this function on cloud would silently get self-hosted semantics.
+ *
+ * This is the whole gate. NextAuth also ran a cheaper advisory check in its
+ * `signIn` callback, but that only ever blocked identities that were about to
+ * become new users — an existing user, or an existing linked account, passed it
+ * unconditionally. better-auth does not create a user for either of those, so
+ * gating creation covers exactly the same set with one query path instead of
+ * two that could disagree.
  *
  * @throws {SelfHostedRegistrationError} when the installation already has a
  * user and this email has no matching invitation.
@@ -131,11 +59,8 @@ export async function createSelfHostedUser(user: NewSelfHostedUser) {
       .from(schema.user)
       .limit(1);
 
+    // An empty installation always allows its bootstrap account.
     if (registeredUser) {
-      if (!user.email) {
-        throw new SelfHostedRegistrationError();
-      }
-
       const [invite] = await tx
         .select({ id: schema.teamInvite.id })
         .from(schema.teamInvite)
@@ -150,9 +75,9 @@ export async function createSelfHostedUser(user: NewSelfHostedUser) {
     const [created] = await tx
       .insert(schema.user)
       .values({
-        name: user.name ?? null,
-        email: user.email ?? null,
-        emailVerified: user.emailVerified ?? null,
+        name: user.name ?? "",
+        email: user.email,
+        emailVerified: user.emailVerified ?? false,
         image: user.image ?? null,
       })
       .returning();

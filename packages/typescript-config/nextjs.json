@@ -12,6 +12,14 @@
     "moduleResolution": "Bundler",
     "allowJs": true,
     "jsx": "preserve",
-    "noEmit": true
+    "noEmit": true,
+    // `base.json` turns declaration emit on for publishable packages. A config
+    // that also sets `noEmit` never produces those files, but TypeScript still
+    // enforces that every inferred exported type is *nameable* from the
+    // importer -- which fails for types reaching into a transitive dependency
+    // pnpm keeps out of the app's node_modules. Nothing consumes types from a
+    // Next.js app, so the check has nothing to protect here.
+    "declaration": false,
+    "declarationMap": false
   }
 }

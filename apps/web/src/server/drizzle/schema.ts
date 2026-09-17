@@ -4,7 +4,7 @@
 // fixups applied on top of drizzle-kit's output.
 /* eslint-disable */
 
-import { pgTable, varchar, timestamp, text, integer, uniqueIndex, boolean, foreignKey, index, jsonb, serial, primaryKey, bigint, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, varchar, timestamp, text, integer, index, serial, uniqueIndex, foreignKey, boolean, jsonb, primaryKey, bigint, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const apiPermission = pgEnum("ApiPermission", ['FULL', 'SENDING'])
@@ -20,61 +20,34 @@ export const webhookCallStatus = pgEnum("WebhookCallStatus", ['PENDING', 'IN_PRO
 export const webhookStatus = pgEnum("WebhookStatus", ['ACTIVE', 'PAUSED', 'AUTO_DISABLED'])
 
 
-export const appSetting = pgTable("AppSetting", {
-	key: text().primaryKey().notNull(),
-	value: text().notNull(),
-});
-
-export const sesSetting = pgTable("SesSetting", {
-	id: text().primaryKey().notNull(),
-	region: text().notNull(),
-	idPrefix: text().notNull(),
-	topic: text().notNull(),
-	topicArn: text(),
-	callbackUrl: text().notNull(),
-	callbackSuccess: boolean().default(false).notNull(),
-	configGeneral: text(),
-	configGeneralSuccess: boolean().default(false).notNull(),
-	configClick: text(),
-	configClickSuccess: boolean().default(false).notNull(),
-	configOpen: text(),
-	configOpenSuccess: boolean().default(false).notNull(),
-	configFull: text(),
-	configFullSuccess: boolean().default(false).notNull(),
-	sesEmailRateLimit: integer().default(1).notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-	transactionalQuota: integer().default(50).notNull(),
-}, (table) => [
-	uniqueIndex("SesSetting_idPrefix_key").using("btree", table.idPrefix.asc().nullsLast().op("text_ops")),
-	uniqueIndex("SesSetting_region_key").using("btree", table.region.asc().nullsLast().op("text_ops")),
-]);
-
-export const verificationToken = pgTable("VerificationToken", {
+export const verification = pgTable("Verification", {
+	id: serial().primaryKey().notNull(),
 	identifier: text().notNull(),
-	token: text().notNull(),
-	expires: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	value: text().notNull(),
+	expiresAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	uniqueIndex("VerificationToken_identifier_token_key").using("btree", table.identifier.asc().nullsLast().op("text_ops"), table.token.asc().nullsLast().op("text_ops")),
-	uniqueIndex("VerificationToken_token_key").using("btree", table.token.asc().nullsLast().op("text_ops")),
+	index("Verification_identifier_idx").using("btree", table.identifier.asc().nullsLast().op("text_ops")),
 ]);
 
 export const account = pgTable("Account", {
-	id: text().primaryKey().notNull(),
+	id: serial().primaryKey().notNull(),
+	accountId: text().notNull(),
+	providerId: text().notNull(),
 	userId: integer().notNull(),
-	type: text().notNull(),
-	provider: text().notNull(),
-	providerAccountId: text().notNull(),
-	refreshToken: text("refresh_token"),
-	accessToken: text("access_token"),
-	refreshTokenExpiresIn: integer("refresh_token_expires_in"),
-	expiresAt: integer("expires_at"),
-	tokenType: text("token_type"),
+	accessToken: text(),
+	refreshToken: text(),
+	idToken: text(),
+	accessTokenExpiresAt: timestamp({ precision: 3, mode: 'date' }),
+	refreshTokenExpiresAt: timestamp({ precision: 3, mode: 'date' }),
 	scope: text(),
-	idToken: text("id_token"),
-	sessionState: text("session_state"),
+	password: text(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	uniqueIndex("Account_provider_providerAccountId_key").using("btree", table.provider.asc().nullsLast().op("text_ops"), table.providerAccountId.asc().nullsLast().op("text_ops")),
+	uniqueIndex("Account_providerId_accountId_key").using("btree", table.providerId.asc().nullsLast().op("text_ops"), table.accountId.asc().nullsLast().op("text_ops")),
+	index("Account_userId_idx").using("btree", table.userId.asc().nullsLast().op("int4_ops")),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [user.id],
@@ -83,12 +56,17 @@ export const account = pgTable("Account", {
 ]);
 
 export const session = pgTable("Session", {
-	id: text().primaryKey().notNull(),
-	sessionToken: text().notNull(),
+	id: serial().primaryKey().notNull(),
+	token: text().notNull(),
 	userId: integer().notNull(),
-	expires: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	expiresAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	ipAddress: text(),
+	userAgent: text(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	uniqueIndex("Session_sessionToken_key").using("btree", table.sessionToken.asc().nullsLast().op("text_ops")),
+	uniqueIndex("Session_token_key").using("btree", table.token.asc().nullsLast().op("text_ops")),
+	index("Session_userId_idx").using("btree", table.userId.asc().nullsLast().op("int4_ops")),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [user.id],
@@ -114,217 +92,20 @@ export const teamUser = pgTable("TeamUser", {
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
-export const emailEvent = pgTable("EmailEvent", {
+export const suppressionList = pgTable("SuppressionList", {
 	id: text().primaryKey().notNull(),
-	emailId: text().notNull(),
-	status: emailStatus().notNull(),
-	data: jsonb(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	teamId: integer(),
-}, (table) => [
-	index("EmailEvent_createdAt_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamp_ops")),
-	index("EmailEvent_emailId_idx").using("btree", table.emailId.asc().nullsLast().op("text_ops")),
-	index("EmailEvent_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.emailId],
-			foreignColumns: [email.id],
-			name: "EmailEvent_emailId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-export const apiKey = pgTable("ApiKey", {
-	id: serial().primaryKey().notNull(),
-	clientId: text().notNull(),
-	tokenHash: text().notNull(),
-	partialToken: text().notNull(),
-	name: text().notNull(),
-	permission: apiPermission().default('SENDING').notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-	lastUsed: timestamp({ precision: 3, mode: 'date' }),
-	teamId: integer().notNull(),
-	domainId: integer(),
-}, (table) => [
-	uniqueIndex("ApiKey_clientId_key").using("btree", table.clientId.asc().nullsLast().op("text_ops")),
-	foreignKey({
-			columns: [table.teamId],
-			foreignColumns: [team.id],
-			name: "ApiKey_teamId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-	foreignKey({
-			columns: [table.domainId],
-			foreignColumns: [domain.id],
-			name: "ApiKey_domainId_fkey"
-		}).onUpdate("cascade").onDelete("set null"),
-]);
-
-export const email = pgTable("Email", {
-	id: text().primaryKey().notNull(),
-	sesEmailId: text(),
-	from: text().notNull(),
-	to: text().array().default([]).notNull(),
-	replyTo: text().array().default([]).notNull(),
-	cc: text().array().default([]).notNull(),
-	bcc: text().array().default([]).notNull(),
-	subject: text().notNull(),
-	text: text(),
-	html: text(),
-	latestStatus: emailStatus().default('QUEUED').notNull(),
-	teamId: integer().notNull(),
-	domainId: integer(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-	attachments: text(),
-	campaignId: text(),
-	contactId: text(),
-	scheduledAt: timestamp({ precision: 3, mode: 'date' }),
-	apiId: integer(),
-	inReplyToId: text(),
-	headers: text(),
-}, (table) => [
-	index("Email_campaignId_contactId_idx").using("btree", table.campaignId.asc().nullsLast().op("text_ops"), table.contactId.asc().nullsLast().op("text_ops")),
-	index("Email_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
-	uniqueIndex("Email_sesEmailId_key").using("btree", table.sesEmailId.asc().nullsLast().op("text_ops")),
-	foreignKey({
-			columns: [table.teamId],
-			foreignColumns: [team.id],
-			name: "Email_teamId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-export const user = pgTable("User", {
-	id: serial().primaryKey().notNull(),
-	name: text(),
-	email: text(),
-	emailVerified: timestamp({ precision: 3, mode: 'date' }),
-	image: text(),
-	isBetaUser: boolean().default(false).notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	isWaitlisted: boolean().default(false).notNull(),
-}, (table) => [
-	uniqueIndex("User_email_key").using("btree", table.email.asc().nullsLast().op("text_ops")),
-]);
-
-export const domain = pgTable("Domain", {
-	id: serial().primaryKey().notNull(),
-	name: text().notNull(),
-	teamId: integer().notNull(),
-	status: domainStatus().default('PENDING').notNull(),
-	region: text().default('us-east-1').notNull(),
-	clickTracking: boolean().default(false).notNull(),
-	openTracking: boolean().default(false).notNull(),
-	publicKey: text().notNull(),
-	dkimStatus: text(),
-	spfDetails: text(),
-	dmarcAdded: boolean().default(false).notNull(),
-	errorMessage: text(),
-	subdomain: text(),
-	isVerifying: boolean().default(false).notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-	sesTenantId: text(),
-	dkimSelector: text().default('usesend'),
-}, (table) => [
-	uniqueIndex("Domain_name_key").using("btree", table.name.asc().nullsLast().op("text_ops")),
-	foreignKey({
-			columns: [table.teamId],
-			foreignColumns: [team.id],
-			name: "Domain_teamId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-export const team = pgTable("Team", {
-	id: serial().primaryKey().notNull(),
-	name: text().notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-	plan: plan().default('FREE').notNull(),
-	stripeCustomerId: text(),
-	billingEmail: text(),
-	isActive: boolean().default(true).notNull(),
-	apiRateLimit: integer().default(2).notNull(),
-	sesTenantId: text(),
-	dailyEmailLimit: integer().default(10000).notNull(),
-	isBlocked: boolean().default(false).notNull(),
-	isVerified: boolean().default(false).notNull(),
-}, (table) => [
-	uniqueIndex("Team_stripeCustomerId_key").using("btree", table.stripeCustomerId.asc().nullsLast().op("text_ops")),
-]);
-
-export const contactBook = pgTable("ContactBook", {
-	id: text().primaryKey().notNull(),
-	name: text().notNull(),
-	teamId: integer().notNull(),
-	properties: jsonb().notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-	emoji: text().default('📙').notNull(),
-	doubleOptInEnabled: boolean().default(false).notNull(),
-	doubleOptInSubject: text(),
-	doubleOptInContent: text(),
-	variables: text().array().default([]).notNull(),
-	doubleOptInFrom: text(),
-}, (table) => [
-	index("ContactBook_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.teamId],
-			foreignColumns: [team.id],
-			name: "ContactBook_teamId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-export const contact = pgTable("Contact", {
-	id: text().primaryKey().notNull(),
-	firstName: text(),
-	lastName: text(),
 	email: text().notNull(),
-	subscribed: boolean().default(true).notNull(),
-	properties: jsonb().notNull(),
-	contactBookId: text().notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-	unsubscribeReason: unsubscribeReason(),
-}, (table) => [
-	uniqueIndex("Contact_contactBookId_email_key").using("btree", table.contactBookId.asc().nullsLast().op("text_ops"), table.email.asc().nullsLast().op("text_ops")),
-	index("Contact_contactBookId_id_idx").using("btree", table.contactBookId.asc().nullsLast().op("text_ops"), table.id.asc().nullsLast().op("text_ops")),
-	foreignKey({
-			columns: [table.contactBookId],
-			foreignColumns: [contactBook.id],
-			name: "Contact_contactBookId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-export const template = pgTable("Template", {
-	id: text().primaryKey().notNull(),
-	name: text().notNull(),
 	teamId: integer().notNull(),
-	subject: text().notNull(),
-	html: text(),
-	content: text(),
+	reason: suppressionReason().notNull(),
+	source: text(),
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 }, (table) => [
-	index("Template_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
+	uniqueIndex("SuppressionList_teamId_email_key").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.email.asc().nullsLast().op("int4_ops")),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
-			name: "Template_teamId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-export const teamInvite = pgTable("TeamInvite", {
-	id: text().primaryKey().notNull(),
-	teamId: integer().notNull(),
-	email: text().notNull(),
-	role: role().notNull(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-}, (table) => [
-	uniqueIndex("TeamInvite_teamId_email_key").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.email.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.teamId],
-			foreignColumns: [team.id],
-			name: "TeamInvite_teamId_fkey"
+			name: "SuppressionList_teamId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
@@ -345,23 +126,6 @@ export const subscription = pgTable("Subscription", {
 			columns: [table.teamId],
 			foreignColumns: [team.id],
 			name: "Subscription_teamId_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-]);
-
-export const suppressionList = pgTable("SuppressionList", {
-	id: text().primaryKey().notNull(),
-	email: text().notNull(),
-	teamId: integer().notNull(),
-	reason: suppressionReason().notNull(),
-	source: text(),
-	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
-}, (table) => [
-	uniqueIndex("SuppressionList_teamId_email_key").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.email.asc().nullsLast().op("int4_ops")),
-	foreignKey({
-			columns: [table.teamId],
-			foreignColumns: [team.id],
-			name: "SuppressionList_teamId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
@@ -407,6 +171,59 @@ export const campaign = pgTable("Campaign", {
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
+export const domain = pgTable("Domain", {
+	id: serial().primaryKey().notNull(),
+	name: text().notNull(),
+	teamId: integer().notNull(),
+	status: domainStatus().default('PENDING').notNull(),
+	region: text().default('us-east-1').notNull(),
+	clickTracking: boolean().default(false).notNull(),
+	openTracking: boolean().default(false).notNull(),
+	publicKey: text().notNull(),
+	dkimStatus: text(),
+	spfDetails: text(),
+	dmarcAdded: boolean().default(false).notNull(),
+	errorMessage: text(),
+	subdomain: text(),
+	isVerifying: boolean().default(false).notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	sesTenantId: text(),
+	dkimSelector: text().default('usesend'),
+}, (table) => [
+	uniqueIndex("Domain_name_key").using("btree", table.name.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.teamId],
+			foreignColumns: [team.id],
+			name: "Domain_teamId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const sesSetting = pgTable("SesSetting", {
+	id: text().primaryKey().notNull(),
+	region: text().notNull(),
+	idPrefix: text().notNull(),
+	topic: text().notNull(),
+	topicArn: text(),
+	callbackUrl: text().notNull(),
+	callbackSuccess: boolean().default(false).notNull(),
+	configGeneral: text(),
+	configGeneralSuccess: boolean().default(false).notNull(),
+	configClick: text(),
+	configClickSuccess: boolean().default(false).notNull(),
+	configOpen: text(),
+	configOpenSuccess: boolean().default(false).notNull(),
+	configFull: text(),
+	configFullSuccess: boolean().default(false).notNull(),
+	sesEmailRateLimit: integer().default(1).notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	transactionalQuota: integer().default(50).notNull(),
+}, (table) => [
+	uniqueIndex("SesSetting_idPrefix_key").using("btree", table.idPrefix.asc().nullsLast().op("text_ops")),
+	uniqueIndex("SesSetting_region_key").using("btree", table.region.asc().nullsLast().op("text_ops")),
+]);
+
 export const webhookCall = pgTable("WebhookCall", {
 	id: text().primaryKey().notNull(),
 	webhookId: text().notNull(),
@@ -434,6 +251,27 @@ export const webhookCall = pgTable("WebhookCall", {
 			columns: [table.teamId],
 			foreignColumns: [team.id],
 			name: "WebhookCall_teamId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const contact = pgTable("Contact", {
+	id: text().primaryKey().notNull(),
+	firstName: text(),
+	lastName: text(),
+	email: text().notNull(),
+	subscribed: boolean().default(true).notNull(),
+	properties: jsonb().notNull(),
+	contactBookId: text().notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	unsubscribeReason: unsubscribeReason(),
+}, (table) => [
+	uniqueIndex("Contact_contactBookId_email_key").using("btree", table.contactBookId.asc().nullsLast().op("text_ops"), table.email.asc().nullsLast().op("text_ops")),
+	index("Contact_contactBookId_id_idx").using("btree", table.contactBookId.asc().nullsLast().op("text_ops"), table.id.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.contactBookId],
+			foreignColumns: [contactBook.id],
+			name: "Contact_contactBookId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
@@ -465,6 +303,177 @@ export const webhook = pgTable("Webhook", {
 			foreignColumns: [user.id],
 			name: "Webhook_createdByUserId_fkey"
 		}).onUpdate("cascade").onDelete("set null"),
+]);
+
+export const emailEvent = pgTable("EmailEvent", {
+	id: text().primaryKey().notNull(),
+	emailId: text().notNull(),
+	status: emailStatus().notNull(),
+	data: jsonb(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	teamId: integer(),
+}, (table) => [
+	index("EmailEvent_createdAt_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamp_ops")),
+	index("EmailEvent_emailId_idx").using("btree", table.emailId.asc().nullsLast().op("text_ops")),
+	index("EmailEvent_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.emailId],
+			foreignColumns: [email.id],
+			name: "EmailEvent_emailId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const email = pgTable("Email", {
+	id: text().primaryKey().notNull(),
+	sesEmailId: text(),
+	from: text().notNull(),
+	to: text().array().default([]).notNull(),
+	replyTo: text().array().default([]).notNull(),
+	cc: text().array().default([]).notNull(),
+	bcc: text().array().default([]).notNull(),
+	subject: text().notNull(),
+	text: text(),
+	html: text(),
+	latestStatus: emailStatus().default('QUEUED').notNull(),
+	teamId: integer().notNull(),
+	domainId: integer(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	attachments: text(),
+	campaignId: text(),
+	contactId: text(),
+	scheduledAt: timestamp({ precision: 3, mode: 'date' }),
+	apiId: integer(),
+	inReplyToId: text(),
+	headers: text(),
+}, (table) => [
+	index("Email_campaignId_contactId_idx").using("btree", table.campaignId.asc().nullsLast().op("text_ops"), table.contactId.asc().nullsLast().op("text_ops")),
+	index("Email_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
+	uniqueIndex("Email_sesEmailId_key").using("btree", table.sesEmailId.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.teamId],
+			foreignColumns: [team.id],
+			name: "Email_teamId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const template = pgTable("Template", {
+	id: text().primaryKey().notNull(),
+	name: text().notNull(),
+	teamId: integer().notNull(),
+	subject: text().notNull(),
+	html: text(),
+	content: text(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+}, (table) => [
+	index("Template_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
+	foreignKey({
+			columns: [table.teamId],
+			foreignColumns: [team.id],
+			name: "Template_teamId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const teamInvite = pgTable("TeamInvite", {
+	id: text().primaryKey().notNull(),
+	teamId: integer().notNull(),
+	email: text().notNull(),
+	role: role().notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+}, (table) => [
+	uniqueIndex("TeamInvite_teamId_email_key").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.email.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.teamId],
+			foreignColumns: [team.id],
+			name: "TeamInvite_teamId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const apiKey = pgTable("ApiKey", {
+	id: serial().primaryKey().notNull(),
+	clientId: text().notNull(),
+	tokenHash: text().notNull(),
+	partialToken: text().notNull(),
+	name: text().notNull(),
+	permission: apiPermission().default('SENDING').notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	lastUsed: timestamp({ precision: 3, mode: 'date' }),
+	teamId: integer().notNull(),
+	domainId: integer(),
+}, (table) => [
+	uniqueIndex("ApiKey_clientId_key").using("btree", table.clientId.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.teamId],
+			foreignColumns: [team.id],
+			name: "ApiKey_teamId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.domainId],
+			foreignColumns: [domain.id],
+			name: "ApiKey_domainId_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
+]);
+
+export const appSetting = pgTable("AppSetting", {
+	key: text().primaryKey().notNull(),
+	value: text().notNull(),
+});
+
+export const team = pgTable("Team", {
+	id: serial().primaryKey().notNull(),
+	name: text().notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	plan: plan().default('FREE').notNull(),
+	stripeCustomerId: text(),
+	billingEmail: text(),
+	isActive: boolean().default(true).notNull(),
+	apiRateLimit: integer().default(2).notNull(),
+	sesTenantId: text(),
+	dailyEmailLimit: integer().default(10000).notNull(),
+	isBlocked: boolean().default(false).notNull(),
+	isVerified: boolean().default(false).notNull(),
+}, (table) => [
+	uniqueIndex("Team_stripeCustomerId_key").using("btree", table.stripeCustomerId.asc().nullsLast().op("text_ops")),
+]);
+
+export const contactBook = pgTable("ContactBook", {
+	id: text().primaryKey().notNull(),
+	name: text().notNull(),
+	teamId: integer().notNull(),
+	properties: jsonb().notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
+	emoji: text().default('📙').notNull(),
+	doubleOptInEnabled: boolean().default(false).notNull(),
+	doubleOptInSubject: text(),
+	doubleOptInContent: text(),
+	variables: text().array().default([]).notNull(),
+	doubleOptInFrom: text(),
+}, (table) => [
+	index("ContactBook_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
+	foreignKey({
+			columns: [table.teamId],
+			foreignColumns: [team.id],
+			name: "ContactBook_teamId_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+]);
+
+export const user = pgTable("User", {
+	id: serial().primaryKey().notNull(),
+	name: text().notNull(),
+	email: text().notNull(),
+	image: text(),
+	isBetaUser: boolean().default(false).notNull(),
+	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	isWaitlisted: boolean().default(false).notNull(),
+	emailVerified: boolean().default(false).notNull(),
+	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+	uniqueIndex("User_email_key").using("btree", table.email.asc().nullsLast().op("text_ops")),
 ]);
 
 export const campaignEmail = pgTable("CampaignEmail", {
