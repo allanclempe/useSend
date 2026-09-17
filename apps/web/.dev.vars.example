@@ -30,3 +30,10 @@ API_KEY_HMAC_SECRET=""
 # matches a deploy. Generate one with:
 #   openssl rand -base64 32
 BETTER_AUTH_SECRET=""
+
+# Turns on email sign-in. `getEnabledAuthProviders()` reads it as a boolean --
+# with no value, and no GitHub or Google credentials either, the login page
+# renders with no way to sign in at all, which is a confusing first five
+# minutes. In development `sendSignUpEmail` logs the code instead of sending
+# it, so any address will do.
+FROM_EMAIL="hello@localhost.test"

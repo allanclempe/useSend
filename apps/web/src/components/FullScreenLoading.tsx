@@ -1,12 +1,15 @@
-import { useTheme } from "@usesend/ui";
-import Image from "next/image";
-
+/**
+ * The splash shown while the session and the team are still resolving.
+ *
+ * A plain `<img>` rather than `next/image`: it is one 45px logo from `public/`,
+ * so the srcset and lazy-loading machinery bought nothing, and the component
+ * is now loadable from either framework (#9).
+ */
 export const FullScreenLoading = () => {
-  const { resolvedTheme } = useTheme();
   return (
-    <div className="flex items-center justify-center min-h-screen">
-      <Image
-        src={"/logo-squircle.png"}
+    <div className="flex min-h-screen items-center justify-center">
+      <img
+        src="/logo-squircle.png"
         alt="useSend"
         width={45}
         height={45}

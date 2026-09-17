@@ -172,6 +172,43 @@ To exercise a Cron Trigger locally, POST the expression to the dev server —
 curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
 ```
 
+## The dashboard (TanStack Start)
+
+Four directories, and which one a file belongs in follows from who is allowed to call it.
+
+- **`src/routes/`** — the URL tree. File-based; `src/routeTree.gen.ts` is generated and
+  committed so `tsc` works without running Vite. A file whose name starts with `-` is *not*
+  a route, which is how a page's own components sit next to it
+  (`routes/login/-login-page.tsx`). `_dashboard.tsx` is a pathless layout: it holds the
+  sign-in gate and the chrome, and its children keep the URLs they had.
+- **`src/server/functions/<area>.ts`** — one module per former tRPC router. Every function is
+  `createServerFn(...)` behind middleware from `functions/middleware.ts`.
+- **`src/queries/<area>.ts`** — `queryOptions` factories and a key namespace.
+  `<area>Keys.all` is the prefix of every other key in the area, because that is what
+  `api.useUtils().<router>.invalidate()` used to be. A key written inline at a call site is a
+  key that will eventually disagree with the one that wrote the cache entry.
+- **`src/server/authorization.ts`** — the rules the middleware enforces, with no framework in
+  them, so they can be read and tested without building a request.
+
+Rules that are not style:
+
+- **Take `teamId` from `context`, never from input.** The middleware ladder is the
+  authorisation boundary; a handler that reads a team id the caller sent has walked around it.
+- **A resource middleware contributes its own validator field.** `domainMiddleware` means the
+  function takes `{ id: number }`; do not redeclare it in the function's own `.validator()`.
+- **`.validator()`, not `.inputValidator()`** — the latter is deprecated in this version.
+- **Queries get a `queryOptions` factory; mutations are called directly** by the component
+  through `useMutation({ mutationFn })`, invalidating with a key from the area's `queries/`
+  module.
+- **`beforeLoad` runs on the server during SSR**, so a `redirect()` thrown there is a real
+  HTTP redirect on the first request and a client navigation afterwards. That is where a gate
+  belongs — not in a component that renders a login form at someone else's URL.
+- Errors are `AppError` from `~/server/app-error`. Only the message crosses the wire.
+
+While the migration runs, a dashboard area that has not moved renders `NotPortedYet` and is
+still served by Next.js at `pnpm dev`. The number of files importing that component is how
+much of #9 is left.
+
 ## Coding Style & Naming Conventions
 
 - Files: React components PascalCase (e.g., `AppSideBar.tsx`); folders kebab/lowercase.

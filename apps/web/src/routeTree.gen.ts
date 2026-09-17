@@ -10,52 +10,459 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DashboardRouteImport } from './routes/_dashboard'
+import { Route as JoinTeamRouteImport } from './routes/join-team'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as WaitListRouteImport } from './routes/wait-list'
+import { Route as DashboardDashboardRouteImport } from './routes/_dashboard/dashboard'
+import { Route as DashboardPaymentsRouteImport } from './routes/_dashboard/payments'
+import { Route as DashboardSuppressionsRouteImport } from './routes/_dashboard/suppressions'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
+import { Route as LoginIndexRouteImport } from './routes/login/index'
+import { Route as LoginVerifyRouteImport } from './routes/login/verify'
+import { Route as DashboardAdminIndexRouteImport } from './routes/_dashboard/admin/index'
+import { Route as DashboardAdminEmailAnalyticsRouteImport } from './routes/_dashboard/admin/email-analytics'
+import { Route as DashboardAdminTeamsRouteImport } from './routes/_dashboard/admin/teams'
+import { Route as DashboardAdminWaitlistRouteImport } from './routes/_dashboard/admin/waitlist'
+import { Route as DashboardCampaignsIndexRouteImport } from './routes/_dashboard/campaigns/index'
+import { Route as DashboardContactsIndexRouteImport } from './routes/_dashboard/contacts/index'
+import { Route as DashboardDevSettingsIndexRouteImport } from './routes/_dashboard/dev-settings/index'
+import { Route as DashboardDevSettingsApiKeysRouteImport } from './routes/_dashboard/dev-settings/api-keys'
+import { Route as DashboardDevSettingsSmtpRouteImport } from './routes/_dashboard/dev-settings/smtp'
+import { Route as DashboardDomainsIndexRouteImport } from './routes/_dashboard/domains/index'
+import { Route as DashboardDomainsDomainIdRouteImport } from './routes/_dashboard/domains/$domainId'
+import { Route as DashboardEmailsIndexRouteImport } from './routes/_dashboard/emails/index'
+import { Route as DashboardSettingsIndexRouteImport } from './routes/_dashboard/settings/index'
+import { Route as DashboardSettingsBillingRouteImport } from './routes/_dashboard/settings/billing'
+import { Route as DashboardSettingsTeamRouteImport } from './routes/_dashboard/settings/team'
+import { Route as DashboardTemplatesIndexRouteImport } from './routes/_dashboard/templates/index'
+import { Route as DashboardWebhooksIndexRouteImport } from './routes/_dashboard/webhooks/index'
+import { Route as DashboardWebhooksWebhookIdRouteImport } from './routes/_dashboard/webhooks/$webhookId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as DashboardCampaignsCampaignIdIndexRouteImport } from './routes/_dashboard/campaigns/$campaignId/index'
+import { Route as DashboardCampaignsCampaignIdEditRouteImport } from './routes/_dashboard/campaigns/$campaignId/edit'
+import { Route as DashboardContactsContactBookIdIndexRouteImport } from './routes/_dashboard/contacts/$contactBookId/index'
+import { Route as DashboardContactsContactBookIdDoubleOptInRouteImport } from './routes/_dashboard/contacts/$contactBookId/double-opt-in'
+import { Route as DashboardTemplatesTemplateIdEditRouteImport } from './routes/_dashboard/templates/$templateId/edit'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/_dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JoinTeamRoute = JoinTeamRouteImport.update({
+  id: '/join-team',
+  path: '/join-team',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WaitListRoute = WaitListRouteImport.update({
+  id: '/wait-list',
+  path: '/wait-list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardDashboardRoute = DashboardDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
+  id: '/payments',
+  path: '/payments',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardSuppressionsRoute = DashboardSuppressionsRouteImport.update({
+  id: '/suppressions',
+  path: '/suppressions',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginIndexRoute = LoginIndexRouteImport.update({
+  id: '/login/',
+  path: '/login/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginVerifyRoute = LoginVerifyRouteImport.update({
+  id: '/login/verify',
+  path: '/login/verify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardAdminIndexRoute = DashboardAdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardAdminEmailAnalyticsRoute =
+  DashboardAdminEmailAnalyticsRouteImport.update({
+    id: '/admin/email-analytics',
+    path: '/admin/email-analytics',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardAdminTeamsRoute = DashboardAdminTeamsRouteImport.update({
+  id: '/admin/teams',
+  path: '/admin/teams',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardAdminWaitlistRoute = DashboardAdminWaitlistRouteImport.update({
+  id: '/admin/waitlist',
+  path: '/admin/waitlist',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardCampaignsIndexRoute = DashboardCampaignsIndexRouteImport.update({
+  id: '/campaigns/',
+  path: '/campaigns/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardContactsIndexRoute = DashboardContactsIndexRouteImport.update({
+  id: '/contacts/',
+  path: '/contacts/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardDevSettingsIndexRoute =
+  DashboardDevSettingsIndexRouteImport.update({
+    id: '/dev-settings/',
+    path: '/dev-settings/',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardDevSettingsApiKeysRoute =
+  DashboardDevSettingsApiKeysRouteImport.update({
+    id: '/dev-settings/api-keys',
+    path: '/dev-settings/api-keys',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardDevSettingsSmtpRoute =
+  DashboardDevSettingsSmtpRouteImport.update({
+    id: '/dev-settings/smtp',
+    path: '/dev-settings/smtp',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardDomainsIndexRoute = DashboardDomainsIndexRouteImport.update({
+  id: '/domains/',
+  path: '/domains/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardDomainsDomainIdRoute =
+  DashboardDomainsDomainIdRouteImport.update({
+    id: '/domains/$domainId',
+    path: '/domains/$domainId',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardEmailsIndexRoute = DashboardEmailsIndexRouteImport.update({
+  id: '/emails/',
+  path: '/emails/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardSettingsIndexRoute = DashboardSettingsIndexRouteImport.update({
+  id: '/settings/',
+  path: '/settings/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardSettingsBillingRoute =
+  DashboardSettingsBillingRouteImport.update({
+    id: '/settings/billing',
+    path: '/settings/billing',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardSettingsTeamRoute = DashboardSettingsTeamRouteImport.update({
+  id: '/settings/team',
+  path: '/settings/team',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardTemplatesIndexRoute = DashboardTemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardWebhooksIndexRoute = DashboardWebhooksIndexRouteImport.update({
+  id: '/webhooks/',
+  path: '/webhooks/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardWebhooksWebhookIdRoute =
+  DashboardWebhooksWebhookIdRouteImport.update({
+    id: '/webhooks/$webhookId',
+    path: '/webhooks/$webhookId',
+    getParentRoute: () => DashboardRoute,
+  } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardCampaignsCampaignIdIndexRoute =
+  DashboardCampaignsCampaignIdIndexRouteImport.update({
+    id: '/campaigns/$campaignId/',
+    path: '/campaigns/$campaignId/',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardCampaignsCampaignIdEditRoute =
+  DashboardCampaignsCampaignIdEditRouteImport.update({
+    id: '/campaigns/$campaignId/edit',
+    path: '/campaigns/$campaignId/edit',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardContactsContactBookIdIndexRoute =
+  DashboardContactsContactBookIdIndexRouteImport.update({
+    id: '/contacts/$contactBookId/',
+    path: '/contacts/$contactBookId/',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardContactsContactBookIdDoubleOptInRoute =
+  DashboardContactsContactBookIdDoubleOptInRouteImport.update({
+    id: '/contacts/$contactBookId/double-opt-in',
+    path: '/contacts/$contactBookId/double-opt-in',
+    getParentRoute: () => DashboardRoute,
+  } as any)
+const DashboardTemplatesTemplateIdEditRoute =
+  DashboardTemplatesTemplateIdEditRouteImport.update({
+    id: '/templates/$templateId/edit',
+    path: '/templates/$templateId/edit',
+    getParentRoute: () => DashboardRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/join-team': typeof JoinTeamRoute
+  '/signup': typeof SignupRoute
+  '/wait-list': typeof WaitListRoute
+  '/dashboard': typeof DashboardDashboardRoute
+  '/payments': typeof DashboardPaymentsRoute
+  '/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
+  '/login/verify': typeof LoginVerifyRoute
+  '/login/': typeof LoginIndexRoute
+  '/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
+  '/admin/teams': typeof DashboardAdminTeamsRoute
+  '/admin/waitlist': typeof DashboardAdminWaitlistRoute
+  '/dev-settings/api-keys': typeof DashboardDevSettingsApiKeysRoute
+  '/dev-settings/smtp': typeof DashboardDevSettingsSmtpRoute
+  '/domains/$domainId': typeof DashboardDomainsDomainIdRoute
+  '/settings/billing': typeof DashboardSettingsBillingRoute
+  '/settings/team': typeof DashboardSettingsTeamRoute
+  '/webhooks/$webhookId': typeof DashboardWebhooksWebhookIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/admin/': typeof DashboardAdminIndexRoute
+  '/campaigns/': typeof DashboardCampaignsIndexRoute
+  '/contacts/': typeof DashboardContactsIndexRoute
+  '/dev-settings/': typeof DashboardDevSettingsIndexRoute
+  '/domains/': typeof DashboardDomainsIndexRoute
+  '/emails/': typeof DashboardEmailsIndexRoute
+  '/settings/': typeof DashboardSettingsIndexRoute
+  '/templates/': typeof DashboardTemplatesIndexRoute
+  '/webhooks/': typeof DashboardWebhooksIndexRoute
+  '/campaigns/$campaignId/edit': typeof DashboardCampaignsCampaignIdEditRoute
+  '/contacts/$contactBookId/double-opt-in': typeof DashboardContactsContactBookIdDoubleOptInRoute
+  '/templates/$templateId/edit': typeof DashboardTemplatesTemplateIdEditRoute
+  '/campaigns/$campaignId/': typeof DashboardCampaignsCampaignIdIndexRoute
+  '/contacts/$contactBookId/': typeof DashboardContactsContactBookIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/join-team': typeof JoinTeamRoute
+  '/signup': typeof SignupRoute
+  '/wait-list': typeof WaitListRoute
+  '/dashboard': typeof DashboardDashboardRoute
+  '/payments': typeof DashboardPaymentsRoute
+  '/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
+  '/login/verify': typeof LoginVerifyRoute
+  '/login': typeof LoginIndexRoute
+  '/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
+  '/admin/teams': typeof DashboardAdminTeamsRoute
+  '/admin/waitlist': typeof DashboardAdminWaitlistRoute
+  '/dev-settings/api-keys': typeof DashboardDevSettingsApiKeysRoute
+  '/dev-settings/smtp': typeof DashboardDevSettingsSmtpRoute
+  '/domains/$domainId': typeof DashboardDomainsDomainIdRoute
+  '/settings/billing': typeof DashboardSettingsBillingRoute
+  '/settings/team': typeof DashboardSettingsTeamRoute
+  '/webhooks/$webhookId': typeof DashboardWebhooksWebhookIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/admin': typeof DashboardAdminIndexRoute
+  '/campaigns': typeof DashboardCampaignsIndexRoute
+  '/contacts': typeof DashboardContactsIndexRoute
+  '/dev-settings': typeof DashboardDevSettingsIndexRoute
+  '/domains': typeof DashboardDomainsIndexRoute
+  '/emails': typeof DashboardEmailsIndexRoute
+  '/settings': typeof DashboardSettingsIndexRoute
+  '/templates': typeof DashboardTemplatesIndexRoute
+  '/webhooks': typeof DashboardWebhooksIndexRoute
+  '/campaigns/$campaignId/edit': typeof DashboardCampaignsCampaignIdEditRoute
+  '/contacts/$contactBookId/double-opt-in': typeof DashboardContactsContactBookIdDoubleOptInRoute
+  '/templates/$templateId/edit': typeof DashboardTemplatesTemplateIdEditRoute
+  '/campaigns/$campaignId': typeof DashboardCampaignsCampaignIdIndexRoute
+  '/contacts/$contactBookId': typeof DashboardContactsContactBookIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_dashboard': typeof DashboardRouteWithChildren
+  '/join-team': typeof JoinTeamRoute
+  '/signup': typeof SignupRoute
+  '/wait-list': typeof WaitListRoute
+  '/_dashboard/dashboard': typeof DashboardDashboardRoute
+  '/_dashboard/payments': typeof DashboardPaymentsRoute
+  '/_dashboard/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
+  '/login/verify': typeof LoginVerifyRoute
+  '/login/': typeof LoginIndexRoute
+  '/_dashboard/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
+  '/_dashboard/admin/teams': typeof DashboardAdminTeamsRoute
+  '/_dashboard/admin/waitlist': typeof DashboardAdminWaitlistRoute
+  '/_dashboard/dev-settings/api-keys': typeof DashboardDevSettingsApiKeysRoute
+  '/_dashboard/dev-settings/smtp': typeof DashboardDevSettingsSmtpRoute
+  '/_dashboard/domains/$domainId': typeof DashboardDomainsDomainIdRoute
+  '/_dashboard/settings/billing': typeof DashboardSettingsBillingRoute
+  '/_dashboard/settings/team': typeof DashboardSettingsTeamRoute
+  '/_dashboard/webhooks/$webhookId': typeof DashboardWebhooksWebhookIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/_dashboard/admin/': typeof DashboardAdminIndexRoute
+  '/_dashboard/campaigns/': typeof DashboardCampaignsIndexRoute
+  '/_dashboard/contacts/': typeof DashboardContactsIndexRoute
+  '/_dashboard/dev-settings/': typeof DashboardDevSettingsIndexRoute
+  '/_dashboard/domains/': typeof DashboardDomainsIndexRoute
+  '/_dashboard/emails/': typeof DashboardEmailsIndexRoute
+  '/_dashboard/settings/': typeof DashboardSettingsIndexRoute
+  '/_dashboard/templates/': typeof DashboardTemplatesIndexRoute
+  '/_dashboard/webhooks/': typeof DashboardWebhooksIndexRoute
+  '/_dashboard/campaigns/$campaignId/edit': typeof DashboardCampaignsCampaignIdEditRoute
+  '/_dashboard/contacts/$contactBookId/double-opt-in': typeof DashboardContactsContactBookIdDoubleOptInRoute
+  '/_dashboard/templates/$templateId/edit': typeof DashboardTemplatesTemplateIdEditRoute
+  '/_dashboard/campaigns/$campaignId/': typeof DashboardCampaignsCampaignIdIndexRoute
+  '/_dashboard/contacts/$contactBookId/': typeof DashboardContactsContactBookIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/health' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/join-team'
+    | '/signup'
+    | '/wait-list'
+    | '/dashboard'
+    | '/payments'
+    | '/suppressions'
+    | '/api/health'
+    | '/login/verify'
+    | '/login/'
+    | '/admin/email-analytics'
+    | '/admin/teams'
+    | '/admin/waitlist'
+    | '/dev-settings/api-keys'
+    | '/dev-settings/smtp'
+    | '/domains/$domainId'
+    | '/settings/billing'
+    | '/settings/team'
+    | '/webhooks/$webhookId'
+    | '/api/auth/$'
+    | '/admin/'
+    | '/campaigns/'
+    | '/contacts/'
+    | '/dev-settings/'
+    | '/domains/'
+    | '/emails/'
+    | '/settings/'
+    | '/templates/'
+    | '/webhooks/'
+    | '/campaigns/$campaignId/edit'
+    | '/contacts/$contactBookId/double-opt-in'
+    | '/templates/$templateId/edit'
+    | '/campaigns/$campaignId/'
+    | '/contacts/$contactBookId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/health' | '/api/auth/$'
-  id: '__root__' | '/' | '/api/health' | '/api/auth/$'
+  to:
+    | '/'
+    | '/join-team'
+    | '/signup'
+    | '/wait-list'
+    | '/dashboard'
+    | '/payments'
+    | '/suppressions'
+    | '/api/health'
+    | '/login/verify'
+    | '/login'
+    | '/admin/email-analytics'
+    | '/admin/teams'
+    | '/admin/waitlist'
+    | '/dev-settings/api-keys'
+    | '/dev-settings/smtp'
+    | '/domains/$domainId'
+    | '/settings/billing'
+    | '/settings/team'
+    | '/webhooks/$webhookId'
+    | '/api/auth/$'
+    | '/admin'
+    | '/campaigns'
+    | '/contacts'
+    | '/dev-settings'
+    | '/domains'
+    | '/emails'
+    | '/settings'
+    | '/templates'
+    | '/webhooks'
+    | '/campaigns/$campaignId/edit'
+    | '/contacts/$contactBookId/double-opt-in'
+    | '/templates/$templateId/edit'
+    | '/campaigns/$campaignId'
+    | '/contacts/$contactBookId'
+  id:
+    | '__root__'
+    | '/'
+    | '/_dashboard'
+    | '/join-team'
+    | '/signup'
+    | '/wait-list'
+    | '/_dashboard/dashboard'
+    | '/_dashboard/payments'
+    | '/_dashboard/suppressions'
+    | '/api/health'
+    | '/login/verify'
+    | '/login/'
+    | '/_dashboard/admin/email-analytics'
+    | '/_dashboard/admin/teams'
+    | '/_dashboard/admin/waitlist'
+    | '/_dashboard/dev-settings/api-keys'
+    | '/_dashboard/dev-settings/smtp'
+    | '/_dashboard/domains/$domainId'
+    | '/_dashboard/settings/billing'
+    | '/_dashboard/settings/team'
+    | '/_dashboard/webhooks/$webhookId'
+    | '/api/auth/$'
+    | '/_dashboard/admin/'
+    | '/_dashboard/campaigns/'
+    | '/_dashboard/contacts/'
+    | '/_dashboard/dev-settings/'
+    | '/_dashboard/domains/'
+    | '/_dashboard/emails/'
+    | '/_dashboard/settings/'
+    | '/_dashboard/templates/'
+    | '/_dashboard/webhooks/'
+    | '/_dashboard/campaigns/$campaignId/edit'
+    | '/_dashboard/contacts/$contactBookId/double-opt-in'
+    | '/_dashboard/templates/$templateId/edit'
+    | '/_dashboard/campaigns/$campaignId/'
+    | '/_dashboard/contacts/$contactBookId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DashboardRoute: typeof DashboardRouteWithChildren
+  JoinTeamRoute: typeof JoinTeamRoute
+  SignupRoute: typeof SignupRoute
+  WaitListRoute: typeof WaitListRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  LoginVerifyRoute: typeof LoginVerifyRoute
+  LoginIndexRoute: typeof LoginIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -68,12 +475,201 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_dashboard': {
+      id: '/_dashboard'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join-team': {
+      id: '/join-team'
+      path: '/join-team'
+      fullPath: '/join-team'
+      preLoaderRoute: typeof JoinTeamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wait-list': {
+      id: '/wait-list'
+      path: '/wait-list'
+      fullPath: '/wait-list'
+      preLoaderRoute: typeof WaitListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_dashboard/dashboard': {
+      id: '/_dashboard/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardDashboardRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/payments': {
+      id: '/_dashboard/payments'
+      path: '/payments'
+      fullPath: '/payments'
+      preLoaderRoute: typeof DashboardPaymentsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/suppressions': {
+      id: '/_dashboard/suppressions'
+      path: '/suppressions'
+      fullPath: '/suppressions'
+      preLoaderRoute: typeof DashboardSuppressionsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/api/health': {
       id: '/api/health'
       path: '/api/health'
       fullPath: '/api/health'
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/login/': {
+      id: '/login/'
+      path: '/login'
+      fullPath: '/login/'
+      preLoaderRoute: typeof LoginIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login/verify': {
+      id: '/login/verify'
+      path: '/login/verify'
+      fullPath: '/login/verify'
+      preLoaderRoute: typeof LoginVerifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_dashboard/admin/': {
+      id: '/_dashboard/admin/'
+      path: '/admin'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof DashboardAdminIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/admin/email-analytics': {
+      id: '/_dashboard/admin/email-analytics'
+      path: '/admin/email-analytics'
+      fullPath: '/admin/email-analytics'
+      preLoaderRoute: typeof DashboardAdminEmailAnalyticsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/admin/teams': {
+      id: '/_dashboard/admin/teams'
+      path: '/admin/teams'
+      fullPath: '/admin/teams'
+      preLoaderRoute: typeof DashboardAdminTeamsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/admin/waitlist': {
+      id: '/_dashboard/admin/waitlist'
+      path: '/admin/waitlist'
+      fullPath: '/admin/waitlist'
+      preLoaderRoute: typeof DashboardAdminWaitlistRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/campaigns/': {
+      id: '/_dashboard/campaigns/'
+      path: '/campaigns'
+      fullPath: '/campaigns/'
+      preLoaderRoute: typeof DashboardCampaignsIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/contacts/': {
+      id: '/_dashboard/contacts/'
+      path: '/contacts'
+      fullPath: '/contacts/'
+      preLoaderRoute: typeof DashboardContactsIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/dev-settings/': {
+      id: '/_dashboard/dev-settings/'
+      path: '/dev-settings'
+      fullPath: '/dev-settings/'
+      preLoaderRoute: typeof DashboardDevSettingsIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/dev-settings/api-keys': {
+      id: '/_dashboard/dev-settings/api-keys'
+      path: '/dev-settings/api-keys'
+      fullPath: '/dev-settings/api-keys'
+      preLoaderRoute: typeof DashboardDevSettingsApiKeysRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/dev-settings/smtp': {
+      id: '/_dashboard/dev-settings/smtp'
+      path: '/dev-settings/smtp'
+      fullPath: '/dev-settings/smtp'
+      preLoaderRoute: typeof DashboardDevSettingsSmtpRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/domains/': {
+      id: '/_dashboard/domains/'
+      path: '/domains'
+      fullPath: '/domains/'
+      preLoaderRoute: typeof DashboardDomainsIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/domains/$domainId': {
+      id: '/_dashboard/domains/$domainId'
+      path: '/domains/$domainId'
+      fullPath: '/domains/$domainId'
+      preLoaderRoute: typeof DashboardDomainsDomainIdRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/emails/': {
+      id: '/_dashboard/emails/'
+      path: '/emails'
+      fullPath: '/emails/'
+      preLoaderRoute: typeof DashboardEmailsIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/settings/': {
+      id: '/_dashboard/settings/'
+      path: '/settings'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof DashboardSettingsIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/settings/billing': {
+      id: '/_dashboard/settings/billing'
+      path: '/settings/billing'
+      fullPath: '/settings/billing'
+      preLoaderRoute: typeof DashboardSettingsBillingRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/settings/team': {
+      id: '/_dashboard/settings/team'
+      path: '/settings/team'
+      fullPath: '/settings/team'
+      preLoaderRoute: typeof DashboardSettingsTeamRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/templates/': {
+      id: '/_dashboard/templates/'
+      path: '/templates'
+      fullPath: '/templates/'
+      preLoaderRoute: typeof DashboardTemplatesIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/webhooks/': {
+      id: '/_dashboard/webhooks/'
+      path: '/webhooks'
+      fullPath: '/webhooks/'
+      preLoaderRoute: typeof DashboardWebhooksIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/webhooks/$webhookId': {
+      id: '/_dashboard/webhooks/$webhookId'
+      path: '/webhooks/$webhookId'
+      fullPath: '/webhooks/$webhookId'
+      preLoaderRoute: typeof DashboardWebhooksWebhookIdRouteImport
+      parentRoute: typeof DashboardRoute
     }
     '/api/auth/$': {
       id: '/api/auth/$'
@@ -82,12 +678,118 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_dashboard/campaigns/$campaignId/': {
+      id: '/_dashboard/campaigns/$campaignId/'
+      path: '/campaigns/$campaignId'
+      fullPath: '/campaigns/$campaignId/'
+      preLoaderRoute: typeof DashboardCampaignsCampaignIdIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/campaigns/$campaignId/edit': {
+      id: '/_dashboard/campaigns/$campaignId/edit'
+      path: '/campaigns/$campaignId/edit'
+      fullPath: '/campaigns/$campaignId/edit'
+      preLoaderRoute: typeof DashboardCampaignsCampaignIdEditRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/contacts/$contactBookId/': {
+      id: '/_dashboard/contacts/$contactBookId/'
+      path: '/contacts/$contactBookId'
+      fullPath: '/contacts/$contactBookId/'
+      preLoaderRoute: typeof DashboardContactsContactBookIdIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/contacts/$contactBookId/double-opt-in': {
+      id: '/_dashboard/contacts/$contactBookId/double-opt-in'
+      path: '/contacts/$contactBookId/double-opt-in'
+      fullPath: '/contacts/$contactBookId/double-opt-in'
+      preLoaderRoute: typeof DashboardContactsContactBookIdDoubleOptInRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/templates/$templateId/edit': {
+      id: '/_dashboard/templates/$templateId/edit'
+      path: '/templates/$templateId/edit'
+      fullPath: '/templates/$templateId/edit'
+      preLoaderRoute: typeof DashboardTemplatesTemplateIdEditRouteImport
+      parentRoute: typeof DashboardRoute
+    }
   }
 }
 
+interface DashboardRouteChildren {
+  DashboardDashboardRoute: typeof DashboardDashboardRoute
+  DashboardPaymentsRoute: typeof DashboardPaymentsRoute
+  DashboardSuppressionsRoute: typeof DashboardSuppressionsRoute
+  DashboardAdminEmailAnalyticsRoute: typeof DashboardAdminEmailAnalyticsRoute
+  DashboardAdminTeamsRoute: typeof DashboardAdminTeamsRoute
+  DashboardAdminWaitlistRoute: typeof DashboardAdminWaitlistRoute
+  DashboardDevSettingsApiKeysRoute: typeof DashboardDevSettingsApiKeysRoute
+  DashboardDevSettingsSmtpRoute: typeof DashboardDevSettingsSmtpRoute
+  DashboardDomainsDomainIdRoute: typeof DashboardDomainsDomainIdRoute
+  DashboardSettingsBillingRoute: typeof DashboardSettingsBillingRoute
+  DashboardSettingsTeamRoute: typeof DashboardSettingsTeamRoute
+  DashboardWebhooksWebhookIdRoute: typeof DashboardWebhooksWebhookIdRoute
+  DashboardAdminIndexRoute: typeof DashboardAdminIndexRoute
+  DashboardCampaignsIndexRoute: typeof DashboardCampaignsIndexRoute
+  DashboardContactsIndexRoute: typeof DashboardContactsIndexRoute
+  DashboardDevSettingsIndexRoute: typeof DashboardDevSettingsIndexRoute
+  DashboardDomainsIndexRoute: typeof DashboardDomainsIndexRoute
+  DashboardEmailsIndexRoute: typeof DashboardEmailsIndexRoute
+  DashboardSettingsIndexRoute: typeof DashboardSettingsIndexRoute
+  DashboardTemplatesIndexRoute: typeof DashboardTemplatesIndexRoute
+  DashboardWebhooksIndexRoute: typeof DashboardWebhooksIndexRoute
+  DashboardCampaignsCampaignIdEditRoute: typeof DashboardCampaignsCampaignIdEditRoute
+  DashboardContactsContactBookIdDoubleOptInRoute: typeof DashboardContactsContactBookIdDoubleOptInRoute
+  DashboardTemplatesTemplateIdEditRoute: typeof DashboardTemplatesTemplateIdEditRoute
+  DashboardCampaignsCampaignIdIndexRoute: typeof DashboardCampaignsCampaignIdIndexRoute
+  DashboardContactsContactBookIdIndexRoute: typeof DashboardContactsContactBookIdIndexRoute
+}
+
+const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardDashboardRoute: DashboardDashboardRoute,
+  DashboardPaymentsRoute: DashboardPaymentsRoute,
+  DashboardSuppressionsRoute: DashboardSuppressionsRoute,
+  DashboardAdminEmailAnalyticsRoute: DashboardAdminEmailAnalyticsRoute,
+  DashboardAdminTeamsRoute: DashboardAdminTeamsRoute,
+  DashboardAdminWaitlistRoute: DashboardAdminWaitlistRoute,
+  DashboardDevSettingsApiKeysRoute: DashboardDevSettingsApiKeysRoute,
+  DashboardDevSettingsSmtpRoute: DashboardDevSettingsSmtpRoute,
+  DashboardDomainsDomainIdRoute: DashboardDomainsDomainIdRoute,
+  DashboardSettingsBillingRoute: DashboardSettingsBillingRoute,
+  DashboardSettingsTeamRoute: DashboardSettingsTeamRoute,
+  DashboardWebhooksWebhookIdRoute: DashboardWebhooksWebhookIdRoute,
+  DashboardAdminIndexRoute: DashboardAdminIndexRoute,
+  DashboardCampaignsIndexRoute: DashboardCampaignsIndexRoute,
+  DashboardContactsIndexRoute: DashboardContactsIndexRoute,
+  DashboardDevSettingsIndexRoute: DashboardDevSettingsIndexRoute,
+  DashboardDomainsIndexRoute: DashboardDomainsIndexRoute,
+  DashboardEmailsIndexRoute: DashboardEmailsIndexRoute,
+  DashboardSettingsIndexRoute: DashboardSettingsIndexRoute,
+  DashboardTemplatesIndexRoute: DashboardTemplatesIndexRoute,
+  DashboardWebhooksIndexRoute: DashboardWebhooksIndexRoute,
+  DashboardCampaignsCampaignIdEditRoute: DashboardCampaignsCampaignIdEditRoute,
+  DashboardContactsContactBookIdDoubleOptInRoute:
+    DashboardContactsContactBookIdDoubleOptInRoute,
+  DashboardTemplatesTemplateIdEditRoute: DashboardTemplatesTemplateIdEditRoute,
+  DashboardCampaignsCampaignIdIndexRoute:
+    DashboardCampaignsCampaignIdIndexRoute,
+  DashboardContactsContactBookIdIndexRoute:
+    DashboardContactsContactBookIdIndexRoute,
+}
+
+const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
+  DashboardRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DashboardRoute: DashboardRouteWithChildren,
+  JoinTeamRoute: JoinTeamRoute,
+  SignupRoute: SignupRoute,
+  WaitListRoute: WaitListRoute,
   ApiHealthRoute: ApiHealthRoute,
+  LoginVerifyRoute: LoginVerifyRoute,
+  LoginIndexRoute: LoginIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport
