@@ -56,6 +56,24 @@
     }
   ],
 
+  // Cron Triggers (§2). Five BullMQ queues carried a recurring job and never a
+  // real message; on Cloudflare they are these, and the queues disappear.
+  // `server/queue/cron-registry.ts` is the source of truth — the job modules
+  // import their expression from it, and `cron-registry.unit.test.ts` fails if
+  // this list drifts.
+  //
+  // The 1.5s campaign scheduler is deliberately absent: Cron Triggers floor at
+  // one minute, which is why §4.2 makes it a Durable Object alarm.
+  "triggers": {
+    "crons": [
+      "0 * * * *", // domain-verification
+      "0 3 * * *", // webhook-cleanup
+      "0 */12 * * *", // usage-reporting (cloud only)
+      "0 0 * * *", // cleanup-email-bodies (self-hosted, opt-in)
+      "30 0 * * *" // email-event-cleanup (opt-in)
+    ]
+  },
+
   // Cloudflare Queues (§2). `server/queue/queue-registry.ts` is the source of
   // truth for this block and `queue-registry.unit.test.ts` fails if the two
   // disagree — a producer binding that is declared in one place and not the

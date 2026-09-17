@@ -117,7 +117,17 @@ export function createWorker<T>(
     name,
     async (job) => {
       const { data, traceparent } = extractTrace(job.data);
-      return await withTraceContext(startTrace(traceparent), () =>
+
+      // A message that carries no traceparent falls back to whatever trace the
+      // caller is already in, and only starts a new one if there is none.
+      // BullMQ never has an ambient trace here — a worker callback has no
+      // caller — but the Worker runtime does: `scheduled()` opens a trace
+      // around a cron job before invoking its handler, and without this the
+      // handler's own log lines would land under a rival trace id from the
+      // start/finish lines wrapping them.
+      const carrier = traceparent ?? currentTraceparent();
+
+      return await withTraceContext(startTrace(carrier), () =>
         handler(traceparent ? { ...job, data } : job),
       );
     },

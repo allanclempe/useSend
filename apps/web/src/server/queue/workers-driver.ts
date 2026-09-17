@@ -2,6 +2,7 @@
 
 import { logger } from "../logger/log";
 import { getWorkerBindings, type QueueProducer } from "../worker-bindings";
+import { isDeclaredCron } from "./cron-registry";
 import {
   CRON_ONLY_QUEUES,
   MAX_BATCH_BYTES,
@@ -77,25 +78,6 @@ export function registeredHandler(
 
 export function registeredQueueNames(): string[] {
   return [...handlers.keys()];
-}
-
-/**
- * Recurring jobs registered by `queue.schedule()`, keyed by cron expression.
- *
- * `schedule()` is how a job module says "run this on this cron", and it already
- * runs on both drivers. On Cloudflare the schedule itself is deploy-time
- * config in `wrangler.jsonc`, so all this does is remember which queue's
- * handler a given `controller.cron` should invoke — see
- * `src/worker/scheduled.ts`.
- */
-const cronToQueue = new Map<string, string>();
-
-export function queueForCron(cron: string): string | undefined {
-  return cronToQueue.get(cron);
-}
-
-export function registeredCrons(): string[] {
-  return [...cronToQueue.keys()];
 }
 
 function missingBinding(queue: QueueDefinition): Error {
@@ -266,10 +248,14 @@ class WorkersQueue<T> implements Queue<T> {
 
   /**
    * Cron Triggers are declared in `wrangler.jsonc`, so there is nothing to
-   * create — this only records which handler `controller.cron` maps to. A cron
-   * expression the deployment does not declare would never fire, so that is an
-   * error and not a warning: it is the exact failure mode where a cleanup job
-   * silently stops running and nobody notices for a month.
+   * create here. What is left is worth doing: check that the expression is one
+   * the deployment actually declares.
+   *
+   * A cron nobody declared never fires, and the failure is invisible — a
+   * cleanup job simply stops running and nothing says so for a month. Throwing
+   * at registration surfaces it at isolate startup instead, which is loud and
+   * immediate. `cron-registry.ts` is what the job modules read their expression
+   * from, so in practice this can only fail if the two registries drift.
    */
   async schedule(id: string, spec: ScheduleSpec): Promise<void> {
     if (!("cron" in spec)) {
@@ -279,7 +265,13 @@ class WorkersQueue<T> implements Queue<T> {
       );
     }
 
-    cronToQueue.set(spec.cron, this.name);
+    if (!isDeclaredCron(spec.cron)) {
+      throw new Error(
+        `Queue "${this.name}": schedule "${id}" uses cron "${spec.cron}", which is not ` +
+          `in server/queue/cron-registry.ts and so is not a Cron Trigger in wrangler.jsonc. ` +
+          `It would never fire.`,
+      );
+    }
   }
 
   async getJob(_id: string): Promise<EnqueuedJob | undefined> {

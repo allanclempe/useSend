@@ -4,8 +4,7 @@ import { drizzleDb, schema } from "~/server/drizzle";
 import { isEmailEventRetentionEnabled } from "~/utils/common";
 import { logger } from "../logger/log";
 import { createQueue, createWorker, EMAIL_EVENT_CLEANUP_QUEUE } from "../queue";
-
-const CLEANUP_CRON = "30 0 * * *"; // daily, staggered off the email-body cleanup
+import { CRON_TRIGGERS } from "../queue/cron-registry";
 
 /**
  * `EmailEvent` growth is monotonic and unbounded: a typical marketing email
@@ -108,7 +107,7 @@ export async function initEmailEventCleanupJob() {
   );
 
   await cleanupQueue.schedule("email-event-cleanup-daily", {
-    cron: CLEANUP_CRON,
+    cron: CRON_TRIGGERS[EMAIL_EVENT_CLEANUP_QUEUE],
     tz: "UTC",
   });
 

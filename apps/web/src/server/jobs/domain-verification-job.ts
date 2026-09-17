@@ -1,6 +1,7 @@
 import { asc } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { logger } from "~/server/logger/log";
+import { CRON_TRIGGERS } from "~/server/queue/cron-registry";
 import {
   createQueue,
   createWorker,
@@ -63,7 +64,7 @@ export async function initDomainVerificationJob() {
   );
 
   await domainVerificationQueue.schedule("domain-verification-hourly", {
-    cron: "0 * * * *",
+    cron: CRON_TRIGGERS[DOMAIN_VERIFICATION_QUEUE],
     tz: "UTC",
   });
 

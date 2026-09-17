@@ -3,12 +3,11 @@ import {drizzleDb, schema} from "~/server/drizzle";
 import {withUpdatedAt} from "~/server/drizzle/touch";
 import {logger} from "../logger/log";
 import {createQueue, createWorker} from "../queue";
+import {CRON_TRIGGERS} from "../queue/cron-registry";
 import {env} from "~/env";
 import {isSelfHosted, isEmailCleanupEnabled} from "~/utils/common";
 
 const CLEANUP_QUEUE_NAME = "cleanup-email-bodies";
-
-const CLEANUP_CRON = "0 0 * * *"; // default: midnight UTC
 
 // Only initialize if self hosted and cleanup enabled
 if (isSelfHosted() && isEmailCleanupEnabled()) {
@@ -65,7 +64,7 @@ if (isSelfHosted() && isEmailCleanupEnabled()) {
     );
 
     await cleanupQueue.schedule("scheduled-email-cleanup", {
-        cron: CLEANUP_CRON,
+        cron: CRON_TRIGGERS[CLEANUP_QUEUE_NAME],
         tz: "UTC",
     });
 }

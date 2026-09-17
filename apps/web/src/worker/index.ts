@@ -7,6 +7,7 @@ import {
   type WorkerBindings,
 } from "~/server/worker-bindings";
 import { handleQueueBatch } from "./queue-consumer";
+import { handleScheduled } from "./scheduled";
 import { handleStorageRequest, isStorageRequest } from "./storage-routes";
 
 /**
@@ -64,5 +65,13 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     await handleQueueBatch(batch, env, ctx);
+  },
+
+  async scheduled(
+    controller: { cron: string; scheduledTime: number },
+    env: WorkerBindings,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    await handleScheduled(controller, env, ctx);
   },
 };

@@ -18,6 +18,7 @@
  * through it.
  */
 
+import { CRON_TRIGGERS } from "./cron-registry";
 import {
   CAMPAIGN_BATCH_QUEUE,
   CONTACT_BULK_ADD_QUEUE,
@@ -159,13 +160,7 @@ export function queueDefinitionByQueueName(
  * Triggers and have no queue, so asking for a producer binding for one is a
  * mistake worth naming rather than a missing-binding error to puzzle over.
  */
-export const CRON_ONLY_QUEUES: readonly string[] = [
-  "domain-verification",
-  "webhook-cleanup",
-  "usage-reporting",
-  "cleanup-email-bodies",
-  "email-event-cleanup",
-];
+export const CRON_ONLY_QUEUES: readonly string[] = Object.keys(CRON_TRIGGERS);
 
 /** Cloudflare counts retries, not attempts. Convert in exactly one place. */
 export function maxRetriesFor(queue: QueueDefinition): number {
