@@ -92,7 +92,7 @@ export class TeamService {
     const created = await drizzleDb.transaction(async (tx) => {
       const [team] = await tx
         .insert(schema.team)
-        .values({ name, updatedAt: new Date() })
+        .values(withUpdatedAt({ name }))
         .returning();
 
       if (!team) {
@@ -209,7 +209,7 @@ export class TeamService {
 
     const [teamInvite] = await drizzleDb
       .insert(schema.teamInvite)
-      .values({ id: createId(), teamId, email, role, updatedAt: new Date() })
+      .values(withUpdatedAt({ id: createId(), teamId, email, role }))
       .returning();
 
     if (!teamInvite) {

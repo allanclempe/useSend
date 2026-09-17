@@ -121,23 +121,24 @@ export async function addOrUpdateContact(
 
   const [savedContact] = await drizzleDb
     .insert(schema.contact)
-    .values({
-      id: createId(),
-      contactBookId,
-      email: contact.email,
-      firstName: contact.firstName,
-      lastName: contact.lastName,
-      properties: normalizedProperties ?? {},
-      subscribed: shouldCreatePendingContact
-        ? false
-        : (contact.subscribed ?? true),
-      unsubscribeReason: shouldCreatePendingContact
-        ? null
-        : contact.subscribed === false
-          ? UnsubscribeReason.UNSUBSCRIBED
-          : null,
-      updatedAt: new Date(),
-    })
+    .values(
+      withUpdatedAt({
+        id: createId(),
+        contactBookId,
+        email: contact.email,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        properties: normalizedProperties ?? {},
+        subscribed: shouldCreatePendingContact
+          ? false
+          : (contact.subscribed ?? true),
+        unsubscribeReason: shouldCreatePendingContact
+          ? null
+          : contact.subscribed === false
+            ? UnsubscribeReason.UNSUBSCRIBED
+            : null,
+      }),
+    )
     .onConflictDoUpdate({
       target: [schema.contact.contactBookId, schema.contact.email],
       // withUpdatedAt also guarantees a non-empty SET. Prisma accepted
