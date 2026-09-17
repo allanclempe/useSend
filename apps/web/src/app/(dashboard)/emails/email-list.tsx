@@ -19,7 +19,7 @@ import {
   Download,
 } from "lucide-react";
 import { formatDate, formatDistanceToNow } from "date-fns";
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus } from "~/types/db";
 import { EmailStatusBadge } from "./email-status-badge";
 import EmailDetails from "./email-details";
 import dynamic from "next/dynamic";

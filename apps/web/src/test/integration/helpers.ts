@@ -1,5 +1,4 @@
 import { sql } from "drizzle-orm";
-import { db } from "~/server/db";
 import { drizzleDb } from "~/server/drizzle";
 import { getRedis } from "~/server/redis";
 
@@ -29,12 +28,11 @@ export async function resetRedis() {
 }
 
 export async function closeIntegrationConnections() {
-  // Prisma only; the Drizzle client is deliberately left open. `$disconnect`
-  // reconnects lazily, but postgres-js `end()` is terminal, and the client is a
-  // module-level singleton shared by every file in the single-fork run — the
-  // first afterAll to close it would fail every file after it.
-  await db.$disconnect();
-
+  // The Drizzle client is deliberately left open. postgres-js `end()` is
+  // terminal, and the client is a module-level singleton shared by every file
+  // in the single-fork run — the first afterAll to close it would fail every
+  // file after it. Prisma's `$disconnect` used to be called here; it was safe
+  // only because it reconnected lazily.
   const redis = getRedis();
   if (redis.status !== "end") {
     await redis.quit();

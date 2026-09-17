@@ -6,8 +6,8 @@ import { Separator } from "@usesend/ui/src/separator";
 import { EmailStatusBadge, EmailStatusIcon } from "./email-status-badge";
 import { formatDate } from "date-fns";
 import { motion } from "framer-motion";
-import { EmailStatus } from "@prisma/client";
-import { JsonValue } from "@prisma/client/runtime/library";
+import { EmailStatus } from "~/types/db";
+import { JsonValue } from "~/types/db";
 import {
   SesBounce,
   SesClick,

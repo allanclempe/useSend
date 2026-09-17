@@ -6,7 +6,7 @@ import { Button } from "@usesend/ui/src/button";
 import { Input } from "@usesend/ui/src/input";
 import { Editor } from "@usesend/email-editor";
 import { use, useMemo, useState } from "react";
-import { Campaign } from "@prisma/client";
+import { Campaign } from "~/types/db";
 import {
   Select,
   SelectContent,

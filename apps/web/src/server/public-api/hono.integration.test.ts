@@ -1,4 +1,4 @@
-import { ApiPermission } from "@prisma/client";
+import { ApiPermission } from "~/types/db";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { getApp } from "~/server/public-api/hono";
 import { addApiKey } from "~/server/service/api-service";

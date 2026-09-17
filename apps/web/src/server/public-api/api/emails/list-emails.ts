@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { PublicAPIApp } from "~/server/public-api/hono";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus } from "~/types/db";
 import { DEFAULT_QUERY_LIMIT } from "~/lib/constants";
 
 const EmailSchema = z.object({

@@ -6,8 +6,7 @@
   "tasks": {
     "build": {
       "dependsOn": [
-        "^build",
-        "db:generate"
+        "^build"
       ],
       "outputs": [
         "dist/**",
@@ -58,13 +57,7 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true,
-      "dependsOn": [
-        "db:generate"
-      ]
-    },
-    "db:generate": {
-      "cache": false
+      "persistent": true
     },
     "db:push": {
       "cache": false

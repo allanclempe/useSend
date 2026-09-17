@@ -1,4 +1,4 @@
-import { SesSetting } from "@prisma/client";
+import { SesSetting } from "~/types/db";
 import { eq } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";

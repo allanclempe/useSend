@@ -1,4 +1,4 @@
-import { ApiPermission } from "@prisma/client";
+import { ApiPermission } from "~/types/db";
 import { and, eq } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { withUpdatedAt } from "../drizzle/touch";

@@ -1,4 +1,4 @@
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus } from "~/types/db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SesEvent } from "~/types/aws-types";
 import { and, eq } from "drizzle-orm";

@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { Role } from "~/types/db";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { withUpdatedAt } from "~/server/drizzle/touch";
 

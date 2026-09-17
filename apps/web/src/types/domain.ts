@@ -1,4 +1,4 @@
-import type { Domain, DomainStatus } from "@prisma/client";
+import type { Domain, DomainStatus } from "~/types/db";
 
 export type DomainDnsRecord = {
   type: "MX" | "TXT";

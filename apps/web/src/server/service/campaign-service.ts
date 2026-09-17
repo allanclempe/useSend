@@ -11,7 +11,7 @@ import {
   Contact,
   EmailStatus,
   UnsubscribeReason,
-} from "@prisma/client";
+} from "~/types/db";
 
 function toContact(row: typeof schema.contact.$inferSelect): Contact {
   // jsonb reads as `unknown` in Drizzle; Prisma typed it JsonValue.

@@ -33,7 +33,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@usesend/ui/src/tooltip";
-import { UnsubscribeReason } from "@prisma/client";
+import { UnsubscribeReason } from "~/types/db";
 import { Download } from "lucide-react";
 
 function sanitizeFilename(

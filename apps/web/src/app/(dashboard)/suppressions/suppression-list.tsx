@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api } from "~/trpc/react";
 import { useUrlState } from "~/hooks/useUrlState";
 import { useDebouncedCallback } from "use-debounce";
-import { SuppressionReason } from "@prisma/client";
+import { SuppressionReason } from "~/types/db";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@usesend/ui/src/button";
 import { Input } from "@usesend/ui/src/input";

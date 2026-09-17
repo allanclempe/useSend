@@ -1,4 +1,4 @@
-import { DomainStatus } from "@prisma/client";
+import { DomainStatus } from "~/types/db";
 
 export const DomainStatusBadge: React.FC<{ status: DomainStatus }> = ({
   status,

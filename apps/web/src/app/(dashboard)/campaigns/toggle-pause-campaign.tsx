@@ -4,7 +4,7 @@ import { Button } from "@usesend/ui/src/button";
 import { api } from "~/trpc/react";
 import React from "react";
 import { Pause, Play } from "lucide-react";
-import { Campaign, CampaignStatus } from "@prisma/client";
+import { Campaign, CampaignStatus } from "~/types/db";
 import { toast } from "@usesend/ui/src/toaster";
 
 export const TogglePauseCampaign: React.FC<{

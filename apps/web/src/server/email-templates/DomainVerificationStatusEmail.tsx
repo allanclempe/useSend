@@ -1,7 +1,7 @@
 import React from "react";
 import { Container, Text } from "jsx-email";
 import { render } from "jsx-email";
-import { DomainStatus } from "@prisma/client";
+import { DomainStatus } from "~/types/db";
 import { EmailButton } from "~/server/email-templates/components/EmailButton";
 import { EmailFooter } from "~/server/email-templates/components/EmailFooter";
 import { EmailHeader } from "~/server/email-templates/components/EmailHeader";

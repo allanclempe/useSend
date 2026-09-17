@@ -1,4 +1,4 @@
-import { DailyEmailUsage, EmailUsageType, Subscription } from "@prisma/client";
+import { DailyEmailUsage, EmailUsageType, Subscription } from "~/types/db";
 import { TRPCError } from "@trpc/server";
 import { format, sub } from "date-fns";
 import { z } from "zod";

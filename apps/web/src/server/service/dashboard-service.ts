@@ -2,7 +2,7 @@ import { and, asc, eq, gte, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { drizzleDb, schema } from "../drizzle";
 import { format, subDays } from "date-fns";
-import { Team } from "@prisma/client";
+import { Team } from "~/types/db";
 
 type EmailTimeSeries = {
   days?: number;

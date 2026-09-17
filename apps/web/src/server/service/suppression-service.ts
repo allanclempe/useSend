@@ -1,4 +1,4 @@
-import { SuppressionReason, SuppressionList } from "@prisma/client";
+import { SuppressionReason, SuppressionList } from "~/types/db";
 import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";

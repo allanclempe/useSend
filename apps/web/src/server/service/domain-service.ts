@@ -13,7 +13,7 @@ import { withUpdatedAt } from "~/server/drizzle/touch";
 type Domain = typeof schema.domain.$inferSelect;
 import { SesSettingsService } from "./ses-settings-service";
 import { UnsendApiError } from "../public-api/api-error";
-import { ApiKey, DomainStatus } from "@prisma/client";
+import { ApiKey, DomainStatus } from "~/types/db";
 import { and, desc, eq } from "drizzle-orm";
 import {
   type DomainPayload,

@@ -1,4 +1,4 @@
-import { ApiPermission } from "@prisma/client";
+import { ApiPermission } from "~/types/db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Pulled in transitively via the contact services; usesend-js is an unbuilt

@@ -24,7 +24,7 @@ import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "@usesend/ui/src/toaster";
-import { Role } from "@prisma/client";
+import { Role } from "~/types/db";
 import {
   Select,
   SelectContent,

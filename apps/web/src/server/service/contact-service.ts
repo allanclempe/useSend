@@ -1,4 +1,4 @@
-import { UnsubscribeReason } from "@prisma/client";
+import { UnsubscribeReason } from "~/types/db";
 import { and, eq, inArray } from "drizzle-orm";
 import {
   type ContactPayload,

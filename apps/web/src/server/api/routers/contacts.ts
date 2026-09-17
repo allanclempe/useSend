@@ -1,4 +1,4 @@
-import { CampaignStatus } from "@prisma/client";
+import { CampaignStatus } from "~/types/db";
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { TRPCError } from "@trpc/server";

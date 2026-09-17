@@ -1,4 +1,4 @@
-import { Email, EmailStatus, Prisma } from "@prisma/client";
+import { Email, EmailStatus, type JsonValue } from "~/types/db";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { format, subDays } from "date-fns";
 import { z } from "zod";
@@ -17,7 +17,7 @@ import { cancelEmail, updateEmail } from "~/server/service/email-service";
 const statuses = Object.values(EmailStatus) as [EmailStatus];
 
 const ensureBounceObject = (
-  data: Prisma.JsonValue,
+  data: JsonValue,
 ): Partial<SesBounce> | undefined => {
   const raw =
     typeof data === "string"
@@ -154,7 +154,7 @@ export const emailRouter = createTRPCRouter({
           subject: string;
           scheduledAt: Date | null;
           createdAt: Date;
-          bounceData: Prisma.JsonValue | null;
+          bounceData: JsonValue | null;
         }
       >(sql`
         SELECT
@@ -207,7 +207,7 @@ export const emailRouter = createTRPCRouter({
         subject: string;
         scheduledAt: Date | null;
         createdAt: Date;
-        bounceData: Prisma.JsonValue | null;
+        bounceData: JsonValue | null;
       }>;
 
       return emails.map((email) => {
@@ -271,7 +271,7 @@ export const emailRouter = createTRPCRouter({
     // jsonb reads as `unknown` in Drizzle; the UI expects Prisma's JsonValue.
     const emailEvents = emailEventRows.map((event) => ({
       ...event,
-      data: event.data as Prisma.JsonValue,
+      data: event.data as JsonValue,
     }));
 
     const result = { ...email, emailEvents };

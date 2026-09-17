@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- apps/web: Next.js app (primary product). Uses Prisma, TRPC, Tailwind.
+- apps/web: Next.js app (primary product). Uses Drizzle, TRPC, Tailwind.
 - apps/marketing: Public marketing site (Next.js, static export).
 - apps/docs: Mintlify docs content.
 - apps/smtp-server: SMTP proxy/server (TypeScript → tsup build).
@@ -17,7 +17,12 @@
 - `pnpm start:web:local`: Run only `apps/web` locally on port 3000.
 - `pnpm build`: Turbo build across the monorepo.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
-- Database (apps/web filter): `pnpm db:generate` | `db:migrate-dev` | `db:push` | `db:studio`.
+- Database (apps/web filter): `db:migrate-dev` | `db:push` | `db:studio`.
+- Database types and enums come from `~/types/db`, never from an ORM package directly. It is the
+  one seam over `src/server/drizzle/schema.ts`: enum values (`EmailStatus.SENT`), row types
+  (`Campaign`, `Domain`) and `JsonValue`. It is client-safe — it imports the schema with
+  `import type`, so adding a value import there would pull the whole schema into the browser
+  bundle.
 - Never run migrations unless users explicitly asked
 
 ## Coding Style & Naming Conventions

@@ -37,7 +37,7 @@ import {
   DropdownMenuTrigger,
 } from "@usesend/ui/src/dropdown-menu";
 import { toast } from "@usesend/ui/src/toaster";
-import type { Webhook } from "@prisma/client";
+import type { Webhook } from "~/types/db";
 
 const EVENT_TYPES_ENUM = z.enum(WebhookEvents);
 

@@ -1,4 +1,4 @@
-import { type Plan } from "@prisma/client";
+import { type Plan } from "~/types/db";
 import { and, desc, eq, exists, gte, ilike, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";

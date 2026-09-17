@@ -1,4 +1,4 @@
-import { UnsubscribeReason } from "@prisma/client";
+import { UnsubscribeReason } from "~/types/db";
 import { createHash } from "crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";

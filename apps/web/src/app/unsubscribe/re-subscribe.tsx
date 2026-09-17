@@ -1,6 +1,6 @@
 "use client";
 
-import type { Contact } from "@prisma/client";
+import type { Contact } from "~/types/db";
 import { Button } from "@usesend/ui/src/button";
 import Spinner from "@usesend/ui/src/spinner";
 import { toast } from "@usesend/ui/src/toaster";

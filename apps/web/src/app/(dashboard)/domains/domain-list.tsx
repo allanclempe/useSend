@@ -1,6 +1,6 @@
 "use client";
 
-import { Domain } from "@prisma/client";
+import { Domain } from "~/types/db";
 import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";
 import { Switch } from "@usesend/ui/src/switch";

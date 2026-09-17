@@ -1,4 +1,4 @@
-import { WebhookCallStatus, WebhookStatus } from "@prisma/client";
+import { WebhookCallStatus, WebhookStatus } from "~/types/db";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";

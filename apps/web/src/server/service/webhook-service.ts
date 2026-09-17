@@ -1,4 +1,4 @@
-import { WebhookCallStatus, WebhookStatus } from "@prisma/client";
+import { WebhookCallStatus, WebhookStatus } from "~/types/db";
 import { createHmac, randomUUID, randomBytes } from "crypto";
 import {
   WebhookEventData,

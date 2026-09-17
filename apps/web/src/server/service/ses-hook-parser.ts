@@ -3,7 +3,7 @@ import {
   SuppressionReason,
   UnsubscribeReason,
   type Email,
-} from "@prisma/client";
+} from "~/types/db";
 import {
   type EmailBasePayload,
   type EmailEventPayloadMap,

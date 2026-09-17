@@ -11,7 +11,7 @@ import {
   protectedProcedure,
   teamProcedure,
 } from "~/server/api/trpc";
-import { Role } from "@prisma/client";
+import { Role } from "~/types/db";
 import {
   closeIntegrationConnections,
   integrationEnabled,

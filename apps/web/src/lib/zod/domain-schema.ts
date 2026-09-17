@@ -1,4 +1,4 @@
-import { DomainStatus } from "@prisma/client";
+import { DomainStatus } from "~/types/db";
 import { z } from "zod";
 
 export const DomainStatusSchema = z.nativeEnum(DomainStatus);

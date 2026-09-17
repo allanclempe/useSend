@@ -5,7 +5,7 @@ import { Spinner } from "@usesend/ui/src/spinner";
 import { Input } from "@usesend/ui/src/input";
 import { Editor } from "@usesend/email-editor";
 import { useState } from "react";
-import { Template } from "@prisma/client";
+import { Template } from "~/types/db";
 import { toast } from "@usesend/ui/src/toaster";
 import { useDebouncedCallback } from "use-debounce";
 import { formatDistanceToNow } from "date-fns";

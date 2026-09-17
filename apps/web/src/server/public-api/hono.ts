@@ -7,7 +7,7 @@ import { getRedis, redisKey } from "~/server/redis";
 import { getTeamFromToken } from "~/server/public-api/auth";
 import { isSelfHosted } from "~/utils/common";
 import { UnsendApiError } from "./api-error";
-import { Team, ApiKey } from "@prisma/client";
+import { Team, ApiKey } from "~/types/db";
 import { logger } from "../logger/log";
 
 // Define AppEnv for Hono context

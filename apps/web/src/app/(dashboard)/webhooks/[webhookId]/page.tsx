@@ -32,7 +32,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@usesend/ui/src/popover";
-import { type Webhook } from "@prisma/client";
+import { type Webhook } from "~/types/db";
 
 function WebhookDetailActions({
   webhook,

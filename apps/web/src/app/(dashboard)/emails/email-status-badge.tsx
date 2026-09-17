@@ -1,4 +1,4 @@
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus } from "~/types/db";
 
 export const EmailStatusBadge: React.FC<{ status: EmailStatus }> = ({
   status,

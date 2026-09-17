@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DomainStatus, type Domain } from "@prisma/client";
+import { DomainStatus, type Domain } from "~/types/db";
 
 const {
   mockFindMany,

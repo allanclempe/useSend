@@ -24,7 +24,6 @@
     "dev:marketing": "cd apps/marketing && turbo dev",
     "lint": "turbo lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-    "db:generate": "pnpm db db:generate",
     "db:push": "pnpm db db:push",
     "db:migrate-dev": "pnpm db db:migrate-dev",
     "db:migrate-deploy": "pnpm db db:migrate-deploy",

@@ -3,7 +3,7 @@ import { PublicAPIApp } from "~/server/public-api/hono";
 import { getTeamFromToken } from "~/server/public-api/auth";
 import { and, eq } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus } from "~/types/db";
 import { UnsendApiError } from "../../api-error";
 
 const route = createRoute({

@@ -1,4 +1,4 @@
-import { ApiPermission } from "@prisma/client";
+import { ApiPermission } from "~/types/db";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { addApiKey, getTeamAndApiKey } from "~/server/service/api-service";
 import { createTeam } from "~/test/factories/core";

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, teamProcedure } from "~/server/api/trpc";
-import { WebhookCallStatus, WebhookStatus } from "@prisma/client";
+import { WebhookCallStatus, WebhookStatus } from "~/types/db";
 import { WebhookEvents } from "@usesend/lib/src/webhook/webhook-events";
 import { WebhookService } from "~/server/service/webhook-service";
 

@@ -13,7 +13,7 @@ import { api } from "~/trpc/react";
 import React, { useState } from "react";
 import { toast } from "@usesend/ui/src/toaster";
 import { Copy } from "lucide-react";
-import { Template } from "@prisma/client";
+import { Template } from "~/types/db";
 
 export const DuplicateTemplate: React.FC<{
   template: Partial<Template> & { id: string };

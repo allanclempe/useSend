@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { drizzleDb, schema } from "~/server/drizzle";
-import { ApiPermission } from "@prisma/client";
+import { ApiPermission } from "~/types/db";
 
 import {
   apiKeyProcedure,

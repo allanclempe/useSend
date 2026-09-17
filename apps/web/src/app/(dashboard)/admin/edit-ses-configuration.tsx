@@ -27,7 +27,7 @@ import { api } from "~/trpc/react";
 import { Input } from "@usesend/ui/src/input";
 import { toast } from "@usesend/ui/src/toaster";
 import Spinner from "@usesend/ui/src/spinner";
-import { SesSetting } from "@prisma/client";
+import { SesSetting } from "~/types/db";
 
 const FormSchema = z.object({
   settingsId: z.string(),

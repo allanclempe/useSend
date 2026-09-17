@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { CampaignStatus } from "@prisma/client";
+import { CampaignStatus } from "~/types/db";
 import { PublicAPIApp } from "~/server/public-api/hono";
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";

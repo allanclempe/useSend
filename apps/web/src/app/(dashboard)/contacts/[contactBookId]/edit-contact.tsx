@@ -26,7 +26,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "@usesend/ui/src/toaster";
 import { Switch } from "@usesend/ui/src/switch";
-import { Contact } from "@prisma/client";
+import { Contact } from "~/types/db";
 import {
   getContactPropertyValue,
   replaceContactVariableValues,

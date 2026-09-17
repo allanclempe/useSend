@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { withCache } from "../redis";
 import { logger } from "../logger/log";
-import { Plan } from "@prisma/client";
+import { Plan } from "~/types/db";
 
 function isLimitExceeded(current: number, limit: number): boolean {
   if (limit === -1) return false; // unlimited

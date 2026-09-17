@@ -1,4 +1,4 @@
-import { Contact } from "@prisma/client";
+import { Contact } from "~/types/db";
 import { describe, expect, it } from "vitest";
 import {
   BUILT_IN_CONTACT_VARIABLES,

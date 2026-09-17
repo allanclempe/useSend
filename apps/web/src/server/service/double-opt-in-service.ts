@@ -1,4 +1,4 @@
-import { DomainStatus } from "@prisma/client";
+import { DomainStatus } from "~/types/db";
 import { createHash, timingSafeEqual } from "crypto";
 import { EmailRenderer } from "@usesend/email-editor/src/renderer";
 import { env } from "~/env";

@@ -3,7 +3,7 @@
 import { Button } from "@usesend/ui/src/button";
 import { DeleteResource } from "~/components/DeleteResource";
 import { api } from "~/trpc/react";
-import { ContactBook } from "@prisma/client";
+import { ContactBook } from "~/types/db";
 import { toast } from "@usesend/ui/src/toaster";
 import { Trash2 } from "lucide-react";
 import { z } from "zod";
