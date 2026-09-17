@@ -93,6 +93,17 @@ pnpm install
      cp .env.example .env
      ```
   </Step>
+  <Step title="Neon Local">
+  The dev database is [Neon Local](https://neon.com/docs/local/neon-local), a
+  container that proxies to a real Neon branch rather than storing data on your
+  machine. Create a Neon project, then fill in `NEON_PROJECT_ID`, `NEON_API_KEY`
+  and `NEON_BRANCH_ID` in `.env`.
+
+  <Note>
+    `DATABASE_URL` stays as shipped in `.env.example`. `neon:npg` is the fixed
+    local credential pair; the proxy swaps in the real branch credentials.
+  </Note>
+  </Step>
   <Step title="Nextauth secret">
   Use the following command to generate a key and add it under ```NEXTAUTH_SECRET```
 

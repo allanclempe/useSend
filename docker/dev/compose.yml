@@ -1,18 +1,38 @@
 name: unsend-dev
 
 services:
+  # Neon Local proxies to the Neon branch in NEON_BRANCH_ID. NEON_PROJECT_ID,
+  # NEON_API_KEY and NEON_BRANCH_ID come from the root .env (see .env.example),
+  # or from .envrc via direnv. The dx scripts pass --project-directory . so that
+  # compose reads the root .env rather than docker/dev/.env.
+  #
+  # Neon Local can also create a branch per git branch by reading .git/HEAD,
+  # but that mount is deliberately absent: .git is a file, not a directory, in
+  # a git worktree, so the bind fails there. BRANCH_ID pins the branch instead.
   postgres:
-    image: postgres:16
-    container_name: unsend-db-dev
-    restart: always
+    image: neondatabase/neon_local:v1.5
+    container_name: use-send-db
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=usesend
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=usesend
-    volumes:
-      - database:/var/lib/postgresql/data
+      # postgres, not serverless: the app connects with postgres-js over plain
+      # TCP. #21 rejected the Neon HTTP driver because it supports neither the
+      # interactive transactions nor the pg_advisory_xact_lock in the auth path.
+      # The v1.5 image never reads DRIVER — it always starts PgBouncer, the
+      # WebSocket proxy and Envoy — so this documents intent rather than
+      # switching anything. Correct it anyway; `serverless` here would describe
+      # a driver choice we deliberately did not make.
+      DRIVER: postgres
+      NEON_PROJECT_ID: ${NEON_PROJECT_ID:?set NEON_PROJECT_ID in .env or .envrc}
+      NEON_API_KEY: ${NEON_API_KEY:?set NEON_API_KEY in .env or .envrc}
+      DELETE_BRANCH: "false"
+      BRANCH_ID: ${NEON_BRANCH_ID:?set NEON_BRANCH_ID in .env or .envrc}
     ports:
+      # 54320 was the old postgres:16 dev port; kept so DATABASE_URL and the
+      # docs do not have to change. Plain 5432 collides with other Neon Local
+      # containers running on this machine.
       - "54320:5432"
+    volumes:
+      - ./.neon_local:/tmp/.neon_local
 
   redis:
     image: redis:7
@@ -50,6 +70,5 @@ services:
     command: -c 'mkdir -p /data/unsend && minio server /data --console-address ":9001" --address ":9002"'
 
 volumes:
-  database:
   redis:
   minio:
