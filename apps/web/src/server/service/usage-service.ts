@@ -1,32 +1,58 @@
-import { EmailUsageType, Subscription } from "@prisma/client";
-import { db } from "../db";
+import { EmailUsageType } from "@prisma/client";
+import { and, asc, eq, gte, sql, type SQL } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
 import { format } from "date-fns";
+
+type UsageRow = { type: EmailUsageType; sent: number };
+
+/**
+ * Sums sent email per usage type for a team, over whichever `date` predicate is
+ * given.
+ *
+ * `DailyEmailUsage.date` is a text column holding `yyyy-MM-dd`, so string
+ * comparison is the correct filter here, not a date cast.
+ *
+ * The `::integer` cast is load-bearing: Postgres `SUM` over an integer column
+ * returns bigint, which postgres-js hands back as a string. Prisma's raw query
+ * cast it the same way, so the shape callers see is unchanged.
+ */
+function sumSentByType(teamId: number, dateFilter: SQL) {
+  return drizzleDb
+    .select({
+      type: schema.dailyEmailUsage.type,
+      sent: sql<number>`SUM(${schema.dailyEmailUsage.sent})::integer`,
+    })
+    .from(schema.dailyEmailUsage)
+    .where(and(eq(schema.dailyEmailUsage.teamId, teamId), dateFilter))
+    .groupBy(schema.dailyEmailUsage.type);
+}
 
 /**
  * Gets the monthly and daily usage for a team
  * @param teamId - The team ID to get usage for
- * @param db - Prisma database client
- * @param subscription - Optional subscription to determine billing period start
  * @returns Object containing month and day usage arrays
  */
 export async function getThisMonthUsage(teamId: number) {
-  const team = await db.team.findUnique({
-    where: { id: teamId },
-  });
+  const [team] = await drizzleDb
+    .select({ id: schema.team.id, plan: schema.team.plan })
+    .from(schema.team)
+    .where(eq(schema.team.id, teamId))
+    .limit(1);
 
   if (!team) {
     throw new Error("Team not found");
   }
 
-  let subscription: Subscription | null = null;
   const isPaidPlan = team.plan !== "FREE";
 
-  if (isPaidPlan) {
-    subscription = await db.subscription.findFirst({
-      where: { teamId: team.id },
-      orderBy: { status: "asc" },
-    });
-  }
+  const [subscription] = isPaidPlan
+    ? await drizzleDb
+        .select({ currentPeriodStart: schema.subscription.currentPeriodStart })
+        .from(schema.subscription)
+        .where(eq(schema.subscription.teamId, team.id))
+        .orderBy(asc(schema.subscription.status))
+        .limit(1)
+    : [];
 
   const isoStartDate = subscription?.currentPeriodStart
     ? format(subscription.currentPeriodStart, "yyyy-MM-dd")
@@ -34,30 +60,14 @@ export async function getThisMonthUsage(teamId: number) {
   const today = format(new Date(), "yyyy-MM-dd");
 
   const [monthUsage, dayUsage] = await Promise.all([
-    // Get month usage
-    db.$queryRaw<Array<{ type: EmailUsageType; sent: number }>>`
-        SELECT 
-          type,
-          SUM(sent)::integer AS sent
-        FROM "DailyEmailUsage"
-        WHERE "teamId" = ${team.id}
-        AND "date" >= ${isoStartDate}
-        GROUP BY "type"
-      `,
-    // Get today's usage
-    db.$queryRaw<Array<{ type: EmailUsageType; sent: number }>>`
-        SELECT 
-          type,
-          SUM(sent)::integer AS sent
-        FROM "DailyEmailUsage"
-        WHERE "teamId" = ${team.id}
-        AND "date" = ${today}
-        GROUP BY "type"
-      `,
+    sumSentByType(team.id, gte(schema.dailyEmailUsage.date, isoStartDate)),
+    // Deliberately equality, not `>= today`: the two diverge as soon as a row is
+    // dated ahead of today, and this feeds billing.
+    sumSentByType(team.id, eq(schema.dailyEmailUsage.date, today)),
   ]);
 
   return {
-    month: monthUsage,
-    day: dayUsage,
+    month: monthUsage satisfies UsageRow[],
+    day: dayUsage satisfies UsageRow[],
   };
 }
