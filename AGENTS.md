@@ -155,6 +155,14 @@ curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
 - Files: React components PascalCase (e.g., `AppSideBar.tsx`); folders kebab/lowercase.
 - Paths (web): use alias `~/` for src imports (e.g., `import { x } from "~/utils/x"`).
 - NEVER USE DYNAMIC IMPORTS. ALWAYS IMPORT ON THE TOP
+- Linting: the shared configs in `packages/eslint-config` turn the base `no-unused-vars` off and use
+  `@typescript-eslint/no-unused-vars` instead — the base rule is TypeScript-unaware and reports
+  type-only imports, parameters of function types and `declare module` blocks as unused. A binding
+  that is deliberately unused is prefixed with `_` (`_job`, `_target`, `_request`) — that is the
+  configured escape hatch (`argsIgnorePattern`/`varsIgnorePattern`/`caughtErrorsIgnorePattern`), not
+  an `eslint-disable` comment.
+- `pnpm lint` stops at the first failing package, so it undercounts. For a repo-wide number run
+  `turbo lint --continue --force` (nothing in CI runs lint today; see #87).
 
 ## Dependencies
 
