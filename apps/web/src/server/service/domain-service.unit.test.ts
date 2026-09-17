@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DomainStatus, type Domain } from "@prisma/client";
 
 const {
-  mockDb,
+  mockDomainUpdate,
+  mockDomainSelect,
+  mockRecipientSelect,
   mockGetDomainIdentity,
   mockWebhookEmit,
   mockRedis,
@@ -10,15 +12,9 @@ const {
   mockRenderDomainVerificationStatusEmail,
   mockResolveTxt,
 } = vi.hoisted(() => ({
-  mockDb: {
-    domain: {
-      update: vi.fn(),
-      findUnique: vi.fn(),
-    },
-    teamUser: {
-      findMany: vi.fn(),
-    },
-  },
+  mockDomainUpdate: vi.fn(),
+  mockDomainSelect: vi.fn(),
+  mockRecipientSelect: vi.fn(),
   mockGetDomainIdentity: vi.fn(),
   mockWebhookEmit: vi.fn(),
   mockRedis: {
@@ -43,9 +39,41 @@ vi.mock("dns", () => ({
   },
 }));
 
-vi.mock("~/server/db", () => ({
-  db: mockDb,
-}));
+/**
+ * These exercise notification logic — which email is sent, when, and how often —
+ * with every external edge already faked. The database is incidental rather
+ * than the thing under test, so the Drizzle client is stubbed here instead of
+ * moving these to integration tests.
+ *
+ * `capturedUpdate` keeps the assertions meaningful: they check what the update
+ * actually set, not merely that an update happened.
+ */
+const capturedUpdate: { value: Record<string, unknown> | undefined } = {
+  value: undefined,
+};
+
+vi.mock("~/server/drizzle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/server/drizzle")>();
+
+  const drizzleDb = {
+    update: () => ({
+      set: (values: Record<string, unknown>) => {
+        capturedUpdate.value = values;
+        return {
+          where: () => ({ returning: () => mockDomainUpdate() }),
+        };
+      },
+    }),
+    select: () => ({
+      from: () => ({
+        innerJoin: () => ({ where: () => mockRecipientSelect() }),
+        where: () => ({ limit: () => mockDomainSelect() }),
+      }),
+    }),
+  };
+
+  return { ...actual, drizzleDb };
+});
 
 vi.mock("~/server/aws/ses", () => ({
   getDomainIdentity: mockGetDomainIdentity,
@@ -106,9 +134,10 @@ describe("domain-service", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-09T12:00:00.000Z"));
 
-    mockDb.domain.update.mockReset();
-    mockDb.domain.findUnique.mockReset();
-    mockDb.teamUser.findMany.mockReset();
+    mockDomainUpdate.mockReset();
+    mockDomainSelect.mockReset();
+    mockRecipientSelect.mockReset();
+    capturedUpdate.value = undefined;
     mockGetDomainIdentity.mockReset();
     mockWebhookEmit.mockReset();
     mockRedis.mget.mockReset();
@@ -122,9 +151,9 @@ describe("domain-service", () => {
       "<p>domain status</p>",
     );
     mockRedis.set.mockResolvedValue("OK");
-    mockDb.teamUser.findMany.mockResolvedValue([
-      { user: { email: "alice@example.com" } },
-      { user: { email: "bob@example.com" } },
+    mockRecipientSelect.mockResolvedValue([
+      { email: "alice@example.com" },
+      { email: "bob@example.com" },
     ]);
     mockResolveTxt.mockImplementation(
       (_name: string, cb: (err: Error | null, value?: string[][]) => void) => {
@@ -145,7 +174,7 @@ describe("domain-service", () => {
       },
       VerificationStatus: DomainStatus.SUCCESS,
     });
-    mockDb.domain.update.mockResolvedValue(
+    mockDomainUpdate.mockResolvedValue([
       createDomain({
         status: DomainStatus.SUCCESS,
         dkimStatus: DomainStatus.SUCCESS,
@@ -153,17 +182,15 @@ describe("domain-service", () => {
         dmarcAdded: true,
         isVerifying: false,
       }),
-    );
+    ]);
 
     const result = await refreshDomainVerification(domain);
 
-    expect(mockDb.domain.update).toHaveBeenCalledWith(
+    expect(capturedUpdate.value).toEqual(
       expect.objectContaining({
-        data: expect.objectContaining({
-          status: DomainStatus.SUCCESS,
-          isVerifying: false,
-          errorMessage: null,
-        }),
+        status: DomainStatus.SUCCESS,
+        isVerifying: false,
+        errorMessage: null,
       }),
     );
     expect(mockSendMail).toHaveBeenCalledTimes(2);
@@ -184,7 +211,7 @@ describe("domain-service", () => {
       },
       VerificationStatus: DomainStatus.FAILED,
     });
-    mockDb.domain.update.mockResolvedValue(
+    mockDomainUpdate.mockResolvedValue([
       createDomain({
         status: DomainStatus.FAILED,
         dkimStatus: DomainStatus.PENDING,
@@ -192,17 +219,15 @@ describe("domain-service", () => {
         errorMessage: "MAIL_FROM_DOMAIN_NOT_VERIFIED",
         isVerifying: false,
       }),
-    );
+    ]);
 
     const result = await refreshDomainVerification(domain);
 
-    expect(mockDb.domain.update).toHaveBeenCalledWith(
+    expect(capturedUpdate.value).toEqual(
       expect.objectContaining({
-        data: expect.objectContaining({
-          status: DomainStatus.FAILED,
-          isVerifying: false,
-          errorMessage: "MAIL_FROM_DOMAIN_NOT_VERIFIED",
-        }),
+        status: DomainStatus.FAILED,
+        isVerifying: false,
+        errorMessage: "MAIL_FROM_DOMAIN_NOT_VERIFIED",
       }),
     );
     expect(mockSendMail).toHaveBeenCalledTimes(2);
@@ -228,7 +253,7 @@ describe("domain-service", () => {
       },
       VerificationStatus: DomainStatus.SUCCESS,
     });
-    mockDb.domain.update.mockResolvedValue(
+    mockDomainUpdate.mockResolvedValue([
       createDomain({
         status: DomainStatus.SUCCESS,
         dkimStatus: DomainStatus.SUCCESS,
@@ -236,7 +261,7 @@ describe("domain-service", () => {
         dmarcAdded: true,
         isVerifying: false,
       }),
-    );
+    ]);
 
     await refreshDomainVerification(domain);
 
@@ -260,7 +285,7 @@ describe("domain-service", () => {
       },
       VerificationStatus: DomainStatus.SUCCESS,
     });
-    mockDb.domain.update.mockResolvedValue(
+    mockDomainUpdate.mockResolvedValue([
       createDomain({
         status: DomainStatus.SUCCESS,
         dkimStatus: DomainStatus.SUCCESS,
@@ -268,7 +293,7 @@ describe("domain-service", () => {
         dmarcAdded: true,
         isVerifying: false,
       }),
-    );
+    ]);
 
     await refreshDomainVerification(domain);
 
@@ -301,7 +326,7 @@ describe("domain-service", () => {
       },
       VerificationStatus: DomainStatus.SUCCESS,
     });
-    mockDb.domain.update.mockResolvedValue(
+    mockDomainUpdate.mockResolvedValue([
       createDomain({
         status: DomainStatus.SUCCESS,
         dkimStatus: DomainStatus.SUCCESS,
@@ -309,7 +334,7 @@ describe("domain-service", () => {
         dmarcAdded: true,
         isVerifying: false,
       }),
-    );
+    ]);
 
     await Promise.all([
       refreshDomainVerification(domain),
@@ -317,7 +342,7 @@ describe("domain-service", () => {
     ]);
 
     expect(mockSendMail).toHaveBeenCalledTimes(2);
-    expect(mockDb.domain.update).toHaveBeenCalledTimes(2);
+    expect(mockDomainUpdate).toHaveBeenCalledTimes(2);
   });
 
   it("logs and continues when sending the status email fails", async () => {
@@ -332,7 +357,7 @@ describe("domain-service", () => {
       },
       VerificationStatus: DomainStatus.SUCCESS,
     });
-    mockDb.domain.update.mockResolvedValue(
+    mockDomainUpdate.mockResolvedValue([
       createDomain({
         status: DomainStatus.SUCCESS,
         dkimStatus: DomainStatus.SUCCESS,
@@ -340,7 +365,7 @@ describe("domain-service", () => {
         dmarcAdded: true,
         isVerifying: false,
       }),
-    );
+    ]);
     mockSendMail
       .mockRejectedValueOnce(new Error("mail failed"))
       .mockResolvedValueOnce(undefined);
@@ -348,7 +373,7 @@ describe("domain-service", () => {
     const result = await refreshDomainVerification(domain);
 
     expect(result.status).toBe(DomainStatus.SUCCESS);
-    expect(mockDb.domain.update).toHaveBeenCalled();
+    expect(mockDomainUpdate).toHaveBeenCalled();
     expect(wasLastNotifiedStatusStored()).toBe(false);
   });
 

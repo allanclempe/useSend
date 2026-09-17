@@ -2,15 +2,19 @@ import dns from "dns";
 import util from "util";
 import * as tldts from "tldts";
 import * as ses from "~/server/aws/ses";
-import { db } from "~/server/db";
 import { env } from "~/env";
 import { renderDomainVerificationStatusEmail } from "~/server/email-templates";
 import { logger } from "~/server/logger/log";
 import { sendMail } from "~/server/mailer";
 import { getRedis, redisKey } from "~/server/redis";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+
+type Domain = typeof schema.domain.$inferSelect;
 import { SesSettingsService } from "./ses-settings-service";
 import { UnsendApiError } from "../public-api/api-error";
-import { ApiKey, DomainStatus, type Domain } from "@prisma/client";
+import { ApiKey, DomainStatus } from "@prisma/client";
+import { and, desc, eq } from "drizzle-orm";
 import {
   type DomainPayload,
   type DomainWebhookEventType,
@@ -248,16 +252,13 @@ async function sendDomainStatusNotification({
   previousStatus: DomainStatus;
 }) {
   const recipients = (
-    await db.teamUser.findMany({
-      where: {
-        teamId: domain.teamId,
-      },
-      include: {
-        user: true,
-      },
-    })
+    await drizzleDb
+      .select({ email: schema.user.email })
+      .from(schema.teamUser)
+      .innerJoin(schema.user, eq(schema.user.id, schema.teamUser.userId))
+      .where(eq(schema.teamUser.teamId, domain.teamId))
   )
-    .map((teamUser) => teamUser.user?.email)
+    .map((row) => row.email)
     .filter((email): email is string => Boolean(email));
 
   if (recipients.length === 0) {
@@ -346,9 +347,16 @@ export async function validateDomainFromEmail(email: string, teamId: number) {
     });
   }
 
-  const domain = await db.domain.findFirst({
-    where: { name: fromDomain, teamId },
-  });
+  const [domain] = await drizzleDb
+    .select()
+    .from(schema.domain)
+    .where(
+      and(
+        eq(schema.domain.name, fromDomain),
+        eq(schema.domain.teamId, teamId),
+      ),
+    )
+    .limit(1);
 
   if (!domain) {
     throw new UnsendApiError({
@@ -430,8 +438,9 @@ export async function createDomain(
     dkimSelector,
   );
 
-  const domain = await db.domain.create({
-    data: {
+  const [domain] = await drizzleDb
+    .insert(schema.domain)
+    .values({
       name,
       publicKey,
       teamId,
@@ -441,8 +450,16 @@ export async function createDomain(
       dkimSelector,
       dkimStatus: DomainStatus.NOT_STARTED,
       spfDetails: DomainStatus.NOT_STARTED,
-    },
-  });
+      updatedAt: new Date(),
+    })
+    .returning();
+
+  if (!domain) {
+    throw new UnsendApiError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Failed to create domain",
+    });
+  }
 
   await emitDomainEvent(domain, "domain.created");
 
@@ -450,12 +467,11 @@ export async function createDomain(
 }
 
 export async function getDomain(id: number, teamId: number) {
-  let domain = await db.domain.findUnique({
-    where: {
-      id,
-      teamId,
-    },
-  });
+  const [domain] = await drizzleDb
+    .select()
+    .from(schema.domain)
+    .where(and(eq(schema.domain.id, id), eq(schema.domain.teamId, teamId)))
+    .limit(1);
 
   if (!domain) {
     throw new UnsendApiError({
@@ -476,7 +492,13 @@ export async function refreshDomainVerification(
 ): Promise<DomainVerificationRefreshResult> {
   const domain =
     typeof domainOrId === "number"
-      ? await db.domain.findUnique({ where: { id: domainOrId } })
+      ? (
+          await drizzleDb
+            .select()
+            .from(schema.domain)
+            .where(eq(schema.domain.id, domainOrId))
+            .limit(1)
+        )[0]
       : domainOrId;
 
   if (!domain) {
@@ -506,23 +528,31 @@ export async function refreshDomainVerification(
   const dmarcRecord = _dmarcRecord?.[0]?.[0];
   const checkedAt = new Date();
 
-  const updatedDomain = await db.domain.update({
-    where: {
-      id: domain.id,
-    },
-    data: {
-      dkimStatus: dkimStatus ?? null,
-      spfDetails: spfDetails ?? null,
-      status: verificationStatus,
-      errorMessage: verificationError,
-      dmarcAdded: Boolean(dmarcRecord),
-      isVerifying: shouldContinueVerifying(
-        verificationStatus,
-        dkimStatus,
-        spfDetails,
-      ),
-    },
-  });
+  const [updatedDomain] = await drizzleDb
+    .update(schema.domain)
+    .set(
+      withUpdatedAt({
+        dkimStatus: dkimStatus ?? null,
+        spfDetails: spfDetails ?? null,
+        status: verificationStatus,
+        errorMessage: verificationError,
+        dmarcAdded: Boolean(dmarcRecord),
+        isVerifying: shouldContinueVerifying(
+          verificationStatus,
+          dkimStatus,
+          spfDetails,
+        ),
+      }),
+    )
+    .where(eq(schema.domain.id, domain.id))
+    .returning();
+
+  if (!updatedDomain) {
+    throw new UnsendApiError({
+      code: "NOT_FOUND",
+      message: "Domain not found",
+    });
+  }
 
   await setDomainVerificationCheckedAt(domain.id, checkedAt);
 
@@ -603,10 +633,15 @@ export async function updateDomain(
   id: number,
   data: { clickTracking?: boolean; openTracking?: boolean },
 ) {
-  const updated = await db.domain.update({
-    where: { id },
-    data,
-  });
+  const [updated] = await drizzleDb
+    .update(schema.domain)
+    .set(withUpdatedAt(data))
+    .where(eq(schema.domain.id, id))
+    .returning();
+
+  if (!updated) {
+    throw new Error("Domain not found");
+  }
 
   await emitDomainEvent(updated, "domain.updated");
 
@@ -614,9 +649,11 @@ export async function updateDomain(
 }
 
 export async function deleteDomain(id: number) {
-  const domain = await db.domain.findUnique({
-    where: { id },
-  });
+  const [domain] = await drizzleDb
+    .select()
+    .from(schema.domain)
+    .where(eq(schema.domain.id, id))
+    .limit(1);
 
   if (!domain) {
     throw new Error("Domain not found");
@@ -632,7 +669,14 @@ export async function deleteDomain(id: number) {
     throw new Error("Error in deleting domain");
   }
 
-  const deletedRecord = await db.domain.delete({ where: { id } });
+  const [deletedRecord] = await drizzleDb
+    .delete(schema.domain)
+    .where(eq(schema.domain.id, id))
+    .returning();
+
+  if (!deletedRecord) {
+    throw new Error("Domain not found");
+  }
   try {
     await clearDomainVerificationState(id);
   } catch (error) {
@@ -651,15 +695,16 @@ export async function getDomains(
   teamId: number,
   options?: { domainId?: number },
 ) {
-  const domains = await db.domain.findMany({
-    where: {
-      teamId,
-      ...(options?.domainId ? { id: options.domainId } : {}),
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  const domains = await drizzleDb
+    .select()
+    .from(schema.domain)
+    .where(
+      and(
+        eq(schema.domain.teamId, teamId),
+        options?.domainId ? eq(schema.domain.id, options.domainId) : undefined,
+      ),
+    )
+    .orderBy(desc(schema.domain.createdAt));
 
   return domains.map((d) => withDnsRecords(d));
 }
