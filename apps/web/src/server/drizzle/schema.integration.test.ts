@@ -96,6 +96,27 @@ describeIntegration("drizzle schema matches prisma", () => {
     expect(created.plan).toBe("BASIC");
   });
 
+  it("defaults ContactBook.variables to an empty array", async () => {
+    // Same drizzle-kit bug as domainIds below, but for a text[] column it emits
+    // `.default(["RAY"])` — quoted, so it compiles and is silently wrong rather
+    // than failing the build. An insert omitting `variables` would write the
+    // string "RAY" into the column.
+    const team = await db.team.create({ data: { name: "textarray" } });
+
+    const [inserted] = await drizzleDb
+      .insert(schema.contactBook)
+      .values({
+        id: "cb_default_test",
+        name: "defaults",
+        teamId: team.id,
+        properties: {},
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    expect(inserted?.variables).toEqual([]);
+  });
+
   it("defaults Webhook.domainIds to an empty array", async () => {
     // drizzle-kit mangles this column's ARRAY[]::integer[] default into
     // `.default([RAY])`; the pull script repairs it. Guard against regressions.

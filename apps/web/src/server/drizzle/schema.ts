@@ -261,7 +261,7 @@ export const contactBook = pgTable("ContactBook", {
 	doubleOptInEnabled: boolean().default(false).notNull(),
 	doubleOptInSubject: text(),
 	doubleOptInContent: text(),
-	variables: text().array().default(["RAY"]).notNull(),
+	variables: text().array().default([]).notNull(),
 	doubleOptInFrom: text(),
 }, (table) => [
 	index("ContactBook_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
