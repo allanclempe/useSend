@@ -28,7 +28,7 @@ import { performance } from "node:perf_hooks";
 import { EmailRenderer } from "@usesend/email-editor/src/renderer";
 import { convert as htmlToText } from "html-to-text";
 import nodemailer from "nodemailer";
-import { createHmac, scryptSync } from "node:crypto";
+import { createHmac, randomBytes, scryptSync } from "node:crypto";
 import { describe, it } from "vitest";
 
 import { createSecureHash, verifySecureHash } from "~/server/crypto";
@@ -258,11 +258,27 @@ function deriveEvent(rawBody: string) {
   return { status, data, sesEmailId: event.mail.messageId, header };
 }
 
-/** `signBody` + `stringifyPayload` from `service/webhook-service.ts:1035`. */
+/**
+ * A signing key with production's exact shape, minted fresh on every run.
+ *
+ * `WebhookService.generateSecret` (`service/webhook-service.ts:299`) returns
+ * `whsec_` + 32 random bytes as hex, so a real key is 70 bytes — past the
+ * 64-byte SHA-256 block size, which means HMAC pre-hashes it. Key *length* is
+ * therefore part of what this case costs; the key's *value* is not. Hence
+ * `randomBytes` and not a literal: a hardcoded `whsec_…` string would measure
+ * exactly the same thing while tripping GitHub's secret scanner on every branch
+ * that carries this file, and a scanner that cries wolf on a known-fake value is
+ * how a real leak eventually gets waved through. Do not reintroduce one.
+ *
+ * Minted at module load, so it sits outside every timed sample.
+ */
+const WEBHOOK_SECRET = `whsec_${randomBytes(32).toString("hex")}`;
+
+/** `signBody` + `stringifyPayload` from `service/webhook-service.ts:1026`. */
 function signWebhook(payload: unknown) {
   const body = JSON.stringify(payload);
   const timestamp = Date.now().toString();
-  const hmac = createHmac("sha256", "whsec_2f6a1c8e5d40b1d0f7a4a8e4c1f9d3b2");
+  const hmac = createHmac("sha256", WEBHOOK_SECRET);
   hmac.update(`${timestamp}.${body}`);
   return `v1=${hmac.digest("hex")}`;
 }
