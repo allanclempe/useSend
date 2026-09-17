@@ -1,7 +1,13 @@
 import { randomUUID } from "crypto";
 import { getChildLogger, withLogger } from "../logger/log";
+import {
+  currentTraceparent,
+  startTrace,
+  withTraceContext,
+} from "../logger/trace-context";
 import { bullmqDriver } from "./bullmq-driver";
 import type {
+  BulkJob,
   EnqueueOptions,
   JobHandler,
   Queue,
@@ -20,11 +26,72 @@ export * from "./queue-constants";
  */
 const driver = bullmqDriver;
 
+/**
+ * Trace context rides on the message body as a W3C `traceparent`.
+ *
+ * The queue is the one hop where the trace would otherwise be lost: the
+ * producer's async context ends the moment the message is written, so the
+ * consumer would start with nothing to correlate against. Carrying it in the
+ * seam rather than at the call sites means every queue in the codebase gets it
+ * for free, and the Cloudflare Queues driver inherits it — the field is just
+ * another key on the message body, which any backend can carry.
+ *
+ * It is stripped again before the handler sees the job, so nothing downstream
+ * has to know it was ever there (#18).
+ */
+const TRACEPARENT_FIELD = "__traceparent";
+
+function injectTrace<T>(data: T): T {
+  const traceparent = currentTraceparent();
+  if (!traceparent || typeof data !== "object" || data === null) {
+    return data;
+  }
+  return { ...(data as object), [TRACEPARENT_FIELD]: traceparent } as T;
+}
+
+function extractTrace<T>(data: T): {
+  data: T;
+  traceparent: string | undefined;
+} {
+  if (
+    typeof data !== "object" ||
+    data === null ||
+    !(TRACEPARENT_FIELD in data)
+  ) {
+    return { data, traceparent: undefined };
+  }
+  const { [TRACEPARENT_FIELD]: traceparent, ...rest } = data as Record<
+    string,
+    unknown
+  >;
+  return {
+    data: rest as T,
+    traceparent: typeof traceparent === "string" ? traceparent : undefined,
+  };
+}
+
 export function createQueue<T>(
   name: string,
   defaults?: EnqueueOptions,
 ): Queue<T> {
-  return driver.createQueue<T>(name, defaults);
+  const queue = driver.createQueue<T>(name, defaults);
+
+  return {
+    get name() {
+      return queue.name;
+    },
+    enqueue: (jobName: string, data: T, options?: EnqueueOptions) =>
+      queue.enqueue(jobName, injectTrace(data), options),
+    enqueueBulk: (jobs: Array<BulkJob<T>>) =>
+      queue.enqueueBulk(
+        jobs.map((job) => ({ ...job, data: injectTrace(job.data) })),
+      ),
+    schedule: (id: string, spec: Parameters<Queue<T>["schedule"]>[1]) =>
+      queue.schedule(id, spec),
+    getJob: (id: string) => queue.getJob(id),
+    getStats: () => queue.getStats(),
+    close: () => queue.close(),
+  };
 }
 
 export function createWorker<T>(
@@ -32,7 +99,16 @@ export function createWorker<T>(
   handler: JobHandler<T>,
   options?: WorkerOptions<T>,
 ): Worker {
-  return driver.createWorker<T>(name, handler, options);
+  return driver.createWorker<T>(
+    name,
+    async (job) => {
+      const { data, traceparent } = extractTrace(job.data);
+      return await withTraceContext(startTrace(traceparent), () =>
+        handler(traceparent ? { ...job, data } : job),
+      );
+    },
+    options,
+  );
 }
 
 /**
