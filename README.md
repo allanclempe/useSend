@@ -59,7 +59,7 @@ We're currently working on opening useSend for public beta.
 ## Tech Stack
 
 - [Next.js](https://nextjs.org/) - Framework
-- [Prisma](https://www.prisma.io/) - ORM
+- [Drizzle](https://orm.drizzle.team/) - ORM
 - [Tailwind](https://tailwindcss.com/) - CSS
 - [shadcn/ui](https://ui.shadcn.com/) - Component Library
 - [NextAuth.js](https://next-auth.js.org/) - Authentication

@@ -5,11 +5,13 @@ import { getRedis } from "~/server/redis";
 export const integrationEnabled = process.env.RUN_INTEGRATION === "true";
 
 export async function resetDatabase() {
+  // Every table in `public` is a domain table. drizzle-kit keeps its migration
+  // journal in a separate `drizzle` schema, so unlike Prisma's
+  // `_prisma_migrations` there is no bookkeeping table to exclude here.
   const rows = await drizzleDb.execute<{ tablename: string }>(sql`
     SELECT tablename
     FROM pg_tables
     WHERE schemaname = 'public'
-      AND tablename != '_prisma_migrations'
   `);
 
   if (rows.length === 0) {

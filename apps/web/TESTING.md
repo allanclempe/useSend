@@ -55,7 +55,7 @@ Override values by exporting env vars before running tests.
 ## Notes
 
 - Integration suites only run when `RUN_INTEGRATION=true`.
-- Integration helpers truncate all public Postgres tables (except `_prisma_migrations`) and flush Redis DB before each test.
+- Integration helpers truncate all public Postgres tables and flush Redis DB before each test. drizzle-kit keeps its migration journal in a separate `drizzle` schema, so there is no bookkeeping table in `public` to exclude.
 - Queue and Redis tests rely on `REDIS_URL` test DB index to avoid polluting local dev state.
 
 ## CI

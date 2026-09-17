@@ -1,10 +1,21 @@
-// GENERATED FILE — do not edit.
-// Regenerate with: pnpm --filter=web db:drizzle-pull
-// Introspected from the live database; see scripts/drizzle-pull.js for the
-// fixups applied on top of drizzle-kit's output.
-/* eslint-disable */
+// The database schema, and the source of truth for it.
+//
+// Hand-authored. This was introspected from the Prisma-managed database while
+// the two ORMs ran side by side, which is why it still reads like generated
+// code — but Prisma is gone and there is nothing left to introspect from.
+// Edit this file, then `pnpm --filter=web db:generate` to write the migration.
+//
+// Indexes carry no explicit operator class. drizzle-kit pull emitted a `.op()`
+// on every indexed column, naming the default class for the column type — but
+// it got several wrong (a `timestamp_ops` on an enum, an `int4_ops` on text),
+// which Postgres rejects outright at CREATE INDEX. They were redundant even
+// where correct, since the database they were read from used the defaults.
+//
+// Timestamps are deliberately `mode: 'date'`, not drizzle-kit's default
+// `mode: 'string'`: the codebase does date arithmetic on scheduledAt,
+// lastSentAt and createdAt cutoffs all over.
 
-import { pgTable, varchar, timestamp, text, integer, index, serial, uniqueIndex, foreignKey, boolean, jsonb, primaryKey, bigint, pgEnum } from "drizzle-orm/pg-core"
+import { pgTable, timestamp, text, integer, index, serial, uniqueIndex, foreignKey, boolean, jsonb, primaryKey, bigint, pgEnum } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const apiPermission = pgEnum("ApiPermission", ['FULL', 'SENDING'])
@@ -28,7 +39,7 @@ export const verification = pgTable("Verification", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	index("Verification_identifier_idx").using("btree", table.identifier.asc().nullsLast().op("text_ops")),
+	index("Verification_identifier_idx").using("btree", table.identifier.asc().nullsLast()),
 ]);
 
 export const account = pgTable("Account", {
@@ -46,8 +57,8 @@ export const account = pgTable("Account", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	uniqueIndex("Account_providerId_accountId_key").using("btree", table.providerId.asc().nullsLast().op("text_ops"), table.accountId.asc().nullsLast().op("text_ops")),
-	index("Account_userId_idx").using("btree", table.userId.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("Account_providerId_accountId_key").using("btree", table.providerId.asc().nullsLast(), table.accountId.asc().nullsLast()),
+	index("Account_userId_idx").using("btree", table.userId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [user.id],
@@ -65,8 +76,8 @@ export const session = pgTable("Session", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	uniqueIndex("Session_token_key").using("btree", table.token.asc().nullsLast().op("text_ops")),
-	index("Session_userId_idx").using("btree", table.userId.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("Session_token_key").using("btree", table.token.asc().nullsLast()),
+	index("Session_userId_idx").using("btree", table.userId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [user.id],
@@ -79,7 +90,7 @@ export const teamUser = pgTable("TeamUser", {
 	userId: integer().notNull(),
 	role: role().notNull(),
 }, (table) => [
-	uniqueIndex("TeamUser_teamId_userId_key").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.userId.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("TeamUser_teamId_userId_key").using("btree", table.teamId.asc().nullsLast(), table.userId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -101,7 +112,7 @@ export const suppressionList = pgTable("SuppressionList", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 }, (table) => [
-	uniqueIndex("SuppressionList_teamId_email_key").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.email.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("SuppressionList_teamId_email_key").using("btree", table.teamId.asc().nullsLast(), table.email.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -162,8 +173,8 @@ export const campaign = pgTable("Campaign", {
 	scheduledAt: timestamp({ precision: 3, mode: 'date' }),
 	isApi: boolean().default(false).notNull(),
 }, (table) => [
-	index("Campaign_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
-	index("Campaign_status_scheduledAt_idx").using("btree", table.status.asc().nullsLast().op("timestamp_ops"), table.scheduledAt.asc().nullsLast().op("timestamp_ops")),
+	index("Campaign_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst()),
+	index("Campaign_status_scheduledAt_idx").using("btree", table.status.asc().nullsLast(), table.scheduledAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -191,7 +202,7 @@ export const domain = pgTable("Domain", {
 	sesTenantId: text(),
 	dkimSelector: text().default('usesend'),
 }, (table) => [
-	uniqueIndex("Domain_name_key").using("btree", table.name.asc().nullsLast().op("text_ops")),
+	uniqueIndex("Domain_name_key").using("btree", table.name.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -220,8 +231,8 @@ export const sesSetting = pgTable("SesSetting", {
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 	transactionalQuota: integer().default(50).notNull(),
 }, (table) => [
-	uniqueIndex("SesSetting_idPrefix_key").using("btree", table.idPrefix.asc().nullsLast().op("text_ops")),
-	uniqueIndex("SesSetting_region_key").using("btree", table.region.asc().nullsLast().op("text_ops")),
+	uniqueIndex("SesSetting_idPrefix_key").using("btree", table.idPrefix.asc().nullsLast()),
+	uniqueIndex("SesSetting_region_key").using("btree", table.region.asc().nullsLast()),
 ]);
 
 export const webhookCall = pgTable("WebhookCall", {
@@ -240,8 +251,8 @@ export const webhookCall = pgTable("WebhookCall", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 }, (table) => [
-	index("WebhookCall_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
-	index("WebhookCall_teamId_webhookId_status_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.webhookId.asc().nullsLast().op("int4_ops"), table.status.asc().nullsLast().op("int4_ops")),
+	index("WebhookCall_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst()),
+	index("WebhookCall_teamId_webhookId_status_idx").using("btree", table.teamId.asc().nullsLast(), table.webhookId.asc().nullsLast(), table.status.asc().nullsLast()),
 	foreignKey({
 			columns: [table.webhookId],
 			foreignColumns: [webhook.id],
@@ -266,8 +277,8 @@ export const contact = pgTable("Contact", {
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 	unsubscribeReason: unsubscribeReason(),
 }, (table) => [
-	uniqueIndex("Contact_contactBookId_email_key").using("btree", table.contactBookId.asc().nullsLast().op("text_ops"), table.email.asc().nullsLast().op("text_ops")),
-	index("Contact_contactBookId_id_idx").using("btree", table.contactBookId.asc().nullsLast().op("text_ops"), table.id.asc().nullsLast().op("text_ops")),
+	uniqueIndex("Contact_contactBookId_email_key").using("btree", table.contactBookId.asc().nullsLast(), table.email.asc().nullsLast()),
+	index("Contact_contactBookId_id_idx").using("btree", table.contactBookId.asc().nullsLast(), table.id.asc().nullsLast()),
 	foreignKey({
 			columns: [table.contactBookId],
 			foreignColumns: [contactBook.id],
@@ -292,7 +303,7 @@ export const webhook = pgTable("Webhook", {
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 	domainIds: integer().array().default([]).notNull(),
 }, (table) => [
-	index("Webhook_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
+	index("Webhook_teamId_idx").using("btree", table.teamId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -313,9 +324,9 @@ export const emailEvent = pgTable("EmailEvent", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	teamId: integer(),
 }, (table) => [
-	index("EmailEvent_createdAt_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamp_ops")),
-	index("EmailEvent_emailId_idx").using("btree", table.emailId.asc().nullsLast().op("text_ops")),
-	index("EmailEvent_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
+	index("EmailEvent_createdAt_idx").using("btree", table.createdAt.asc().nullsLast()),
+	index("EmailEvent_emailId_idx").using("btree", table.emailId.asc().nullsLast()),
+	index("EmailEvent_teamId_idx").using("btree", table.teamId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.emailId],
 			foreignColumns: [email.id],
@@ -347,9 +358,9 @@ export const email = pgTable("Email", {
 	inReplyToId: text(),
 	headers: text(),
 }, (table) => [
-	index("Email_campaignId_contactId_idx").using("btree", table.campaignId.asc().nullsLast().op("text_ops"), table.contactId.asc().nullsLast().op("text_ops")),
-	index("Email_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
-	uniqueIndex("Email_sesEmailId_key").using("btree", table.sesEmailId.asc().nullsLast().op("text_ops")),
+	index("Email_campaignId_contactId_idx").using("btree", table.campaignId.asc().nullsLast(), table.contactId.asc().nullsLast()),
+	index("Email_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst()),
+	uniqueIndex("Email_sesEmailId_key").using("btree", table.sesEmailId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -367,7 +378,7 @@ export const template = pgTable("Template", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 }, (table) => [
-	index("Template_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamp_ops")),
+	index("Template_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -383,7 +394,7 @@ export const teamInvite = pgTable("TeamInvite", {
 	createdAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).notNull(),
 }, (table) => [
-	uniqueIndex("TeamInvite_teamId_email_key").using("btree", table.teamId.asc().nullsLast().op("int4_ops"), table.email.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("TeamInvite_teamId_email_key").using("btree", table.teamId.asc().nullsLast(), table.email.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -404,7 +415,7 @@ export const apiKey = pgTable("ApiKey", {
 	teamId: integer().notNull(),
 	domainId: integer(),
 }, (table) => [
-	uniqueIndex("ApiKey_clientId_key").using("btree", table.clientId.asc().nullsLast().op("text_ops")),
+	uniqueIndex("ApiKey_clientId_key").using("btree", table.clientId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -437,7 +448,7 @@ export const team = pgTable("Team", {
 	isBlocked: boolean().default(false).notNull(),
 	isVerified: boolean().default(false).notNull(),
 }, (table) => [
-	uniqueIndex("Team_stripeCustomerId_key").using("btree", table.stripeCustomerId.asc().nullsLast().op("text_ops")),
+	uniqueIndex("Team_stripeCustomerId_key").using("btree", table.stripeCustomerId.asc().nullsLast()),
 ]);
 
 export const contactBook = pgTable("ContactBook", {
@@ -454,7 +465,7 @@ export const contactBook = pgTable("ContactBook", {
 	variables: text().array().default([]).notNull(),
 	doubleOptInFrom: text(),
 }, (table) => [
-	index("ContactBook_teamId_idx").using("btree", table.teamId.asc().nullsLast().op("int4_ops")),
+	index("ContactBook_teamId_idx").using("btree", table.teamId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.teamId],
 			foreignColumns: [team.id],
@@ -473,7 +484,7 @@ export const user = pgTable("User", {
 	emailVerified: boolean().default(false).notNull(),
 	updatedAt: timestamp({ precision: 3, mode: 'date' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-	uniqueIndex("User_email_key").using("btree", table.email.asc().nullsLast().op("text_ops")),
+	uniqueIndex("User_email_key").using("btree", table.email.asc().nullsLast()),
 ]);
 
 export const campaignEmail = pgTable("CampaignEmail", {
@@ -518,5 +529,8 @@ export const dailyEmailUsage = pgTable("DailyEmailUsage", {
 			foreignColumns: [team.id],
 			name: "DailyEmailUsage_teamId_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
-	primaryKey({ columns: [table.teamId, table.date, table.type, table.domainId], name: "DailyEmailUsage_pkey"}),
+	// Column order matches the database: (teamId, domainId, date, type).
+	// drizzle-kit pull listed these in table-definition order instead, which
+	// would have silently rebuilt the backing index on a different prefix.
+	primaryKey({ columns: [table.teamId, table.domainId, table.date, table.type], name: "DailyEmailUsage_pkey"}),
 ]);

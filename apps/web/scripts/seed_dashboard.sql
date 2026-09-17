@@ -1,7 +1,7 @@
 -- Seed data for a photogenic dashboard screenshot
 -- Postgres SQL compatible with the Prisma schema in apps/web/prisma/schema.prisma
 -- Usage:
---   psql "$DATABASE_URL" -f apps/web/prisma/seed_dashboard.sql
+--   psql "$DATABASE_URL" -f apps/web/scripts/seed_dashboard.sql
 
 BEGIN;
 

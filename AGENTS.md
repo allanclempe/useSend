@@ -17,7 +17,14 @@
 - `pnpm start:web:local`: Run only `apps/web` locally on port 3000.
 - `pnpm build`: Turbo build across the monorepo.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
-- Database (apps/web filter): `db:migrate-dev` | `db:push` | `db:studio`.
+- Database (apps/web filter): `db:generate` | `db:migrate` | `db:push` | `db:studio`.
+- Migrations are drizzle-kit's, in `apps/web/src/server/drizzle/migrations`. The workflow is: edit
+  `src/server/drizzle/schema.ts` (the hand-authored source of truth), run `pnpm --filter=web
+  db:generate` to write the SQL, then read the generated SQL before committing — drizzle-kit infers
+  intent from a schema diff and cannot tell a rename from a drop-and-add. `db:migrate` applies
+  migrations. There is no introspection step: nothing regenerates `schema.ts`.
+- drizzle-kit's journal is `drizzle.__drizzle_migrations`, in its own `drizzle` schema, so every
+  table in `public` is a domain table.
 - Database types and enums come from `~/types/db`, never from an ORM package directly. It is the
   one seam over `src/server/drizzle/schema.ts`: enum values (`EmailStatus.SENT`), row types
   (`Campaign`, `Domain`) and `JsonValue`. It is client-safe — it imports the schema with
@@ -61,7 +68,7 @@
 - Do not assert on the shape of a database call (`expect(mockDb.x.update).toHaveBeenCalledWith(...)`). That restates the input and passes even when the query is wrong. Assert on the row that came back, or capture the payload the builder actually received.
 - Integration tests require infra and env (`RUN_INTEGRATION=true` with Postgres/Redis available). Root commands `pnpm test:web:all` and `pnpm test:web:integration:full` auto-manage infra lifecycle.
 - Use `pnpm test:infra:up` / `pnpm test:infra:down` when running targeted integration commands manually.
-- `pnpm test:web:integration:full` and `test:integration:prepare` run Prisma migrations (`prisma migrate deploy`); never run these unless the user explicitly asks. The one safe path is `test:integration:prepare:local`, which `pnpm test:web:all` uses: its `DATABASE_URL` is hardcoded to the `usesend_test` container that `test:infra:up`/`down` creates and destroys per run, so it cannot reach a dev or production database.
+- `pnpm test:web:integration:full` and `test:integration:prepare` run migrations (`drizzle-kit migrate`); never run these unless the user explicitly asks, because they take `DATABASE_URL` from the environment and will migrate whatever it points at. The one safe path is `test:integration:prepare:local`, which `pnpm test:web:all` uses: its `DATABASE_URL` is hardcoded to the `usesend_test` container that `test:infra:up`/`down` creates and destroys per run, so it cannot reach a dev or production database. It takes an empty container to the current schema.
 - Test defaults are cloud mode (`NEXT_PUBLIC_IS_CLOUD=true`); keep new tests compatible with cloud behavior unless the task says otherwise.
 - Run the tests when you finish a change, before reporting it done. Always `pnpm --filter=web typecheck`, then the suites your change touches; use `pnpm test:web:all` when it touches services, queues, jobs, or the database. Report what you actually ran and what it said — if a suite was skipped or failed, say so rather than describing the change as complete.
 

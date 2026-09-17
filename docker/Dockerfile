@@ -64,15 +64,12 @@ COPY --from=installer  /app/apps/web/.next/standalone ./
 COPY --from=installer  /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=installer  /app/apps/web/public ./apps/web/public
 
-# Copy prisma files
-COPY --from=installer  /app/apps/web/prisma/schema.prisma ./apps/web/prisma/schema.prisma
-COPY --from=installer  /app/apps/web/prisma/migrations ./apps/web/prisma/migrations
-COPY --from=installer  /app/apps/web/node_modules/prisma ./node_modules/prisma
-COPY --from=installer  /app/apps/web/node_modules/@prisma ./node_modules/@prisma
-
-# Symlink the prisma binary
-RUN mkdir node_modules/.bin
-RUN ln -s /app/node_modules/prisma/build/index.js ./node_modules/.bin/prisma
+# Copy the drizzle migration inputs. start.sh runs drizzle-kit via pnpx, so the
+# CLI itself does not need to be in the image — only the config, the schema it
+# points at, and the migration journal.
+COPY --from=installer  /app/apps/web/drizzle.config.ts ./apps/web/drizzle.config.ts
+COPY --from=installer  /app/apps/web/src/server/drizzle/schema.ts ./apps/web/src/server/drizzle/schema.ts
+COPY --from=installer  /app/apps/web/src/server/drizzle/migrations ./apps/web/src/server/drizzle/migrations
 
 # set this so it throws error where starting server
 ENV SKIP_ENV_VALIDATION="false"
