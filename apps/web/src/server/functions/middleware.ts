@@ -17,7 +17,10 @@ import {
   requireUser,
 } from "~/server/authorization";
 import { getChildLogger, withLogger } from "~/server/logger/log";
-import { newTraceContext, withTraceContext } from "~/server/logger/trace-context";
+import {
+  newTraceContext,
+  withTraceContext,
+} from "~/server/logger/trace-context";
 
 /**
  * The procedure ladder from `server/api/trpc.ts`, as TanStack Start
@@ -75,9 +78,7 @@ export const teamMiddleware = createMiddleware({ type: "function" }).server(
 export const teamAdminMiddleware = createMiddleware({
   type: "function",
 }).server(async ({ next }) => {
-  const { user, team, teamUser } = await requireTeamAdmin(
-    getRequest().headers,
-  );
+  const { user, team, teamUser } = await requireTeamAdmin(getRequest().headers);
 
   return withTraceContext(newTraceContext(), () =>
     withLogger(
@@ -104,11 +105,26 @@ export const instanceAdminMiddleware = createMiddleware({
  * tRPC versions worked (`domainProcedure.input(z.object({ id }))`) and it is
  * the property that makes the ownership check unskippable: you cannot name
  * the resource without going through the lookup that scopes it to your team.
+ *
+ * **Every one of them is `.passthrough()`, and it is not optional.** Start
+ * chains validators by feeding each one the *previous* one's output, so a
+ * plain `z.object()` here strips the fields the server function declared for
+ * itself before its own validator ever sees them: `updateDomain({ data: { id,
+ * clickTracking } })` would reach the handler as `{}`. No error, no warning —
+ * the field is simply gone. tRPC merged inputs instead, which is why the
+ * routers never had to think about this.
+ *
+ * The mirror image still applies and cannot be fixed here: the *function's*
+ * own validator strips the loader's field, so `data.id` is absent in any
+ * handler that declares a validator of its own — even though the inferred
+ * type of `data` claims it is there. **Read the resource from `context`**
+ * (`context.domain.id`, `context.contactBook.id`, …), never from `data`.
+ * That is what the loader put it there for.
  */
 
 export const domainMiddleware = createMiddleware({ type: "function" })
   .middleware([teamMiddleware])
-  .validator(z.object({ id: z.number() }))
+  .validator(z.object({ id: z.number() }).passthrough())
   .server(async ({ next, data, context }) => {
     const domain = await requireDomain(context.team.id, data.id);
     return next({ context: { domain } });
@@ -116,7 +132,7 @@ export const domainMiddleware = createMiddleware({ type: "function" })
 
 export const emailMiddleware = createMiddleware({ type: "function" })
   .middleware([teamMiddleware])
-  .validator(z.object({ id: z.string() }))
+  .validator(z.object({ id: z.string() }).passthrough())
   .server(async ({ next, data, context }) => {
     const email = await requireEmail(context.team.id, data.id);
     return next({ context: { email } });
@@ -124,7 +140,7 @@ export const emailMiddleware = createMiddleware({ type: "function" })
 
 export const apiKeyMiddleware = createMiddleware({ type: "function" })
   .middleware([teamMiddleware])
-  .validator(z.object({ id: z.number() }))
+  .validator(z.object({ id: z.number() }).passthrough())
   .server(async ({ next, data, context }) => {
     const apiKey = await requireApiKey(context.team.id, data.id);
     return next({ context: { apiKey } });
@@ -132,7 +148,7 @@ export const apiKeyMiddleware = createMiddleware({ type: "function" })
 
 export const contactBookMiddleware = createMiddleware({ type: "function" })
   .middleware([teamMiddleware])
-  .validator(z.object({ contactBookId: z.string() }))
+  .validator(z.object({ contactBookId: z.string() }).passthrough())
   .server(async ({ next, data, context }) => {
     const contactBook = await requireContactBook(
       context.team.id,
@@ -143,7 +159,7 @@ export const contactBookMiddleware = createMiddleware({ type: "function" })
 
 export const campaignMiddleware = createMiddleware({ type: "function" })
   .middleware([teamMiddleware])
-  .validator(z.object({ campaignId: z.string() }))
+  .validator(z.object({ campaignId: z.string() }).passthrough())
   .server(async ({ next, data, context }) => {
     const campaign = await requireCampaign(context.team.id, data.campaignId);
     return next({ context: { campaign } });
@@ -151,7 +167,7 @@ export const campaignMiddleware = createMiddleware({ type: "function" })
 
 export const templateMiddleware = createMiddleware({ type: "function" })
   .middleware([teamMiddleware])
-  .validator(z.object({ templateId: z.string() }))
+  .validator(z.object({ templateId: z.string() }).passthrough())
   .server(async ({ next, data, context }) => {
     const template = await requireTemplate(context.team.id, data.templateId);
     return next({ context: { template } });
