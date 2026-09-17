@@ -42,5 +42,6 @@
 ## Commit & Pull Request Guidelines
 
 - Prefer Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`). Git history shows frequent feat/fix usage.
+- Track the issue number as the commit scope: `feat(#42): …`, `refactor(#3): …`. Applies to PR titles too, since a squash merge uses the title as the subject. Still put `Closes #nnn` in the body — the scope alone does not close the issue.
 - PRs must include: clear description, linked issues, screenshots for UI changes, migration notes, and verification steps.
 - never run build,migration commands unless asked for
