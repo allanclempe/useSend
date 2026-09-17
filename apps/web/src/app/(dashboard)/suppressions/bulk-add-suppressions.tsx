@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api } from "~/trpc/react";
-import { SuppressionReason } from "@prisma/client";
+import { SuppressionReason } from "~/types/db";
 import {
   Dialog,
   DialogContent,

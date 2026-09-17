@@ -1,4 +1,3 @@
-import { EmailStatus } from "@prisma/client";
 import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 
@@ -29,6 +28,18 @@ export const env = createEnv({
       // VERCEL_URL doesn't include `https` so it cant be validated as a URL
       process.env.VERCEL ? z.string() : z.string().url(),
     ),
+    // Signs the better-auth session cookie. Deliberately NOT shared with
+    // NEXTAUTH_SECRET: the two never read each other's tokens, so there is
+    // nothing to gain from one value and a blast radius to lose. Generate with
+    // `openssl rand -base64 32`.
+    BETTER_AUTH_SECRET:
+      process.env.NODE_ENV === "production"
+        ? z.string()
+        : z.string().optional(),
+    // Optional. better-auth derives its base URL from the request when this is
+    // unset (`better-auth/dist/utils/url.mjs:68-71`); set it when a proxy makes
+    // the request headers unreliable.
+    BETTER_AUTH_URL: z.string().url().optional(),
     GITHUB_ID: z.string().optional(),
     GITHUB_SECRET: z.string().optional(),
     AWS_ACCESS_KEY_ID: z.string().optional(),
@@ -75,6 +86,14 @@ export const env = createEnv({
         .string()
         .optional()
         .transform((str) => (str ? parseInt(str, 10) : undefined)),
+    EMAIL_EVENT_RETENTION_DAYS: z
+        .string()
+        .optional()
+        .transform((str) => (str ? parseInt(str, 10) : undefined)),
+    WEBHOOK_CALL_RETENTION_DAYS: z
+        .string()
+        .optional()
+        .transform((str) => (str ? parseInt(str, 10) : undefined)),
   },
 
   /**
@@ -101,6 +120,8 @@ export const env = createEnv({
     NODE_ENV: process.env.NODE_ENV,
     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
+    BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     GITHUB_ID: process.env.GITHUB_ID,
     GITHUB_SECRET: process.env.GITHUB_SECRET,
     AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY,
@@ -137,6 +158,8 @@ export const env = createEnv({
     SMTP_USER: process.env.SMTP_USER,
     CONTACT_BOOK_ID: process.env.CONTACT_BOOK_ID,
     EMAIL_CLEANUP_DAYS: process.env.EMAIL_CLEANUP_DAYS,
+    EMAIL_EVENT_RETENTION_DAYS: process.env.EMAIL_EVENT_RETENTION_DAYS,
+    WEBHOOK_CALL_RETENTION_DAYS: process.env.WEBHOOK_CALL_RETENTION_DAYS,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

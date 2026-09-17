@@ -6,7 +6,7 @@ import * as relations from "./relations";
 import * as schema from "./schema";
 
 /**
- * Drizzle client, introduced alongside Prisma (issue #5).
+ * Drizzle client (issue #5).
  *
  * `postgres-js` rather than the Neon HTTP driver: there are interactive
  * transactions and a `pg_advisory_xact_lock` in the auth path, neither of which

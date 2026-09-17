@@ -1,4 +1,4 @@
-import { EmailUsageType } from "@prisma/client";
+import { EmailUsageType } from "~/types/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getCost,

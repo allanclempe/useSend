@@ -1,5 +1,7 @@
 import { env } from "~/env";
-import { db } from "~/server/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
 import { logger } from "~/server/logger/log";
 import { parseSesHook, SesHookParser } from "~/server/service/ses-hook-parser";
 import { SesSettingsService } from "~/server/service/ses-settings-service";
@@ -54,24 +56,20 @@ async function handleSubscription(message: any) {
   });
 
   const topicArn = message.TopicArn as string;
-  const setting = await db.sesSetting.findFirst({
-    where: {
-      topicArn,
-    },
-  });
+  const [setting] = await drizzleDb
+    .select()
+    .from(schema.sesSetting)
+    .where(eq(schema.sesSetting.topicArn, topicArn))
+    .limit(1);
 
   if (!setting) {
     return Response.json({ data: "Setting not found" });
   }
 
-  await db.sesSetting.update({
-    where: {
-      id: setting?.id,
-    },
-    data: {
-      callbackSuccess: true,
-    },
-  });
+  await drizzleDb
+    .update(schema.sesSetting)
+    .set(withUpdatedAt({ callbackSuccess: true }))
+    .where(eq(schema.sesSetting.id, setting.id));
 
   SesSettingsService.invalidateCache();
 

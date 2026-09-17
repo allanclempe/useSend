@@ -1,5 +1,7 @@
-import { ApiPermission } from "@prisma/client";
-import { db } from "../db";
+import { ApiPermission } from "~/types/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { withUpdatedAt } from "../drizzle/touch";
 import { randomBytes } from "crypto";
 import { smallNanoid } from "../nanoid";
 import { createSecureHash, verifySecureHash } from "../crypto";
@@ -19,14 +21,14 @@ export async function addApiKey({
   try {
     // Validate domain ownership if domainId is provided
     if (domainId !== undefined) {
-      const domain = await db.domain.findUnique({
-        where: { 
-          id: domainId,
-          teamId: teamId 
-        },
-        select: { id: true },
-      });
-      
+      const [domain] = await drizzleDb
+        .select({ id: schema.domain.id })
+        .from(schema.domain)
+        .where(
+          and(eq(schema.domain.id, domainId), eq(schema.domain.teamId, teamId)),
+        )
+        .limit(1);
+
       if (!domain) {
         throw new Error("DOMAIN_NOT_FOUND");
       }
@@ -38,8 +40,8 @@ export async function addApiKey({
 
     const apiKey = `us_${clientId}_${token}`;
 
-    await db.apiKey.create({
-      data: {
+    await drizzleDb.insert(schema.apiKey).values(
+      withUpdatedAt({
         name,
         permission: permission,
         teamId,
@@ -47,8 +49,8 @@ export async function addApiKey({
         tokenHash: hashedToken,
         partialToken: `${apiKey.slice(0, 6)}...${apiKey.slice(-3)}`,
         clientId,
-      },
-    });
+      }),
+    );
     return apiKey;
   } catch (error) {
     logger.error({ err: error }, "Error adding API key");
@@ -59,20 +61,27 @@ export async function addApiKey({
 export async function getTeamAndApiKey(apiKey: string) {
   const [, clientId, token] = apiKey.split("_") as [string, string, string];
 
-  const apiKeyRow = await db.apiKey.findUnique({
-    where: {
-      clientId,
-    },
-    include: {
-      domain: {
-        select: { id: true, name: true },
-      },
-    },
-  });
+  const [row] = await drizzleDb
+    .select({
+      apiKey: schema.apiKey,
+      domainId: schema.domain.id,
+      domainName: schema.domain.name,
+    })
+    .from(schema.apiKey)
+    .leftJoin(schema.domain, eq(schema.domain.id, schema.apiKey.domainId))
+    .where(eq(schema.apiKey.clientId, clientId))
+    .limit(1);
 
-  if (!apiKeyRow) {
+  if (!row) {
     return null;
   }
+
+  // Reshaped to Prisma's nested include for the public API auth path.
+  const apiKeyRow = {
+    ...row.apiKey,
+    domain:
+      row.domainId === null ? null : { id: row.domainId, name: row.domainName! },
+  };
 
   try {
     const isValid = await verifySecureHash(token, apiKeyRow.tokenHash);
@@ -80,13 +89,13 @@ export async function getTeamAndApiKey(apiKey: string) {
       return null;
     }
 
-    const team = await db.team.findUnique({
-      where: {
-        id: apiKeyRow.teamId,
-      },
-    });
+    const [team] = await drizzleDb
+      .select()
+      .from(schema.team)
+      .where(eq(schema.team.id, apiKeyRow.teamId))
+      .limit(1);
 
-    return { team, apiKey: apiKeyRow };
+    return { team: team ?? null, apiKey: apiKeyRow };
   } catch (error) {
     logger.error({ err: error }, "Error verifying API key");
     return null;
@@ -106,26 +115,35 @@ export async function updateApiKey({
 }) {
   try {
     if (domainId !== undefined && domainId !== null) {
-      const domain = await db.domain.findUnique({
-        where: {
-          id: domainId,
-          teamId: teamId,
-        },
-        select: { id: true },
-      });
+      const [domain] = await drizzleDb
+        .select({ id: schema.domain.id })
+        .from(schema.domain)
+        .where(
+          and(eq(schema.domain.id, domainId), eq(schema.domain.teamId, teamId)),
+        )
+        .limit(1);
 
       if (!domain) {
         throw new Error("DOMAIN_NOT_FOUND");
       }
     }
 
-    return await db.apiKey.update({
-      where: { id, teamId },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(domainId !== undefined && { domainId }),
-      },
-    });
+    const [updated] = await drizzleDb
+      .update(schema.apiKey)
+      .set(
+        withUpdatedAt({
+          ...(name !== undefined && { name }),
+          ...(domainId !== undefined && { domainId }),
+        }),
+      )
+      .where(and(eq(schema.apiKey.id, id), eq(schema.apiKey.teamId, teamId)))
+      .returning();
+
+    if (!updated) {
+      throw new Error("API key not found");
+    }
+
+    return updated;
   } catch (error) {
     logger.error({ err: error }, "Error updating API key");
     throw error;
@@ -134,11 +152,7 @@ export async function updateApiKey({
 
 export async function deleteApiKey(id: number) {
   try {
-    await db.apiKey.delete({
-      where: {
-        id,
-      },
-    });
+    await drizzleDb.delete(schema.apiKey).where(eq(schema.apiKey.id, id));
   } catch (error) {
     logger.error({ err: error }, "Error deleting API key");
     throw error;

@@ -1,6 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { PublicAPIApp } from "../../hono";
-import { db } from "~/server/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { UnsendApiError } from "../../api-error";
 import { deleteDomain as deleteDomainService } from "~/server/service/domain-service";
 
@@ -67,12 +68,13 @@ function deleteDomain(app: PublicAPIApp) {
       });
     }
 
-    const domain = await db.domain.findFirst({
-      where: {
-        id: domainId,
-        teamId: team.id,
-      },
-    });
+    const [domain] = await drizzleDb
+      .select()
+      .from(schema.domain)
+      .where(
+        and(eq(schema.domain.id, domainId), eq(schema.domain.teamId, team.id)),
+      )
+      .limit(1);
 
     if (!domain) {
       throw new UnsendApiError({

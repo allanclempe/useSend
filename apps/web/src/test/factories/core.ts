@@ -1,5 +1,9 @@
-import { Role, type Prisma, type Team, type User } from "@prisma/client";
-import { db } from "~/server/db";
+import { Role } from "~/types/db";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+
+type UserInsert = typeof schema.user.$inferInsert;
+type TeamInsert = typeof schema.team.$inferInsert;
 
 let sequence = 1;
 
@@ -9,26 +13,37 @@ function nextValue() {
   return value;
 }
 
-export async function createUser(data?: Prisma.UserCreateInput): Promise<User> {
+export async function createUser(data?: Partial<UserInsert>) {
   const n = nextValue();
-  return db.user.create({
-    data: {
-      email: `user-${n}@example.com`,
-      isBetaUser: true,
-      isWaitlisted: false,
-      ...data,
-    },
-  });
+  const [user] = await drizzleDb
+    .insert(schema.user)
+    .values(
+      withUpdatedAt({
+        name: `User ${n}`,
+        email: `user-${n}@example.com`,
+        isBetaUser: true,
+        isWaitlisted: false,
+        ...data,
+      }),
+    )
+    .returning();
+
+  return user!;
 }
 
-export async function createTeam(data?: Prisma.TeamCreateInput): Promise<Team> {
+export async function createTeam(data?: Partial<TeamInsert>) {
   const n = nextValue();
-  return db.team.create({
-    data: {
-      name: `Team ${n}`,
-      ...data,
-    },
-  });
+  const [team] = await drizzleDb
+    .insert(schema.team)
+    .values(
+      withUpdatedAt({
+        name: `Team ${n}`,
+        ...data,
+      }),
+    )
+    .returning();
+
+  return team!;
 }
 
 export async function attachUserToTeam(
@@ -36,13 +51,12 @@ export async function attachUserToTeam(
   teamId: number,
   role: Role = Role.ADMIN,
 ) {
-  return db.teamUser.create({
-    data: {
-      userId,
-      teamId,
-      role,
-    },
-  });
+  const [teamUser] = await drizzleDb
+    .insert(schema.teamUser)
+    .values(withUpdatedAt({ userId, teamId, role }))
+    .returning();
+
+  return teamUser!;
 }
 
 export async function createTeamWithUser(role: Role = Role.ADMIN) {

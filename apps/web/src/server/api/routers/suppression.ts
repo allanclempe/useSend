@@ -1,4 +1,4 @@
-import { SuppressionReason } from "@prisma/client";
+import { SuppressionReason } from "~/types/db";
 import { z } from "zod";
 
 import { createTRPCRouter, teamProcedure } from "~/server/api/trpc";

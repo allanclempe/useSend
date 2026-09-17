@@ -4,7 +4,7 @@ import { api } from "~/trpc/react";
 import { useUrlState } from "~/hooks/useUrlState";
 import { Button } from "@usesend/ui/src/button";
 import Spinner from "@usesend/ui/src/spinner";
-import { CampaignStatus } from "@prisma/client";
+import { CampaignStatus } from "~/types/db";
 import {
   Select,
   SelectTrigger,

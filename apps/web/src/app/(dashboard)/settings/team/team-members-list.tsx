@@ -12,13 +12,13 @@ import { api } from "~/trpc/react";
 import { Button } from "@usesend/ui/src/button";
 import Spinner from "@usesend/ui/src/spinner";
 import { formatDistanceToNow } from "date-fns";
-import { Role } from "@prisma/client";
+import { Role } from "~/types/db";
 import { EditTeamMember } from "./edit-team-member";
 import { DeleteTeamMember } from "./delete-team-member";
 import { ResendTeamInvite } from "./resend-team-invite";
 import { DeleteTeamInvite } from "./delete-team-invite";
 import { useTeam } from "~/providers/team-context";
-import { useSession } from "next-auth/react";
+import { useSession } from "~/lib/auth-client";
 
 export default function TeamMembersList() {
   const { currentIsAdmin } = useTeam();

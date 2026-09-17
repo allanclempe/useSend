@@ -11,7 +11,7 @@ import {
   USAGE_UNIT_PRICE,
 } from "~/lib/usage";
 import { useTeam } from "~/providers/team-context";
-import { EmailUsageType } from "@prisma/client";
+import { EmailUsageType } from "~/types/db";
 import { PlanDetails } from "~/components/payments/PlanDetails";
 import { UpgradeButton } from "~/components/payments/UpgradeButton";
 import { Progress } from "@usesend/ui/src/progress";

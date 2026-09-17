@@ -1,6 +1,8 @@
 import { format, subDays } from "date-fns";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { db } from "~/server/db";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam } from "~/test/factories/core";
 import { getThisMonthUsage } from "~/server/service/usage-service";
 import {
   closeIntegrationConnections,
@@ -18,9 +20,9 @@ async function seedUsage(
   rows: Array<{ date: string; type: "TRANSACTIONAL" | "MARKETING"; sent: number }>,
 ) {
   for (const row of rows) {
-    await db.dailyEmailUsage.create({
-      data: { teamId, domainId, ...row },
-    });
+    await drizzleDb
+      .insert(schema.dailyEmailUsage)
+      .values(withUpdatedAt({ teamId, domainId, ...row }));
   }
 }
 
@@ -34,7 +36,7 @@ describeIntegration("usage-service", () => {
   });
 
   it("sums sent per type for the month and the day", async () => {
-    const team = await db.team.create({ data: { name: "usage" } });
+    const team = await createTeam({ name: "usage" });
 
     await seedUsage(team.id, 1, [
       { date: today(), type: "TRANSACTIONAL", sent: 5 },
@@ -54,7 +56,7 @@ describeIntegration("usage-service", () => {
   });
 
   it("returns sent as a number, not a bigint string", async () => {
-    const team = await db.team.create({ data: { name: "cast" } });
+    const team = await createTeam({ name: "cast" });
     await seedUsage(team.id, 1, [
       { date: today(), type: "TRANSACTIONAL", sent: 2 },
     ]);
@@ -68,7 +70,7 @@ describeIntegration("usage-service", () => {
   });
 
   it("scopes the day total to exactly today, not today-and-later", async () => {
-    const team = await db.team.create({ data: { name: "future" } });
+    const team = await createTeam({ name: "future" });
     const tomorrow = format(
       new Date(Date.now() + 24 * 60 * 60 * 1000),
       "yyyy-MM-dd",
@@ -91,8 +93,8 @@ describeIntegration("usage-service", () => {
   });
 
   it("excludes another team's usage", async () => {
-    const mine = await db.team.create({ data: { name: "mine" } });
-    const theirs = await db.team.create({ data: { name: "theirs" } });
+    const mine = await createTeam({ name: "mine" });
+    const theirs = await createTeam({ name: "theirs" });
 
     await seedUsage(mine.id, 1, [
       { date: today(), type: "TRANSACTIONAL", sent: 1 },
@@ -107,20 +109,18 @@ describeIntegration("usage-service", () => {
   });
 
   it("uses the subscription period start for a paid plan", async () => {
-    const team = await db.team.create({
-      data: { name: "paid", plan: "BASIC" },
-    });
+    const team = await createTeam({ name: "paid", plan: "BASIC" });
 
     // Period started 3 days ago, so a 10-day-old row is outside the window.
-    await db.subscription.create({
-      data: {
+    await drizzleDb.insert(schema.subscription).values(
+      withUpdatedAt({
         id: "sub_1",
         teamId: team.id,
         status: "active",
         priceId: "price_1",
         currentPeriodStart: subDays(new Date(), 3),
-      },
-    });
+      }),
+    );
 
     await seedUsage(team.id, 1, [
       { date: format(subDays(new Date(), 10), "yyyy-MM-dd"), type: "TRANSACTIONAL", sent: 50 },

@@ -12,7 +12,7 @@ import {
 import { api } from "~/trpc/react";
 import { useState } from "react";
 import { toast } from "@usesend/ui/src/toaster";
-import { Role } from "@prisma/client";
+import { Role } from "~/types/db";
 import { LogOut, Trash2 } from "lucide-react";
 
 export const DeleteTeamMember: React.FC<{

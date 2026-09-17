@@ -168,7 +168,7 @@ The webhook system allows users to receive real-time HTTP notifications when eve
 
 ### 1. Database Models
 
-Located in `apps/web/prisma/schema.prisma`:
+Located in `apps/web/src/server/drizzle/schema.ts`:
 
 ```
 Webhook
@@ -400,7 +400,7 @@ The webhook call details UI (`apps/web/src/app/(dashboard)/webhooks/[webhookId]/
 
 | File                                             | Purpose                     |
 | ------------------------------------------------ | --------------------------- |
-| `apps/web/prisma/schema.prisma`                  | Database models             |
+| `apps/web/src/server/drizzle/schema.ts`          | Database models             |
 | `apps/web/src/server/service/webhook-service.ts` | Core service & queue worker |
 | `apps/web/src/server/api/routers/webhook.ts`     | TRPC API routes             |
 | `apps/web/src/lib/constants/plans.ts`            | Webhook limits per plan     |

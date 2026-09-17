@@ -1,6 +1,6 @@
 "use client";
 
-import { WebhookCallStatus, type Webhook } from "@prisma/client";
+import { WebhookCallStatus, type Webhook } from "~/types/db";
 import { formatDistanceToNow } from "date-fns";
 import { Copy, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";

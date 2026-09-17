@@ -1,4 +1,4 @@
-import { WebhookCallStatus } from "@prisma/client";
+import { WebhookCallStatus } from "~/types/db";
 
 export function WebhookCallStatusBadge({
   status,

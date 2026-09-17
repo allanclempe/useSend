@@ -1,4 +1,6 @@
 import { initDomainVerificationJob } from "~/server/jobs/domain-verification-job";
+import { initEmailEventCleanupJob } from "~/server/jobs/email-event-cleanup-job";
+import { initWebhookCleanupJob } from "~/server/jobs/webhook-cleanup-job";
 import { isCloud, isEmailCleanupEnabled } from "~/utils/common";
 
 let initialized = false;
@@ -32,6 +34,10 @@ export async function register() {
     if (isEmailCleanupEnabled()) {
       await import("~/server/jobs/cleanup-email-bodies");
     }
+
+    // Both no-op unless their retention window is configured.
+    await initEmailEventCleanupJob();
+    await initWebhookCleanupJob();
 
     const { CampaignSchedulerService } = await import(
       "~/server/jobs/campaign-scheduler-job"

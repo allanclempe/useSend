@@ -6,7 +6,9 @@ import {
   protectedProcedure,
   domainProcedure,
 } from "~/server/api/trpc";
-import { db } from "~/server/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
 import {
   createDomain,
   deleteDomain,
@@ -38,11 +40,11 @@ export const domainRouter = createTRPCRouter({
       );
     }),
 
-  startVerification: domainProcedure.mutation(async ({ ctx, input }) => {
-    await ctx.db.domain.update({
-      where: { id: input.id },
-      data: { isVerifying: true },
-    });
+  startVerification: domainProcedure.mutation(async ({ input }) => {
+    await drizzleDb
+      .update(schema.domain)
+      .set(withUpdatedAt({ isVerifying: true }))
+      .where(eq(schema.domain.id, input.id));
   }),
 
   domains: teamProcedure.query(async ({ ctx }) => {
@@ -80,9 +82,13 @@ export const domainRouter = createTRPCRouter({
       },
       input,
     }) => {
-      const domain = await db.domain.findFirst({
-        where: { id: input.id, teamId: team.id },
-      });
+      const [domain] = await drizzleDb
+        .select()
+        .from(schema.domain)
+        .where(
+          and(eq(schema.domain.id, input.id), eq(schema.domain.teamId, team.id)),
+        )
+        .limit(1);
 
       if (!domain) {
         throw new Error("Domain not found");

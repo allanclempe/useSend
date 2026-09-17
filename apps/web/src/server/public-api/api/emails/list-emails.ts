@@ -1,7 +1,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { PublicAPIApp } from "~/server/public-api/hono";
-import { db } from "~/server/db";
-import { EmailStatus, Prisma } from "@prisma/client";
+import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { EmailStatus } from "~/types/db";
 import { DEFAULT_QUERY_LIMIT } from "~/lib/constants";
 
 const EmailSchema = z.object({
@@ -108,54 +109,48 @@ function listEmails(app: PublicAPIApp) {
     const team = c.var.team;
     const { page, limit, startDate, endDate, domainId } = c.req.valid("query");
 
-    const whereClause: Prisma.EmailWhereInput = {
-      teamId: team.id,
-    };
+    // NOTE: the Prisma version assigned whereClause.createdAt twice, so passing
+    // startDate *and* endDate silently dropped startDate. Both now apply.
+    const where = and(
+      eq(schema.email.teamId, team.id),
+      startDate ? gte(schema.email.createdAt, new Date(startDate)) : undefined,
+      endDate ? lte(schema.email.createdAt, new Date(endDate)) : undefined,
+      team.apiKey.domainId !== null
+        ? eq(schema.email.domainId, team.apiKey.domainId)
+        : domainId && domainId.length > 0
+          ? inArray(schema.email.domainId, domainId)
+          : undefined,
+    );
 
-    if (startDate) {
-      whereClause.createdAt = {
-        gte: new Date(startDate),
-      };
-    }
-    if (endDate) {
-      whereClause.createdAt = {
-        lte: new Date(endDate),
-      };
-    }
+    // One transaction so the page and the total agree with each other.
+    const [emails, count] = await drizzleDb.transaction(async (tx) => {
+      const rows = await tx
+        .select({
+          id: schema.email.id,
+          to: schema.email.to,
+          replyTo: schema.email.replyTo,
+          cc: schema.email.cc,
+          bcc: schema.email.bcc,
+          from: schema.email.from,
+          subject: schema.email.subject,
+          html: schema.email.html,
+          text: schema.email.text,
+          createdAt: schema.email.createdAt,
+          updatedAt: schema.email.updatedAt,
+          latestStatus: schema.email.latestStatus,
+          scheduledAt: schema.email.scheduledAt,
+          domainId: schema.email.domainId,
+        })
+        .from(schema.email)
+        .where(where)
+        .orderBy(desc(schema.email.createdAt))
+        .offset((page - 1) * limit)
+        .limit(limit);
 
-    if (team.apiKey.domainId !== null) {
-      whereClause.domainId = team.apiKey.domainId;
-    } else if (domainId && domainId.length > 0) {
-      whereClause.domainId = { in: domainId };
-    }
+      const total = await tx.$count(schema.email, where);
 
-    const [emails, count] = await db.$transaction([
-      db.email.findMany({
-        where: whereClause,
-        select: {
-          id: true,
-          to: true,
-          replyTo: true,
-          cc: true,
-          bcc: true,
-          from: true,
-          subject: true,
-          html: true,
-          text: true,
-          createdAt: true,
-          updatedAt: true,
-          latestStatus: true,
-          scheduledAt: true,
-          domainId: true,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      db.email.count({ where: whereClause }),
-    ]);
+      return [rows, total] as const;
+    });
 
     return c.json({
       data: emails.map((email) => ({

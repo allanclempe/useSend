@@ -1,4 +1,5 @@
-import { Email, EmailStatus, Prisma } from "@prisma/client";
+import { Email, EmailStatus, type JsonValue } from "~/types/db";
+import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { format, subDays } from "date-fns";
 import { z } from "zod";
 import { DEFAULT_QUERY_LIMIT } from "~/lib/constants";
@@ -10,13 +11,13 @@ import {
   emailProcedure,
   teamProcedure,
 } from "~/server/api/trpc";
-import { db } from "~/server/db";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { cancelEmail, updateEmail } from "~/server/service/email-service";
 
 const statuses = Object.values(EmailStatus) as [EmailStatus];
 
 const ensureBounceObject = (
-  data: Prisma.JsonValue,
+  data: JsonValue,
 ): Partial<SesBounce> | undefined => {
   const raw =
     typeof data === "string"
@@ -94,34 +95,42 @@ export const emailRouter = createTRPCRouter({
       const limit = DEFAULT_QUERY_LIMIT;
       const offset = (page - 1) * limit;
 
-      const emails = await db.$queryRaw<Array<Email>>`
-        SELECT
-          id,
-          "createdAt",
-          "latestStatus",
-          subject,
-          "to",
-          "scheduledAt"
-        FROM "Email"
-        WHERE "teamId" = ${ctx.team.id}
-        ${input.status ? Prisma.sql`AND "latestStatus"::text = ${input.status}` : Prisma.sql``}
-        ${input.domain ? Prisma.sql`AND "domainId" = ${input.domain}` : Prisma.sql``}
-        ${input.apiId ? Prisma.sql`AND "apiId" = ${input.apiId}` : Prisma.sql``}
-        ${
-          input.search
-            ? Prisma.sql`AND (
-          "subject" ILIKE ${`%${input.search}%`}
-          OR EXISTS (
-            SELECT 1 FROM unnest("to") AS email
-            WHERE email ILIKE ${`%${input.search}%`}
+      // The recipient search has to stay raw — it unnests a text[] column, and
+      // there is no query-builder form of that.
+      const matchesSearch = input.search
+        ? or(
+            ilike(schema.email.subject, `%${input.search}%`),
+            sql`EXISTS (
+              SELECT 1 FROM unnest(${schema.email.to}) AS recipient
+              WHERE recipient ILIKE ${`%${input.search}%`}
+            )`,
           )
-        )`
-            : Prisma.sql``
-        }
-        ORDER BY "createdAt" DESC
-        LIMIT ${DEFAULT_QUERY_LIMIT}
-        OFFSET ${offset}
-      `;
+        : undefined;
+
+      const emails = (await drizzleDb
+        .select({
+          id: schema.email.id,
+          createdAt: schema.email.createdAt,
+          latestStatus: schema.email.latestStatus,
+          subject: schema.email.subject,
+          to: schema.email.to,
+          scheduledAt: schema.email.scheduledAt,
+        })
+        .from(schema.email)
+        .where(
+          and(
+            eq(schema.email.teamId, ctx.team.id),
+            input.status
+              ? eq(schema.email.latestStatus, input.status)
+              : undefined,
+            input.domain ? eq(schema.email.domainId, input.domain) : undefined,
+            input.apiId ? eq(schema.email.apiId, input.apiId) : undefined,
+            matchesSearch,
+          ),
+        )
+        .orderBy(desc(schema.email.createdAt))
+        .limit(limit)
+        .offset(offset)) as unknown as Array<Email>;
 
       return { emails };
     }),
@@ -136,16 +145,18 @@ export const emailRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
-      const emails = await db.$queryRaw<
-        Array<{
+      // Kept raw: the LEFT JOIN LATERAL that pulls each email's most recent
+      // BOUNCED event has no query-builder equivalent.
+      const emails = (await drizzleDb.execute<
+        {
           to: string[];
           latestStatus: EmailStatus;
           subject: string;
           scheduledAt: Date | null;
           createdAt: Date;
-          bounceData: Prisma.JsonValue | null;
-        }>
-      >`
+          bounceData: JsonValue | null;
+        }
+      >(sql`
         SELECT
           e."to",
           e."latestStatus",
@@ -164,33 +175,40 @@ export const emailRouter = createTRPCRouter({
         WHERE e."teamId" = ${ctx.team.id}
         ${
           input.status
-            ? Prisma.sql`AND e."latestStatus"::text = ${input.status}`
-            : Prisma.sql``
+            ? sql`AND e."latestStatus"::text = ${input.status}`
+            : sql``
         }
         ${
           input.domain
-            ? Prisma.sql`AND e."domainId" = ${input.domain}`
-            : Prisma.sql``
+            ? sql`AND e."domainId" = ${input.domain}`
+            : sql``
         }
         ${
           input.apiId
-            ? Prisma.sql`AND e."apiId" = ${input.apiId}`
-            : Prisma.sql``
+            ? sql`AND e."apiId" = ${input.apiId}`
+            : sql``
         }
         ${
           input.search
-            ? Prisma.sql`AND (
+            ? sql`AND (
           e."subject" ILIKE ${`%${input.search}%`}
           OR EXISTS (
             SELECT 1 FROM unnest(e."to") AS email
             WHERE email ILIKE ${`%${input.search}%`}
           )
         )`
-            : Prisma.sql``
+            : sql``
         }
         ORDER BY e."createdAt" DESC
         LIMIT 10000
-      `;
+      `)) as unknown as Array<{
+        to: string[];
+        latestStatus: EmailStatus;
+        subject: string;
+        scheduledAt: Date | null;
+        createdAt: Date;
+        bounceData: JsonValue | null;
+      }>;
 
       return emails.map((email) => {
         const base = {
@@ -223,30 +241,42 @@ export const emailRouter = createTRPCRouter({
     }),
 
   getEmail: emailProcedure.query(async ({ input }) => {
-    const email = await db.email.findUnique({
-      where: {
-        id: input.id,
-      },
-      select: {
-        emailEvents: {
-          orderBy: {
-            status: "desc",
-          },
-        },
-        id: true,
-        createdAt: true,
-        latestStatus: true,
-        subject: true,
-        to: true,
-        from: true,
-        domainId: true,
-        text: true,
-        html: true,
-        scheduledAt: true,
-      },
-    });
+    const [email] = await drizzleDb
+      .select({
+        id: schema.email.id,
+        createdAt: schema.email.createdAt,
+        latestStatus: schema.email.latestStatus,
+        subject: schema.email.subject,
+        to: schema.email.to,
+        from: schema.email.from,
+        domainId: schema.email.domainId,
+        text: schema.email.text,
+        html: schema.email.html,
+        scheduledAt: schema.email.scheduledAt,
+      })
+      .from(schema.email)
+      .where(eq(schema.email.id, input.id))
+      .limit(1);
 
-    return email;
+    if (!email) {
+      return null;
+    }
+
+    const emailEventRows = await drizzleDb
+      .select()
+      .from(schema.emailEvent)
+      .where(eq(schema.emailEvent.emailId, input.id))
+      .orderBy(desc(schema.emailEvent.status));
+
+    // jsonb reads as `unknown` in Drizzle; the UI expects Prisma's JsonValue.
+    const emailEvents = emailEventRows.map((event) => ({
+      ...event,
+      data: event.data as JsonValue,
+    }));
+
+    const result = { ...email, emailEvents };
+
+    return result;
   }),
 
   cancelEmail: emailProcedure.mutation(async ({ input }) => {

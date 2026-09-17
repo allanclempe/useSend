@@ -12,7 +12,7 @@ import {
   Area,
 } from "recharts";
 import { EmailStatusIcon } from "../emails/email-status-badge";
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus } from "~/types/db";
 import { api } from "~/trpc/react";
 import Spinner from "@usesend/ui/src/spinner";
 import { useTheme } from "@usesend/ui";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useSession } from "next-auth/react";
+import { useSession } from "~/lib/auth-client";
 import { FullScreenLoading } from "~/components/FullScreenLoading";
 import { AddSesSettings } from "~/components/settings/AddSesSettings";
 import CreateTeam from "~/components/team/CreateTeam";

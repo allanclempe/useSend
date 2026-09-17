@@ -1,5 +1,7 @@
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { ApiPermission } from "@prisma/client";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { ApiPermission } from "~/types/db";
 
 import {
   apiKeyProcedure,
@@ -31,28 +33,27 @@ export const apiRouter = createTRPCRouter({
     }),
 
   getApiKeys: teamProcedure.query(async ({ ctx }) => {
-    const keys = await ctx.db.apiKey.findMany({
-      where: {
-        teamId: ctx.team.id,
-      },
-      select: {
-        id: true,
-        name: true,
-        permission: true,
-        partialToken: true,
-        lastUsed: true,
-        createdAt: true,
-        domainId: true,
-        domain: {
-          select: {
-            name: true,
-          },
-        },
-        },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const rows = await drizzleDb
+      .select({
+        id: schema.apiKey.id,
+        name: schema.apiKey.name,
+        permission: schema.apiKey.permission,
+        partialToken: schema.apiKey.partialToken,
+        lastUsed: schema.apiKey.lastUsed,
+        createdAt: schema.apiKey.createdAt,
+        domainId: schema.apiKey.domainId,
+        domainName: schema.domain.name,
+      })
+      .from(schema.apiKey)
+      .leftJoin(schema.domain, eq(schema.domain.id, schema.apiKey.domainId))
+      .where(eq(schema.apiKey.teamId, ctx.team.id))
+      .orderBy(desc(schema.apiKey.createdAt));
+
+    // Reshaped to Prisma's nested include so the settings page is unchanged.
+    const keys = rows.map(({ domainName, ...key }) => ({
+      ...key,
+      domain: domainName === null ? null : { name: domainName },
+    }));
 
     return keys;
   }),

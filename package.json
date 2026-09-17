@@ -25,15 +25,13 @@
     "lint": "turbo lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "db:generate": "pnpm db db:generate",
+    "db:migrate": "pnpm db db:migrate",
     "db:push": "pnpm db db:push",
-    "db:migrate-dev": "pnpm db db:migrate-dev",
-    "db:migrate-deploy": "pnpm db db:migrate-deploy",
-    "db:migrate-reset": "pnpm db db:migrate-reset",
     "db:studio": "pnpm db db:studio",
     "db": "pnpm load-env -- pnpm --filter=web",
     "load-env": "dotenv -e .env",
     "d": "pnpm dx && pnpm dev",
-    "dx": "pnpm i && pnpm dx:up && pnpm db:migrate-dev",
+    "dx": "pnpm i && pnpm dx:up && pnpm db:migrate",
     "dx:up": "docker compose --project-directory . -f docker/dev/compose.yml up -d",
     "dx:down": "docker compose --project-directory . -f docker/dev/compose.yml down"
   },
@@ -55,6 +53,13 @@
     "overrides": {
       "linkify-it@<=5.0.0": "5.0.1",
       "pnpm@<11.11.0": "11.11.0"
+    },
+    "packageExtensions": {
+      "@hookform/resolvers": {
+        "dependencies": {
+          "zod": "^3.24.3"
+        }
+      }
     }
   }
 }

@@ -1,4 +1,4 @@
-import { Contact } from "@prisma/client";
+import { Contact } from "~/types/db";
 import { getContactPropertyValue } from "~/lib/contact-properties";
 
 const CONTACT_VARIABLE_REGEX =

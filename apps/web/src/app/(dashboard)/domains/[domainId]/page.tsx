@@ -1,7 +1,7 @@
 "use client";
 
 import { api } from "~/trpc/react";
-import { DomainStatus } from "@prisma/client";
+import { DomainStatus } from "~/types/db";
 import {
   Breadcrumb,
   BreadcrumbItem,

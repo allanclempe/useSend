@@ -1,6 +1,6 @@
 "use client";
 
-import { CampaignStatus } from "@prisma/client";
+import { CampaignStatus } from "~/types/db";
 import { format } from "date-fns";
 import Link from "next/link";
 

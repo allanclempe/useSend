@@ -1,4 +1,4 @@
-import { EmailUsageType, Plan, Subscription } from "@prisma/client";
+import { EmailUsageType, Plan, Subscription } from "~/types/db";
 
 export const USAGE_UNIT_PRICE: Record<EmailUsageType, number> = {
   [EmailUsageType.MARKETING]: 0.001,

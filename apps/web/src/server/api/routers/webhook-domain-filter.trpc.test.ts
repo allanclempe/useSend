@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockDb, mockWebhookService } = vi.hoisted(() => ({
-  mockDb: {
-    teamUser: {
-      findFirst: vi.fn(),
-    },
-  },
+const { mockTeamUserFindFirst, mockWebhookService } = vi.hoisted(() => ({
+  mockTeamUserFindFirst: vi.fn(),
   mockWebhookService: {
     listWebhooks: vi.fn(),
     getWebhook: vi.fn(),
@@ -20,9 +16,18 @@ const { mockDb, mockWebhookService } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("~/server/db", () => ({
-  db: mockDb,
-}));
+// teamProcedure resolves ctx.team through Drizzle; the router's own queries
+// all go through the mocked WebhookService.
+vi.mock("~/server/drizzle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/server/drizzle")>();
+
+  return {
+    ...actual,
+    drizzleDb: {
+      query: { teamUser: { findFirst: mockTeamUserFindFirst } },
+    },
+  };
+});
 
 vi.mock("~/server/auth", () => ({
   getServerAuthSession: vi.fn(),
@@ -39,7 +44,6 @@ const createCaller = createCallerFactory(webhookRouter);
 
 function getContext() {
   return {
-    db: mockDb,
     headers: new Headers(),
     session: {
       user: {
@@ -55,11 +59,11 @@ function getContext() {
 
 describe("webhookRouter domain filters", () => {
   beforeEach(() => {
-    mockDb.teamUser.findFirst.mockReset();
+    mockTeamUserFindFirst.mockReset();
     mockWebhookService.createWebhook.mockReset();
     mockWebhookService.updateWebhook.mockReset();
 
-    mockDb.teamUser.findFirst.mockResolvedValue({
+    mockTeamUserFindFirst.mockResolvedValue({
       teamId: 10,
       userId: 42,
       role: "ADMIN",

@@ -1,4 +1,4 @@
-import { CampaignStatus } from "@prisma/client";
+import { CampaignStatus } from "~/types/db";
 
 interface CampaignStatusBadgeProps {
   status: CampaignStatus;

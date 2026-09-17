@@ -23,7 +23,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@usesend/ui/src/popover";
-import { type Webhook } from "@prisma/client";
+import { type Webhook } from "~/types/db";
 import { WebhookStatusBadge } from "./webhook-status-badge";
 
 export function WebhookList() {

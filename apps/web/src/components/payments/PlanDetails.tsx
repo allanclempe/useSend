@@ -1,4 +1,4 @@
-import { Plan } from "@prisma/client";
+import { Plan } from "~/types/db";
 import { PLAN_PERKS } from "~/lib/constants/payments";
 import { isEntitledSubscriptionStatus } from "~/lib/subscription-status";
 import { CheckCircle2 } from "lucide-react";

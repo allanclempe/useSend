@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { user, account, session, team, teamUser, email, emailEvent, apiKey, domain, contactBook, contact, template, teamInvite, subscription, suppressionList, campaign, webhook, webhookCall, dailyEmailUsage } from "./schema";
+import { user, account, session, team, teamUser, suppressionList, subscription, campaign, domain, webhook, webhookCall, contactBook, contact, email, emailEvent, template, teamInvite, apiKey, dailyEmailUsage } from "./schema";
 
 export const accountRelations = relations(account, ({one}) => ({
 	user: one(user, {
@@ -35,79 +35,23 @@ export const teamUserRelations = relations(teamUser, ({one}) => ({
 
 export const teamRelations = relations(team, ({many}) => ({
 	teamUsers: many(teamUser),
-	apiKeys: many(apiKey),
-	emails: many(email),
-	domains: many(domain),
-	contactBooks: many(contactBook),
-	templates: many(template),
-	teamInvites: many(teamInvite),
-	subscriptions: many(subscription),
 	suppressionLists: many(suppressionList),
+	subscriptions: many(subscription),
 	campaigns: many(campaign),
+	domains: many(domain),
 	webhookCalls: many(webhookCall),
 	webhooks: many(webhook),
+	emails: many(email),
+	templates: many(template),
+	teamInvites: many(teamInvite),
+	apiKeys: many(apiKey),
+	contactBooks: many(contactBook),
 	dailyEmailUsages: many(dailyEmailUsage),
 }));
 
-export const emailEventRelations = relations(emailEvent, ({one}) => ({
-	email: one(email, {
-		fields: [emailEvent.emailId],
-		references: [email.id]
-	}),
-}));
-
-export const emailRelations = relations(email, ({one, many}) => ({
-	emailEvents: many(emailEvent),
+export const suppressionListRelations = relations(suppressionList, ({one}) => ({
 	team: one(team, {
-		fields: [email.teamId],
-		references: [team.id]
-	}),
-}));
-
-export const apiKeyRelations = relations(apiKey, ({one}) => ({
-	team: one(team, {
-		fields: [apiKey.teamId],
-		references: [team.id]
-	}),
-	domain: one(domain, {
-		fields: [apiKey.domainId],
-		references: [domain.id]
-	}),
-}));
-
-export const domainRelations = relations(domain, ({one, many}) => ({
-	apiKeys: many(apiKey),
-	team: one(team, {
-		fields: [domain.teamId],
-		references: [team.id]
-	}),
-}));
-
-export const contactBookRelations = relations(contactBook, ({one, many}) => ({
-	team: one(team, {
-		fields: [contactBook.teamId],
-		references: [team.id]
-	}),
-	contacts: many(contact),
-}));
-
-export const contactRelations = relations(contact, ({one}) => ({
-	contactBook: one(contactBook, {
-		fields: [contact.contactBookId],
-		references: [contactBook.id]
-	}),
-}));
-
-export const templateRelations = relations(template, ({one}) => ({
-	team: one(team, {
-		fields: [template.teamId],
-		references: [team.id]
-	}),
-}));
-
-export const teamInviteRelations = relations(teamInvite, ({one}) => ({
-	team: one(team, {
-		fields: [teamInvite.teamId],
+		fields: [suppressionList.teamId],
 		references: [team.id]
 	}),
 }));
@@ -119,18 +63,19 @@ export const subscriptionRelations = relations(subscription, ({one}) => ({
 	}),
 }));
 
-export const suppressionListRelations = relations(suppressionList, ({one}) => ({
-	team: one(team, {
-		fields: [suppressionList.teamId],
-		references: [team.id]
-	}),
-}));
-
 export const campaignRelations = relations(campaign, ({one}) => ({
 	team: one(team, {
 		fields: [campaign.teamId],
 		references: [team.id]
 	}),
+}));
+
+export const domainRelations = relations(domain, ({one, many}) => ({
+	team: one(team, {
+		fields: [domain.teamId],
+		references: [team.id]
+	}),
+	apiKeys: many(apiKey),
 }));
 
 export const webhookCallRelations = relations(webhookCall, ({one}) => ({
@@ -153,6 +98,61 @@ export const webhookRelations = relations(webhook, ({one, many}) => ({
 	user: one(user, {
 		fields: [webhook.createdByUserId],
 		references: [user.id]
+	}),
+}));
+
+export const contactRelations = relations(contact, ({one}) => ({
+	contactBook: one(contactBook, {
+		fields: [contact.contactBookId],
+		references: [contactBook.id]
+	}),
+}));
+
+export const contactBookRelations = relations(contactBook, ({one, many}) => ({
+	contacts: many(contact),
+	team: one(team, {
+		fields: [contactBook.teamId],
+		references: [team.id]
+	}),
+}));
+
+export const emailEventRelations = relations(emailEvent, ({one}) => ({
+	email: one(email, {
+		fields: [emailEvent.emailId],
+		references: [email.id]
+	}),
+}));
+
+export const emailRelations = relations(email, ({one, many}) => ({
+	emailEvents: many(emailEvent),
+	team: one(team, {
+		fields: [email.teamId],
+		references: [team.id]
+	}),
+}));
+
+export const templateRelations = relations(template, ({one}) => ({
+	team: one(team, {
+		fields: [template.teamId],
+		references: [team.id]
+	}),
+}));
+
+export const teamInviteRelations = relations(teamInvite, ({one}) => ({
+	team: one(team, {
+		fields: [teamInvite.teamId],
+		references: [team.id]
+	}),
+}));
+
+export const apiKeyRelations = relations(apiKey, ({one}) => ({
+	team: one(team, {
+		fields: [apiKey.teamId],
+		references: [team.id]
+	}),
+	domain: one(domain, {
+		fields: [apiKey.domainId],
+		references: [domain.id]
 	}),
 }));
 

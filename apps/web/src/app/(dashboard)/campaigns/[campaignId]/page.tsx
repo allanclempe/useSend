@@ -14,7 +14,7 @@ import { H2 } from "@usesend/ui";
 import Spinner from "@usesend/ui/src/spinner";
 import { api } from "~/trpc/react";
 import { use } from "react";
-import { CampaignStatus } from "@prisma/client";
+import { CampaignStatus } from "~/types/db";
 import { formatDistanceToNow } from "date-fns";
 import TogglePauseCampaign from "../toggle-pause-campaign";
 import CampaignStatusBadge from "../../campaigns/campaign-status-badge";

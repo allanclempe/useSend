@@ -1,5 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { db } from "~/server/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -60,22 +63,28 @@ describeIntegration("campaign batch", () => {
     vi.clearAllMocks();
     mockCheckMultipleEmails.mockResolvedValue(new Map());
 
-    const team = await db.team.create({ data: { name: "batch-team" } });
+    const team = await createTeam({ name: "batch-team" });
     teamId = team.id;
-    const book = await db.contactBook.create({
-      data: { id: "book_b", name: "book", teamId, properties: {} },
-    });
-    contactBookId = book.id;
-    const domain = await db.domain.create({
-      data: {
-        name: "batch.example.com",
-        teamId,
-        publicKey: "pk",
-        region: "us-east-1",
-        dkimSelector: "usesend",
-      },
-    });
-    domainId = domain.id;
+    const [book] = await drizzleDb
+      .insert(schema.contactBook)
+      .values(
+        withUpdatedAt({ id: "book_b", name: "book", teamId, properties: {} }),
+      )
+      .returning();
+    contactBookId = book!.id;
+    const [domain] = await drizzleDb
+      .insert(schema.domain)
+      .values(
+        withUpdatedAt({
+          name: "batch.example.com",
+          teamId,
+          publicKey: "pk",
+          region: "us-east-1",
+          dkimSelector: "usesend",
+        }),
+      )
+      .returning();
+    domainId = domain!.id;
   });
 
   afterAll(async () => {
@@ -83,31 +92,41 @@ describeIntegration("campaign batch", () => {
   });
 
   async function makeCampaign(overrides: Record<string, unknown> = {}) {
-    return db.campaign.create({
-      data: {
-        id: `camp_${Math.random().toString(36).slice(2, 10)}`,
-        name: "camp",
-        teamId,
-        from: "hi@batch.example.com",
-        subject: "hello",
-        contactBookId,
-        domainId,
-        html: `<p>hi <a href="{{usesend_unsubscribe_url}}">unsub</a></p>`,
-        ...overrides,
-      },
-    });
+    const [campaign] = await drizzleDb
+      .insert(schema.campaign)
+      .values(
+        withUpdatedAt({
+          id: `camp_${Math.random().toString(36).slice(2, 10)}`,
+          name: "camp",
+          teamId,
+          from: "hi@batch.example.com",
+          subject: "hello",
+          contactBookId,
+          domainId,
+          html: `<p>hi <a href="{{usesend_unsubscribe_url}}">unsub</a></p>`,
+          ...overrides,
+        }),
+      )
+      .returning();
+
+    return campaign!;
   }
 
   async function makeContact(id: string) {
-    return db.contact.create({
-      data: {
-        id,
-        contactBookId,
-        email: `${id}@example.com`,
-        properties: {},
-        subscribed: true,
-      },
-    });
+    const [contact] = await drizzleDb
+      .insert(schema.contact)
+      .values(
+        withUpdatedAt({
+          id,
+          contactBookId,
+          email: `${id}@example.com`,
+          properties: {},
+          subscribed: true,
+        }),
+      )
+      .returning();
+
+    return contact!;
   }
 
   const failureInput = (campaign: any, contact: any) => ({
@@ -127,40 +146,46 @@ describeIntegration("campaign batch", () => {
     it("marks an existing campaign email as failed and records the error", async () => {
       const campaign = await makeCampaign();
       const contact = await makeContact("f_1");
-      const email = await db.email.create({
-        data: {
-          id: "em_existing",
-          teamId,
-          to: [contact.email],
-          from: campaign.from,
-          subject: campaign.subject,
-          domainId,
-          campaignId: campaign.id,
-          contactId: contact.id,
-        },
-      });
-      await db.campaignEmail.create({
-        data: {
-          campaignId: campaign.id,
-          contactId: contact.id,
-          emailId: email.id,
-        },
+      const [email] = await drizzleDb
+        .insert(schema.email)
+        .values(
+          withUpdatedAt({
+            id: "em_existing",
+            teamId,
+            to: [contact.email],
+            from: campaign.from,
+            subject: campaign.subject,
+            domainId,
+            campaignId: campaign.id,
+            contactId: contact.id,
+          }),
+        )
+        .returning();
+      await drizzleDb.insert(schema.campaignEmail).values({
+        campaignId: campaign.id,
+        contactId: contact.id,
+        emailId: email!.id,
       });
 
       await recordCampaignContactFailure(failureInput(campaign, contact));
 
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email!.id))
+        .limit(1);
       expect(stored?.latestStatus).toBe("FAILED");
 
-      const events = await db.emailEvent.findMany({
-        where: { emailId: email.id },
-      });
+      const events = await drizzleDb
+        .select()
+        .from(schema.emailEvent)
+        .where(eq(schema.emailEvent.emailId, email!.id));
       expect(events).toHaveLength(1);
       expect(events[0]?.status).toBe("FAILED");
       expect(events[0]?.data).toMatchObject({ error: "smtp exploded" });
 
       // No duplicate link created for an email that already had one.
-      expect(await db.campaignEmail.count()).toBe(1);
+      expect(await drizzleDb.$count(schema.campaignEmail)).toBe(1);
     });
 
     it("creates a failed email and campaign link when processing failed before persistence", async () => {
@@ -169,12 +194,15 @@ describeIntegration("campaign batch", () => {
 
       await recordCampaignContactFailure(failureInput(campaign, contact));
 
-      const emails = await db.email.findMany({ where: { teamId } });
+      const emails = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.teamId, teamId));
       expect(emails).toHaveLength(1);
       expect(emails[0]?.latestStatus).toBe("FAILED");
       expect(emails[0]?.to).toEqual([contact.email]);
 
-      const links = await db.campaignEmail.findMany({});
+      const links = await drizzleDb.select().from(schema.campaignEmail);
       expect(links).toHaveLength(1);
       expect(links[0]?.emailId).toBe(emails[0]?.id);
     });
@@ -182,26 +210,29 @@ describeIntegration("campaign batch", () => {
     it("reuses an email created before campaign linking failed", async () => {
       const campaign = await makeCampaign();
       const contact = await makeContact("f_3");
-      const orphan = await db.email.create({
-        data: {
-          id: "em_orphan",
-          teamId,
-          to: [contact.email],
-          from: campaign.from,
-          subject: campaign.subject,
-          domainId,
-          campaignId: campaign.id,
-          contactId: contact.id,
-        },
-      });
+      const [orphan] = await drizzleDb
+        .insert(schema.email)
+        .values(
+          withUpdatedAt({
+            id: "em_orphan",
+            teamId,
+            to: [contact.email],
+            from: campaign.from,
+            subject: campaign.subject,
+            domainId,
+            campaignId: campaign.id,
+            contactId: contact.id,
+          }),
+        )
+        .returning();
 
       await recordCampaignContactFailure(failureInput(campaign, contact));
 
       // The orphaned email is adopted rather than a second one created.
-      expect(await db.email.count()).toBe(1);
-      const links = await db.campaignEmail.findMany({});
+      expect(await drizzleDb.$count(schema.email)).toBe(1);
+      const links = await drizzleDb.select().from(schema.campaignEmail);
       expect(links).toHaveLength(1);
-      expect(links[0]?.emailId).toBe(orphan.id);
+      expect(links[0]?.emailId).toBe(orphan!.id);
     });
   });
 
@@ -213,9 +244,11 @@ describeIntegration("campaign batch", () => {
       await updateCampaignAnalytics(campaign.id, "OPENED");
       await updateCampaignAnalytics(campaign.id, "BOUNCED", true);
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.delivered).toBe(1);
       expect(stored?.opened).toBe(1);
       expect(stored?.bounced).toBe(1);
@@ -241,9 +274,11 @@ describeIntegration("campaign batch", () => {
         ),
       );
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.delivered).toBe(10);
     });
   });
@@ -265,13 +300,15 @@ describeIntegration("campaign batch", () => {
 
       await runBatch(campaign.id);
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.status).toBe("RUNNING");
       expect(stored?.lastCursor).toBe("b_2");
       expect(mockQueueEmail).toHaveBeenCalledTimes(2);
-      expect(await db.campaignEmail.count()).toBe(2);
+      expect(await drizzleDb.$count(schema.campaignEmail)).toBe(2);
     });
 
     it("resumes after the cursor without repeating contacts", async () => {
@@ -286,7 +323,7 @@ describeIntegration("campaign batch", () => {
 
       await runBatch(campaign.id);
 
-      const links = await db.campaignEmail.findMany({});
+      const links = await drizzleDb.select().from(schema.campaignEmail);
       expect(links.map((l) => l.contactId)).toEqual(["b_3"]);
     });
 
@@ -299,37 +336,40 @@ describeIntegration("campaign batch", () => {
 
       await runBatch(campaign.id);
 
-      const stored = await db.campaign.findUnique({
-        where: { id: campaign.id },
-      });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.campaign)
+        .where(eq(schema.campaign.id, campaign.id))
+        .limit(1);
       expect(stored?.status).toBe("SENT");
     });
 
     it("skips contacts that already have a campaign email", async () => {
       const campaign = await makeCampaign({ status: "RUNNING" });
       const contact = await makeContact("b_dup");
-      const email = await db.email.create({
-        data: {
-          id: "em_dup",
-          teamId,
-          to: [contact.email],
-          from: campaign.from,
-          subject: campaign.subject,
-          domainId,
-        },
-      });
-      await db.campaignEmail.create({
-        data: {
-          campaignId: campaign.id,
-          contactId: contact.id,
-          emailId: email.id,
-        },
+      const [email] = await drizzleDb
+        .insert(schema.email)
+        .values(
+          withUpdatedAt({
+            id: "em_dup",
+            teamId,
+            to: [contact.email],
+            from: campaign.from,
+            subject: campaign.subject,
+            domainId,
+          }),
+        )
+        .returning();
+      await drizzleDb.insert(schema.campaignEmail).values({
+        campaignId: campaign.id,
+        contactId: contact.id,
+        emailId: email!.id,
       });
 
       await runBatch(campaign.id);
 
       expect(mockQueueEmail).not.toHaveBeenCalled();
-      expect(await db.campaignEmail.count()).toBe(1);
+      expect(await drizzleDb.$count(schema.campaignEmail)).toBe(1);
     });
 
     it("does nothing for a paused campaign", async () => {
@@ -339,7 +379,7 @@ describeIntegration("campaign batch", () => {
       await runBatch(campaign.id);
 
       expect(mockQueueEmail).not.toHaveBeenCalled();
-      expect(await db.campaignEmail.count()).toBe(0);
+      expect(await drizzleDb.$count(schema.campaignEmail)).toBe(0);
     });
   });
 

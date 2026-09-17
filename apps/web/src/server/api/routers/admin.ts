@@ -1,11 +1,14 @@
-import { Prisma, type Plan } from "@prisma/client";
+import { type Plan } from "~/types/db";
+import { and, desc, eq, exists, gte, ilike, or, sql, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { env } from "~/env";
 
 import { createTRPCRouter, adminProcedure } from "~/server/api/trpc";
 import { SesSettingsService } from "~/server/service/ses-settings-service";
 import { getAccount } from "~/server/aws/ses";
-import { db } from "~/server/db";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
 import { sendMail } from "~/server/mailer";
 import { logger } from "~/server/logger/log";
 import { UseSend } from "usesend-js";
@@ -14,11 +17,11 @@ import { toPlainHtml } from "~/server/utils/email-content";
 import { sesRegionSchema } from "~/lib/zod/ses-setting-schema";
 
 const waitlistUserSelection = {
-  id: true,
-  email: true,
-  name: true,
-  isWaitlisted: true,
-  createdAt: true,
+  id: schema.user.id,
+  email: schema.user.email,
+  name: schema.user.name,
+  isWaitlisted: schema.user.isWaitlisted,
+  createdAt: schema.user.createdAt,
 } as const;
 
 function formatDisplayNameFromEmail(email: string) {
@@ -32,36 +35,41 @@ function formatDisplayNameFromEmail(email: string) {
     .join(" ");
 }
 
-const teamAdminSelection = {
-  id: true,
-  name: true,
-  plan: true,
-  apiRateLimit: true,
-  dailyEmailLimit: true,
-  isBlocked: true,
-  billingEmail: true,
-  createdAt: true,
-  teamUsers: {
-    select: {
-      role: true,
-      user: {
-        select: {
-          id: true,
-          email: true,
-          name: true,
-        },
-      },
-    },
-  },
-  domains: {
-    select: {
+/**
+ * Loads a team with the nested shape the admin UI expects.
+ *
+ * Uses Drizzle's relational query API rather than joins: teamUsers and domains
+ * are both one-to-many, so a single joined query would multiply rows and need
+ * reassembling by hand.
+ */
+async function findTeamForAdmin(where: SQL | undefined) {
+  const team = await drizzleDb.query.team.findFirst({
+    where,
+    columns: {
       id: true,
       name: true,
-      status: true,
-      isVerifying: true,
+      plan: true,
+      apiRateLimit: true,
+      dailyEmailLimit: true,
+      isBlocked: true,
+      billingEmail: true,
+      createdAt: true,
     },
-  },
-} as const;
+    with: {
+      teamUsers: {
+        columns: { role: true },
+        with: {
+          user: { columns: { id: true, email: true, name: true } },
+        },
+      },
+      domains: {
+        columns: { id: true, name: true, status: true, isVerifying: true },
+      },
+    },
+  });
+
+  return team ?? null;
+}
 
 export const adminRouter = createTRPCRouter({
   getSesSettings: adminProcedure.query(async () => {
@@ -137,10 +145,11 @@ export const adminRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const user = await db.user.findUnique({
-        where: { email: input.email },
-        select: waitlistUserSelection,
-      });
+      const [user] = await drizzleDb
+        .select(waitlistUserSelection)
+        .from(schema.user)
+        .where(eq(schema.user.email, input.email))
+        .limit(1);
 
       return user ?? null;
     }),
@@ -153,20 +162,25 @@ export const adminRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const existingUser = await db.user.findUnique({
-        where: { id: input.userId },
-        select: waitlistUserSelection,
-      });
+      const [existingUser] = await drizzleDb
+        .select(waitlistUserSelection)
+        .from(schema.user)
+        .where(eq(schema.user.id, input.userId))
+        .limit(1);
 
       if (!existingUser) {
         throw new Error("User not found");
       }
 
-      const updatedUser = await db.user.update({
-        where: { id: input.userId },
-        data: { isWaitlisted: input.isWaitlisted },
-        select: waitlistUserSelection,
-      });
+      const [updatedUser] = await drizzleDb
+        .update(schema.user)
+        .set(withUpdatedAt({ isWaitlisted: input.isWaitlisted }))
+        .where(eq(schema.user.id, input.userId))
+        .returning(waitlistUserSelection);
+
+      if (!updatedUser) {
+        throw new Error("User not found");
+      }
 
       const founderEmail = env.FOUNDER_EMAIL ?? undefined;
       const fallbackFrom = env.FROM_EMAIL ?? env.ADMIN_EMAIL ?? undefined;
@@ -266,10 +280,11 @@ export const adminRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ input }) => {
-      const user = await db.user.findUnique({
-        where: { id: input.userId },
-        select: waitlistUserSelection,
-      });
+      const [user] = await drizzleDb
+        .select(waitlistUserSelection)
+        .from(schema.user)
+        .where(eq(schema.user.id, input.userId))
+        .limit(1);
 
       if (!user) {
         throw new Error("User not found");
@@ -338,45 +353,56 @@ export const adminRouter = createTRPCRouter({
       }
 
       let team = numericId
-        ? await db.team.findUnique({
-            where: { id: numericId },
-            select: teamAdminSelection,
-          })
+        ? ((await findTeamForAdmin(eq(schema.team.id, numericId))) ?? null)
         : null;
 
       if (!team) {
-        team = await db.team.findFirst({
-          where: {
-            OR: [
-              { name: { equals: query, mode: "insensitive" } },
-              { billingEmail: { equals: query, mode: "insensitive" } },
-              {
-                teamUsers: {
-                  some: {
-                    user: {
-                      email: { equals: query, mode: "insensitive" },
-                    },
-                  },
-                },
-              },
-              {
-                domains: {
-                  some: {
-                    name: { equals: query, mode: "insensitive" },
-                  },
-                },
-              },
-              {
-                subscription: {
-                  some: {
-                    id: { equals: query, mode: "insensitive" },
-                  },
-                },
-              },
-            ],
-          },
-          select: teamAdminSelection,
-        });
+        // Prisma's relation filters become EXISTS subqueries rather than joins,
+        // so a team with several matching domains still yields one row.
+        team =
+          (await findTeamForAdmin(
+            or(
+              ilike(schema.team.name, query),
+              ilike(schema.team.billingEmail, query),
+              exists(
+                drizzleDb
+                  .select({ one: sql`1` })
+                  .from(schema.teamUser)
+                  .innerJoin(
+                    schema.user,
+                    eq(schema.user.id, schema.teamUser.userId),
+                  )
+                  .where(
+                    and(
+                      eq(schema.teamUser.teamId, schema.team.id),
+                      ilike(schema.user.email, query),
+                    ),
+                  ),
+              ),
+              exists(
+                drizzleDb
+                  .select({ one: sql`1` })
+                  .from(schema.domain)
+                  .where(
+                    and(
+                      eq(schema.domain.teamId, schema.team.id),
+                      ilike(schema.domain.name, query),
+                    ),
+                  ),
+              ),
+              exists(
+                drizzleDb
+                  .select({ one: sql`1` })
+                  .from(schema.subscription)
+                  .where(
+                    and(
+                      eq(schema.subscription.teamId, schema.team.id),
+                      ilike(schema.subscription.id, query),
+                    ),
+                  ),
+              ),
+            ),
+          )) ?? null;
       }
 
       return team ?? null;
@@ -395,13 +421,23 @@ export const adminRouter = createTRPCRouter({
     .mutation(async ({ input }) => {
       const { teamId, ...data } = input;
 
-      const updatedTeam = await db.team.update({
-        where: { id: teamId },
-        data,
-        select: teamAdminSelection,
-      });
+      const [updatedTeam] = await drizzleDb
+        .update(schema.team)
+        .set(withUpdatedAt(data))
+        .where(eq(schema.team.id, teamId))
+        .returning({ id: schema.team.id });
 
-      return updatedTeam;
+      if (!updatedTeam) {
+        throw new Error("Team not found");
+      }
+
+      const team = await findTeamForAdmin(eq(schema.team.id, teamId));
+
+      if (!team) {
+        throw new Error("Team not found");
+      }
+
+      return team;
     }),
 
   getEmailAnalytics: adminProcedure
@@ -435,30 +471,43 @@ export const adminRouter = createTRPCRouter({
         hardBounced: number;
       };
 
-      const rows = await db.$queryRaw<Array<EmailAnalyticsRow>>`
-        SELECT
-          d."teamId" AS "teamId",
-          t."name" AS name,
-          t."plan" AS plan,
-          SUM(d.sent)::integer AS sent,
-          SUM(d.delivered)::integer AS delivered,
-          SUM(d.opened)::integer AS opened,
-          SUM(d.clicked)::integer AS clicked,
-          SUM(d.bounced)::integer AS bounced,
-          SUM(d.complained)::integer AS complained,
-          SUM(d."hardBounced")::integer AS "hardBounced"
-        FROM "DailyEmailUsage" d
-        INNER JOIN "Team" t ON t.id = d."teamId"
-        WHERE 1 = 1
-        ${
-          timeframe === "today"
-            ? Prisma.sql`AND d."date" = ${today}`
-            : Prisma.sql`AND d."date" >= ${monthStart}`
-        }
-        ${paidOnly ? Prisma.sql`AND t."plan" = 'BASIC'` : Prisma.sql``}
-        GROUP BY d."teamId", t."name", t."plan"
-        ORDER BY sent DESC
-      `;
+      // A grouped join with per-column sums, expressible in the query builder.
+      // The ::integer casts stay: SUM over an integer column returns bigint,
+      // which postgres-js hands back as a string.
+      const sum = (column: AnyPgColumn) => sql<number>`SUM(${column})::integer`;
+
+      const rows: EmailAnalyticsRow[] = await drizzleDb
+        .select({
+          teamId: schema.dailyEmailUsage.teamId,
+          name: schema.team.name,
+          plan: schema.team.plan,
+          sent: sum(schema.dailyEmailUsage.sent),
+          delivered: sum(schema.dailyEmailUsage.delivered),
+          opened: sum(schema.dailyEmailUsage.opened),
+          clicked: sum(schema.dailyEmailUsage.clicked),
+          bounced: sum(schema.dailyEmailUsage.bounced),
+          complained: sum(schema.dailyEmailUsage.complained),
+          hardBounced: sum(schema.dailyEmailUsage.hardBounced),
+        })
+        .from(schema.dailyEmailUsage)
+        .innerJoin(
+          schema.team,
+          eq(schema.team.id, schema.dailyEmailUsage.teamId),
+        )
+        .where(
+          and(
+            timeframe === "today"
+              ? eq(schema.dailyEmailUsage.date, today)
+              : gte(schema.dailyEmailUsage.date, monthStart),
+            paidOnly ? eq(schema.team.plan, "BASIC") : undefined,
+          ),
+        )
+        .groupBy(
+          schema.dailyEmailUsage.teamId,
+          schema.team.name,
+          schema.team.plan,
+        )
+        .orderBy(desc(sum(schema.dailyEmailUsage.sent)));
 
       const totals = rows.reduce(
         (acc, row) => {

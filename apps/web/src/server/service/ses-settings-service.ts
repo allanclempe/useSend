@@ -1,5 +1,8 @@
-import { SesSetting } from "@prisma/client";
-import { db } from "../db";
+import { SesSetting } from "~/types/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { env } from "~/env";
 import * as sns from "~/server/aws/sns";
 import * as ses from "~/server/aws/ses";
@@ -9,6 +12,16 @@ import { smallNanoid } from "../nanoid";
 import { logger } from "../logger/log";
 import { sesRegionSchema } from "~/lib/zod/ses-setting-schema";
 
+/**
+ * Deliberately excludes SUBSCRIPTION. SES fires it when a recipient uses its
+ * subscription-management page, but `SesEventType` has no such member and
+ * `getEmailStatus` has no branch for it, so the event walked the whole pipeline
+ * and then failed on the NOT NULL `EmailEvent.status` insert -- which sent the
+ * job back through its full retry schedule, repeating the work each time.
+ *
+ * Subscribing to an event we cannot handle costs requests, queue operations and
+ * retries for nothing. Add it back only alongside a handler.
+ */
 const GENERAL_EVENTS: EventType[] = [
   "BOUNCE",
   "COMPLAINT",
@@ -17,7 +30,6 @@ const GENERAL_EVENTS: EventType[] = [
   "REJECT",
   "RENDERING_FAILURE",
   "SEND",
-  "SUBSCRIPTION",
 ];
 
 export class SesSettingsService {
@@ -96,17 +108,25 @@ export class SesSettingsService {
         throw new Error("Failed to create SNS topic");
       }
 
-      const setting = await db.sesSetting.create({
-        data: {
-          region,
-          callbackUrl: `${parsedUrl}/api/ses_callback`,
-          topic: topicName,
-          topicArn,
-          sesEmailRateLimit: sendingRateLimit,
-          transactionalQuota,
-          idPrefix,
-        },
-      });
+      const [setting] = await drizzleDb
+        .insert(schema.sesSetting)
+        .values(
+          withUpdatedAt({
+            id: createId(),
+            region,
+            callbackUrl: `${parsedUrl}/api/ses_callback`,
+            topic: topicName,
+            topicArn,
+            sesEmailRateLimit: sendingRateLimit,
+            transactionalQuota,
+            idPrefix,
+          }),
+        )
+        .returning();
+
+      if (!setting) {
+        throw new Error("Failed to create setting");
+      }
 
       settingId = setting.id;
 
@@ -150,11 +170,9 @@ export class SesSettingsService {
         }
       }
       if (settingId) {
-        await db.sesSetting.delete({
-          where: {
-            id: settingId,
-          },
-        });
+        await drizzleDb
+          .delete(schema.sesSetting)
+          .where(eq(schema.sesSetting.id, settingId));
       }
       await this.invalidateCache();
       logger.error({ err: error }, "Failed to create SES setting");
@@ -173,15 +191,20 @@ export class SesSettingsService {
   }) {
     await this.checkInitialized();
 
-    const setting = await db.sesSetting.update({
-      where: {
-        id,
-      },
-      data: {
-        transactionalQuota,
-        sesEmailRateLimit: sendingRateLimit,
-      },
-    });
+    const [setting] = await drizzleDb
+      .update(schema.sesSetting)
+      .set(
+        withUpdatedAt({
+          transactionalQuota,
+          sesEmailRateLimit: sendingRateLimit,
+        }),
+      )
+      .where(eq(schema.sesSetting.id, id))
+      .returning();
+
+    if (!setting) {
+      throw new Error("SES setting not found");
+    }
     logger.info(
       {
         transactionalQueue: EmailQueueService.transactionalQueue,
@@ -215,7 +238,7 @@ export class SesSettingsService {
   }
 
   static async invalidateCache() {
-    const settings = await db.sesSetting.findMany();
+    const settings = await drizzleDb.select().from(schema.sesSetting);
     this.cache = {};
     this.topicArns = [];
     settings.forEach((setting) => {
@@ -272,21 +295,28 @@ async function registerConfigurationSet(setting: SesSetting) {
     setting.region
   );
 
-  return await db.sesSetting.update({
-    where: {
-      id: setting.id,
-    },
-    data: {
-      configGeneral,
-      configGeneralSuccess: generalStatus,
-      configClick,
-      configClickSuccess: clickStatus,
-      configOpen,
-      configOpenSuccess: openStatus,
-      configFull,
-      configFullSuccess: fullStatus,
-    },
-  });
+  const [updated] = await drizzleDb
+    .update(schema.sesSetting)
+    .set(
+      withUpdatedAt({
+        configGeneral,
+        configGeneralSuccess: generalStatus,
+        configClick,
+        configClickSuccess: clickStatus,
+        configOpen,
+        configOpenSuccess: openStatus,
+        configFull,
+        configFullSuccess: fullStatus,
+      }),
+    )
+    .where(eq(schema.sesSetting.id, setting.id))
+    .returning();
+
+  if (!updated) {
+    throw new Error("SES setting not found");
+  }
+
+  return updated;
 }
 
 async function isValidUsesendUrl(url: string) {

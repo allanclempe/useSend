@@ -20,7 +20,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@usesend/ui/src/toaster";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Calendar } from "@usesend/ui/src/calendar";
-import { Campaign } from "@prisma/client";
+import { Campaign } from "~/types/db";
 import { format } from "date-fns";
 import { Spinner } from "@usesend/ui/src/spinner";
 

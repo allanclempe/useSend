@@ -3,7 +3,7 @@ import {
   SuppressionReason,
   UnsubscribeReason,
   type Email,
-} from "@prisma/client";
+} from "~/types/db";
 import {
   type EmailBasePayload,
   type EmailEventPayloadMap,
@@ -15,12 +15,15 @@ import {
   SesEvent,
   SesEventDataKey,
 } from "~/types/aws-types";
-import { db } from "../db";
 import {
   unsubscribeContact,
   updateCampaignAnalytics,
 } from "./campaign-service";
 import { env } from "~/env";
+import { and, eq, sql } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { createQueue, createWorker, SES_WEBHOOK_QUEUE } from "../queue";
 import { getChildLogger, logger, withLogger } from "../logger/log";
 import { randomUUID } from "crypto";
@@ -45,11 +48,11 @@ export async function parseSesHook(data: SesEvent) {
 
   logger.info({ mailStatus }, "Parsing ses hook");
 
-  let email = await db.email.findUnique({
-    where: {
-      sesEmailId,
-    },
-  });
+  let [email] = await drizzleDb
+    .select()
+    .from(schema.email)
+    .where(eq(schema.email.sesEmailId, sesEmailId))
+    .limit(1);
 
   // Handle race condition: If email not found by sesEmailId, try to find by custom header
   if (!email) {
@@ -58,18 +61,18 @@ export async function parseSesHook(data: SesEvent) {
     );
 
     if (emailIdHeader?.value) {
-      email = await db.email.findUnique({
-        where: {
-          id: emailIdHeader.value,
-        },
-      });
+      [email] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, emailIdHeader.value))
+        .limit(1);
 
       // If found, update the sesEmailId to fix the missing reference
       if (email) {
-        await db.email.update({
-          where: { id: email.id },
-          data: { sesEmailId },
-        });
+        await drizzleDb
+          .update(schema.email)
+          .set(withUpdatedAt({ sesEmailId }))
+          .where(eq(schema.email.id, email.id));
         logger.info(
           { emailId: email.id, sesEmailId },
           "Updated email with sesEmailId from webhook (race condition resolved)",
@@ -100,24 +103,33 @@ export async function parseSesHook(data: SesEvent) {
     mailStatus === EmailStatus.OPENED || mailStatus === EmailStatus.CLICKED;
   const existingMailEvent =
     email.campaignId || isEngagementEvent
-      ? await db.emailEvent.findFirst({
-          where: {
-            emailId: email.id,
-            status: mailStatus,
-          },
-        })
+      ? ((
+          await drizzleDb
+            .select({ id: schema.emailEvent.id })
+            .from(schema.emailEvent)
+            .where(
+              and(
+                eq(schema.emailEvent.emailId, email.id),
+                eq(schema.emailEvent.status, mailStatus),
+              ),
+            )
+            .limit(1)
+        )[0] ?? null)
       : null;
 
   // Update the latest status and to avoid race conditions
-  await db.$executeRaw`
+  // Kept as raw SQL on purpose. SES events arrive out of order, so the status
+  // only ever moves forward — a read-then-write would let a late DELIVERED
+  // overwrite a BOUNCED. The comparison relies on the enum's declaration order.
+  await drizzleDb.execute(sql`
       UPDATE "Email"
       SET "latestStatus" = CASE
-        WHEN ${mailStatus}::text::\"EmailStatus\" > "latestStatus" OR "latestStatus" IS NULL OR "latestStatus" = 'SCHEDULED'::\"EmailStatus\"
-        THEN ${mailStatus}::text::\"EmailStatus\"
+        WHEN ${mailStatus}::text::"EmailStatus" > "latestStatus" OR "latestStatus" IS NULL OR "latestStatus" = 'SCHEDULED'::"EmailStatus"
+        THEN ${mailStatus}::text::"EmailStatus"
         ELSE "latestStatus"
       END
       WHERE id = ${email.id}
-    `;
+    `);
 
   logger.info("Latest status updated");
 
@@ -213,35 +225,55 @@ export async function parseSesHook(data: SesEvent) {
     logger.info("Updating daily email usage");
     const updateField = mailStatus.toLowerCase();
 
-    await db.dailyEmailUsage.upsert({
-      where: {
-        teamId_domainId_date_type: {
+    // The counter to bump is chosen at runtime from the event type, so the
+    // column is looked up rather than named. Incremented in SQL: SES events for
+    // one team land concurrently and a read-then-write would drop them.
+    const usageColumns = {
+      delivered: schema.dailyEmailUsage.delivered,
+      opened: schema.dailyEmailUsage.opened,
+      clicked: schema.dailyEmailUsage.clicked,
+      bounced: schema.dailyEmailUsage.bounced,
+      complained: schema.dailyEmailUsage.complained,
+      sent: schema.dailyEmailUsage.sent,
+    } as const;
+
+    const usageColumn = usageColumns[updateField as keyof typeof usageColumns];
+
+    await drizzleDb
+      .insert(schema.dailyEmailUsage)
+      .values(
+        withUpdatedAt({
           teamId: email.teamId,
           domainId: email.domainId ?? 0,
           date: today,
-          type: email.campaignId ? "MARKETING" : "TRANSACTIONAL",
-        },
-      },
-      create: {
-        teamId: email.teamId,
-        domainId: email.domainId ?? 0,
-        date: today,
-        type: email.campaignId ? "MARKETING" : "TRANSACTIONAL",
-        delivered: updateField === "delivered" ? 1 : 0,
-        opened: updateField === "opened" ? 1 : 0,
-        clicked: updateField === "clicked" ? 1 : 0,
-        bounced: updateField === "bounced" ? 1 : 0,
-        complained: updateField === "complained" ? 1 : 0,
-        sent: updateField === "sent" ? 1 : 0,
-        hardBounced: isHardBounced ? 1 : 0,
-      },
-      update: {
-        [updateField]: {
-          increment: 1,
-        },
-        ...(isHardBounced ? { hardBounced: { increment: 1 } } : {}),
-      },
-    });
+          type: email.campaignId
+            ? ("MARKETING" as const)
+            : ("TRANSACTIONAL" as const),
+          delivered: updateField === "delivered" ? 1 : 0,
+          opened: updateField === "opened" ? 1 : 0,
+          clicked: updateField === "clicked" ? 1 : 0,
+          bounced: updateField === "bounced" ? 1 : 0,
+          complained: updateField === "complained" ? 1 : 0,
+          sent: updateField === "sent" ? 1 : 0,
+          hardBounced: isHardBounced ? 1 : 0,
+        }),
+      )
+      .onConflictDoUpdate({
+        target: [
+          schema.dailyEmailUsage.teamId,
+          schema.dailyEmailUsage.domainId,
+          schema.dailyEmailUsage.date,
+          schema.dailyEmailUsage.type,
+        ],
+        set: withUpdatedAt({
+          ...(usageColumn ? { [updateField]: sql`${usageColumn} + 1` } : {}),
+          ...(isHardBounced
+            ? {
+                hardBounced: sql`${schema.dailyEmailUsage.hardBounced} + 1`,
+              }
+            : {}),
+        }),
+      });
 
     if (
       isHardBounced ||
@@ -250,24 +282,34 @@ export async function parseSesHook(data: SesEvent) {
     ) {
       logger.info("Updating cumulated metrics");
       const cumulatedField = isHardBounced ? "hardBounced" : updateField;
-      await db.cumulatedMetrics.upsert({
-        where: {
-          teamId_domainId: {
+      const cumulatedColumns = {
+        delivered: schema.cumulatedMetrics.delivered,
+        hardBounced: schema.cumulatedMetrics.hardBounced,
+        complained: schema.cumulatedMetrics.complained,
+      } as const;
+
+      const cumulatedColumn =
+        cumulatedColumns[cumulatedField as keyof typeof cumulatedColumns];
+
+      if (cumulatedColumn) {
+        // These are bigint columns, but the generated schema reads them as
+        // `bigint({ mode: "number" })`, so the increment is a plain + 1 rather
+        // than Prisma's BigInt(1).
+        await drizzleDb
+          .insert(schema.cumulatedMetrics)
+          .values({
             teamId: email.teamId,
             domainId: email.domainId ?? 0,
-          },
-        },
-        update: {
-          [cumulatedField]: {
-            increment: BigInt(1),
-          },
-        },
-        create: {
-          teamId: email.teamId,
-          domainId: email.domainId ?? 0,
-          [cumulatedField]: BigInt(1),
-        },
-      });
+            [cumulatedField]: 1,
+          })
+          .onConflictDoUpdate({
+            target: [
+              schema.cumulatedMetrics.teamId,
+              schema.cumulatedMetrics.domainId,
+            ],
+            set: { [cumulatedField]: sql`${cumulatedColumn} + 1` },
+          });
+      }
     }
   }
 
@@ -296,13 +338,12 @@ export async function parseSesHook(data: SesEvent) {
 
   logger.info("Creating email event");
 
-  await db.emailEvent.create({
-    data: {
-      emailId: email.id,
-      status: mailStatus,
-      data: mailData as any,
-      teamId: email.teamId,
-    },
+  await drizzleDb.insert(schema.emailEvent).values({
+    id: createId(),
+    emailId: email.id,
+    status: mailStatus,
+    data: mailData as any,
+    teamId: email.teamId,
   });
 
   logger.info("Email event created");
@@ -318,7 +359,7 @@ export async function parseSesHook(data: SesEvent) {
       email.teamId,
       emailStatusToEvent(mailStatus),
       buildEmailWebhookPayload({
-        email,
+        email: toEmail(email),
         status: mailStatus,
         occurredAt,
         eventData: mailData,
@@ -340,6 +381,11 @@ export async function parseSesHook(data: SesEvent) {
 
 type EmailBounceSubType =
   EmailEventPayloadMap["email.bounced"]["bounce"]["subType"];
+
+/** Pins the Drizzle email row to the `Email` shape the webhook payload expects. */
+function toEmail(row: typeof schema.email.$inferSelect): Email {
+  return row;
+}
 
 function buildEmailWebhookPayload(params: {
   email: Email;
@@ -544,24 +590,30 @@ async function checkUnsubscribe({
       mailData.bounce?.bounceType === "Permanent") ||
     event === EmailStatus.COMPLAINED
   ) {
-    const contact = await db.contact.findUnique({
-      where: {
-        id: contactId,
-      },
-    });
+    const [contact] = await drizzleDb
+      .select()
+      .from(schema.contact)
+      .where(eq(schema.contact.id, contactId))
+      .limit(1);
 
     if (!contact) {
       return;
     }
 
-    const allContacts = await db.contact.findMany({
-      where: {
-        email: contact.email,
-        contactBook: {
-          teamId,
-        },
-      },
-    });
+    // Prisma's `contactBook: { teamId }` relation filter becomes a join.
+    const allContacts = await drizzleDb
+      .select({ id: schema.contact.id })
+      .from(schema.contact)
+      .innerJoin(
+        schema.contactBook,
+        eq(schema.contactBook.id, schema.contact.contactBookId),
+      )
+      .where(
+        and(
+          eq(schema.contact.email, contact.email),
+          eq(schema.contactBook.teamId, teamId),
+        ),
+      );
 
     const allContactIds = allContacts
       .map((c) => c.id)

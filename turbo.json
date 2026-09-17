@@ -6,8 +6,7 @@
   "tasks": {
     "build": {
       "dependsOn": [
-        "^build",
-        "db:generate"
+        "^build"
       ],
       "outputs": [
         "dist/**",
@@ -27,6 +26,8 @@
         "AWS_SES_ENDPOINT",
         "AWS_SNS_ENDPOINT",
         "NEXTAUTH_SECRET",
+        "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_URL",
         "NODE_ENV",
         "LOG_LEVEL",
         "VERCEL_URL",
@@ -43,7 +44,10 @@
         "S3_COMPATIBLE_ACCESS_KEY",
         "S3_COMPATIBLE_SECRET_KEY",
         "S3_COMPATIBLE_API_URL",
-        "S3_COMPATIBLE_PUBLIC_URL"
+        "S3_COMPATIBLE_PUBLIC_URL",
+        "EMAIL_CLEANUP_DAYS",
+        "EMAIL_EVENT_RETENTION_DAYS",
+        "WEBHOOK_CALL_RETENTION_DAYS"
       ]
     },
     "lint": {
@@ -53,15 +57,12 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true,
-      "dependsOn": [
-        "db:generate"
-      ]
-    },
-    "db:generate": {
-      "cache": false
+      "persistent": true
     },
     "db:push": {
+      "cache": false
+    },
+    "db:migrate": {
       "cache": false
     }
   }

@@ -1,7 +1,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { PublicAPIApp } from "~/server/public-api/hono";
 import { getTeamFromToken } from "~/server/public-api/auth";
-import { db } from "~/server/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { UnsendApiError } from "../../api-error";
 import { getContactBook } from "../../api-utils";
 
@@ -56,12 +57,16 @@ function getContact(app: PublicAPIApp) {
 
     const contactId = c.req.param("contactId");
 
-    const contact = await db.contact.findFirst({
-      where: {
-        id: contactId,
-        contactBookId: contactBook.id,
-      },
-    });
+    const [contact] = await drizzleDb
+      .select()
+      .from(schema.contact)
+      .where(
+        and(
+          eq(schema.contact.id, contactId),
+          eq(schema.contact.contactBookId, contactBook.id),
+        ),
+      )
+      .limit(1);
 
     if (!contact) {
       throw new UnsendApiError({
@@ -73,7 +78,7 @@ function getContact(app: PublicAPIApp) {
     // Ensure properties is a Record<string, string>
     const sanitizedContact = {
       ...contact,
-      properties: contact.properties as Record<string, string>,
+      properties: (contact.properties ?? {}) as Record<string, string>,
     };
 
     return c.json(sanitizedContact);

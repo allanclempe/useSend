@@ -1,8 +1,9 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { PublicAPIApp } from "~/server/public-api/hono";
 import { getTeamFromToken } from "~/server/public-api/auth";
-import { db } from "~/server/db";
-import { EmailStatus } from "@prisma/client";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { EmailStatus } from "~/types/db";
 import { UnsendApiError } from "../../api-error";
 
 const route = createRoute({
@@ -60,13 +61,16 @@ function send(app: PublicAPIApp) {
     const team = c.var.team;
     const emailId = c.req.param("emailId");
 
-    const email = await db.email.findUnique({
-      where: {
-        id: emailId,
-        teamId: team.id,
-        domainId: team.apiKey.domainId ?? undefined,
-      },
-      select: {
+    const email = await drizzleDb.query.email.findFirst({
+      where: and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.teamId, team.id),
+        // Domain-restricted keys only see their own domain's emails.
+        team.apiKey.domainId !== null
+          ? eq(schema.email.domainId, team.apiKey.domainId)
+          : undefined,
+      ),
+      columns: {
         id: true,
         teamId: true,
         to: true,
@@ -76,8 +80,10 @@ function send(app: PublicAPIApp) {
         text: true,
         createdAt: true,
         updatedAt: true,
+      },
+      with: {
         emailEvents: {
-          select: {
+          columns: {
             emailId: true,
             status: true,
             createdAt: true,

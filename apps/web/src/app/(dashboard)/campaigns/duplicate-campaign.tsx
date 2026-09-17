@@ -13,7 +13,7 @@ import { api } from "~/trpc/react";
 import React, { useState } from "react";
 import { toast } from "@usesend/ui/src/toaster";
 import { Copy } from "lucide-react";
-import { Campaign } from "@prisma/client";
+import { Campaign } from "~/types/db";
 
 export const DuplicateCampaign: React.FC<{
   campaign: Partial<Campaign> & { id: string };

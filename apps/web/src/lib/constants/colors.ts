@@ -1,4 +1,4 @@
-import { EmailStatus } from "@prisma/client";
+import { EmailStatus } from "~/types/db";
 
 export const EMAIL_COLORS: Record<EmailStatus | "total", string> = {
   total: "bg-gray-400 dark:bg-gray-400",

@@ -3,7 +3,7 @@
 import { Button } from "@usesend/ui/src/button";
 import { DeleteResource } from "~/components/DeleteResource";
 import { api } from "~/trpc/react";
-import { Domain } from "@prisma/client";
+import { Domain } from "~/types/db";
 import { useRouter } from "next/navigation";
 import { toast } from "@usesend/ui/src/toaster";
 import { z } from "zod";

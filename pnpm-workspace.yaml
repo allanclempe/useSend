@@ -20,3 +20,14 @@ allowBuilds:
 overrides:
   "linkify-it@<=5.0.0": "5.0.1"
   "pnpm@<11.11.0": "11.11.0"
+
+# `@hookform/resolvers` imports `zod` without declaring a dependency or a peer
+# on it, so it resolved to whatever happened to be hoisted. That was zod 3 until
+# better-auth (issue #8) added zod 4 to the tree and won the hoist, which
+# retyped every `zodResolver(...)` call in the app against the wrong major.
+# Both workspace consumers are on zod 3; this states that rather than leaving it
+# to hoist order.
+packageExtensions:
+  "@hookform/resolvers":
+    dependencies:
+      zod: "^3.24.3"

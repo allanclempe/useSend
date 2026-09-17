@@ -1,5 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { db } from "~/server/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { attachUserToTeam, createUser } from "~/test/factories/core";
 import { getRedis } from "~/server/redis";
 import {
   closeIntegrationConnections,
@@ -27,7 +29,7 @@ import { TeamService } from "~/server/service/team-service";
 const describeIntegration = integrationEnabled ? describe : describe.skip;
 
 async function makeUser(email: string) {
-  return db.user.create({ data: { email, name: email } });
+  return createUser({ email, name: email });
 }
 
 describeIntegration("team-service", () => {
@@ -52,9 +54,10 @@ describeIntegration("team-service", () => {
 
     // Prisma did this as one nested create; the port uses a transaction, so a
     // team must never exist without its admin.
-    const members = await db.teamUser.findMany({
-      where: { teamId: team!.id },
-    });
+    const members = await drizzleDb
+      .select()
+      .from(schema.teamUser)
+      .where(eq(schema.teamUser.teamId, team!.id));
     expect(members).toHaveLength(1);
     expect(members[0]?.userId).toBe(user.id);
     expect(members[0]?.role).toBe("ADMIN");
@@ -67,16 +70,14 @@ describeIntegration("team-service", () => {
     const second = await TeamService.createTeam(user.id, "second");
 
     expect(second).toBeUndefined();
-    expect(await db.team.count()).toBe(1);
+    expect(await drizzleDb.$count(schema.team)).toBe(1);
   });
 
   it("returns a user's teams with only their own membership", async () => {
     const owner = await makeUser("a@example.com");
     const other = await makeUser("b@example.com");
     const team = await TeamService.createTeam(owner.id, "shared");
-    await db.teamUser.create({
-      data: { teamId: team!.id, userId: other.id, role: "MEMBER" },
-    });
+    await attachUserToTeam(other.id, team!.id, "MEMBER");
 
     const teams = await TeamService.getUserTeams(owner.id);
 
@@ -148,9 +149,7 @@ describeIntegration("team-service", () => {
     const taken = await makeUser("taken@example.com");
     const team = await TeamService.createTeam(owner.id, "t1");
 
-    await db.teamUser.create({
-      data: { teamId: team!.id, userId: taken.id, role: "MEMBER" },
-    });
+    await attachUserToTeam(taken.id, team!.id, "MEMBER");
 
     await expect(
       TeamService.createTeamInvite(
@@ -228,9 +227,7 @@ describeIntegration("team-service", () => {
     const owner = await makeUser("admin1@example.com");
     const member = await makeUser("member1@example.com");
     const team = await TeamService.createTeam(owner.id, "two");
-    await db.teamUser.create({
-      data: { teamId: team!.id, userId: member.id, role: "MEMBER" },
-    });
+    await attachUserToTeam(member.id, team!.id, "MEMBER");
 
     const updated = await TeamService.updateTeamUserRole(
       team!.id,
@@ -254,9 +251,7 @@ describeIntegration("team-service", () => {
     const owner = await makeUser("keep@example.com");
     const member = await makeUser("leaving@example.com");
     const team = await TeamService.createTeam(owner.id, "shrinking");
-    await db.teamUser.create({
-      data: { teamId: team!.id, userId: member.id, role: "MEMBER" },
-    });
+    await attachUserToTeam(member.id, team!.id, "MEMBER");
 
     const deleted = await TeamService.deleteTeamUser(
       team!.id,

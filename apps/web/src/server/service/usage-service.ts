@@ -1,4 +1,4 @@
-import { EmailUsageType } from "@prisma/client";
+import { EmailUsageType } from "~/types/db";
 import { and, asc, eq, gte, sql, type SQL } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { format } from "date-fns";

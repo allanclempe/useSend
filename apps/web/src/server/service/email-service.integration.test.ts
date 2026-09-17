@@ -1,5 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { db } from "~/server/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -64,19 +67,22 @@ describeIntegration("email-service", () => {
     vi.clearAllMocks();
     mockCheckMultipleEmails.mockResolvedValue({});
 
-    const team = await db.team.create({ data: { name: "email-team" } });
+    const team = await createTeam({ name: "email-team" });
     teamId = team.id;
 
-    const domain = await db.domain.create({
-      data: {
-        name: "example.com",
-        teamId,
-        publicKey: "pk",
-        region: "us-east-1",
-        dkimSelector: "usesend",
-      },
-    });
-    domainId = domain.id;
+    const [domain] = await drizzleDb
+      .insert(schema.domain)
+      .values(
+        withUpdatedAt({
+          name: "example.com",
+          teamId,
+          publicKey: "pk",
+          region: "us-east-1",
+          dkimSelector: "usesend",
+        }),
+      )
+      .returning();
+    domainId = domain!.id;
     mockValidateDomainFromEmail.mockResolvedValue(domain);
   });
 
@@ -103,14 +109,17 @@ describeIntegration("email-service", () => {
       expect(mockQueueEmail).toHaveBeenCalledTimes(1);
     });
 
-    it("leaves cc and bcc at their column default when not supplied", async () => {
+    it("stores cc, bcc and replyTo as empty arrays when not supplied", async () => {
       const email = await sendEmail({ ...base, teamId });
 
-      // Prisma read `undefined` as "use the column default"; Drizzle has no
-      // such rule, so these are spread conditionally.
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.cc).toEqual([]);
       expect(stored?.bcc).toEqual([]);
+      expect(stored?.replyTo).toEqual([]);
     });
 
     it("stores cc, bcc and replyTo when supplied", async () => {
@@ -122,7 +131,11 @@ describeIntegration("email-service", () => {
         replyTo: "reply@example.com",
       });
 
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.cc).toEqual(["cc@example.com"]);
       expect(stored?.bcc).toEqual(["bcc@example.com"]);
       expect(stored?.replyTo).toEqual(["reply@example.com"]);
@@ -148,9 +161,10 @@ describeIntegration("email-service", () => {
       expect(email.latestStatus).toBe("SUPPRESSED");
       expect(mockQueueEmail).not.toHaveBeenCalled();
 
-      const events = await db.emailEvent.findMany({
-        where: { emailId: email.id },
-      });
+      const events = await drizzleDb
+        .select()
+        .from(schema.emailEvent)
+        .where(eq(schema.emailEvent.emailId, email.id));
       expect(events).toHaveLength(1);
       expect(events[0]?.status).toBe("SUPPRESSED");
     });
@@ -165,7 +179,11 @@ describeIntegration("email-service", () => {
       });
 
       expect(email.latestStatus).toBe("QUEUED");
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.cc).toEqual(["ok@example.com"]);
     });
 
@@ -174,9 +192,12 @@ describeIntegration("email-service", () => {
 
       await expect(sendEmail({ ...base, teamId })).rejects.toThrow("queue down");
 
-      const emails = await db.email.findMany({ where: { teamId } });
+      const emails = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.teamId, teamId));
       expect(emails[0]?.latestStatus).toBe("FAILED");
-      const events = await db.emailEvent.findMany({});
+      const events = await drizzleDb.select().from(schema.emailEvent);
       expect(events[0]?.status).toBe("FAILED");
     });
 
@@ -187,20 +208,23 @@ describeIntegration("email-service", () => {
     });
 
     it("rejects an inReplyTo belonging to another team", async () => {
-      const other = await db.team.create({ data: { name: "other" } });
-      const theirs = await db.email.create({
-        data: {
-          id: "em_theirs",
-          teamId: other.id,
-          to: ["x@example.com"],
-          from: "x@example.com",
-          subject: "s",
-          domainId,
-        },
-      });
+      const other = await createTeam({ name: "other" });
+      const [theirs] = await drizzleDb
+        .insert(schema.email)
+        .values(
+          withUpdatedAt({
+            id: "em_theirs",
+            teamId: other.id,
+            to: ["x@example.com"],
+            from: "x@example.com",
+            subject: "s",
+            domainId,
+          }),
+        )
+        .returning();
 
       await expect(
-        sendEmail({ ...base, teamId, inReplyToId: theirs.id }),
+        sendEmail({ ...base, teamId, inReplyToId: theirs!.id }),
       ).rejects.toThrow('"inReplyTo" is invalid');
     });
 
@@ -222,7 +246,11 @@ describeIntegration("email-service", () => {
 
       await updateEmail(email.id, { scheduledAt: next.toISOString() });
 
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.scheduledAt?.getTime()).toBe(next.getTime());
       expect(mockChangeDelay).toHaveBeenCalledTimes(1);
     });
@@ -246,12 +274,17 @@ describeIntegration("email-service", () => {
 
       await cancelEmail(email.id);
 
-      const stored = await db.email.findUnique({ where: { id: email.id } });
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
       expect(stored?.latestStatus).toBe("CANCELLED");
 
-      const events = await db.emailEvent.findMany({
-        where: { emailId: email.id },
-      });
+      const events = await drizzleDb
+        .select()
+        .from(schema.emailEvent)
+        .where(eq(schema.emailEvent.emailId, email.id));
       expect(events.map((e) => e.status)).toContain("CANCELLED");
     });
 
@@ -272,7 +305,7 @@ describeIntegration("email-service", () => {
       ]);
 
       expect(emails).toHaveLength(2);
-      expect(await db.email.count()).toBe(2);
+      expect(await drizzleDb.$count(schema.email)).toBe(2);
       expect(mockQueueBulk).toHaveBeenCalledTimes(1);
       expect(mockQueueBulk.mock.calls[0]![0]).toHaveLength(2);
     });
@@ -288,13 +321,12 @@ describeIntegration("email-service", () => {
         { ...base, to: "c@example.com", teamId },
       ]);
 
-      // Email.to is a nullable array column, so Drizzle types it `string[] | null`.
-      expect(emails.map((e) => e.to?.[0])).toEqual([
+      expect(emails.map((e) => e.to[0])).toEqual([
         "a@example.com",
         "b@example.com",
         "c@example.com",
       ]);
-      const suppressed = emails.find((e) => e.to?.[0] === "b@example.com");
+      const suppressed = emails.find((e) => e.to[0] === "b@example.com");
       expect(suppressed?.latestStatus).toBe("SUPPRESSED");
     });
 
@@ -308,10 +340,13 @@ describeIntegration("email-service", () => {
         ]),
       ).rejects.toThrow("bulk down");
 
-      const stored = await db.email.findMany({ where: { teamId } });
+      const stored = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.teamId, teamId));
       expect(stored).toHaveLength(2);
       expect(stored.every((e) => e.latestStatus === "FAILED")).toBe(true);
-      expect(await db.emailEvent.count()).toBe(2);
+      expect(await drizzleDb.$count(schema.emailEvent)).toBe(2);
     });
   });
 });

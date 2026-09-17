@@ -1,4 +1,5 @@
-import { db } from "~/server/db";
+import { asc } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { logger } from "~/server/logger/log";
 import {
   createQueue,
@@ -13,11 +14,10 @@ import {
 let initialized = false;
 
 export async function runDueDomainVerifications() {
-  const domains = await db.domain.findMany({
-    orderBy: {
-      createdAt: "asc",
-    },
-  });
+  const domains = await drizzleDb
+    .select()
+    .from(schema.domain)
+    .orderBy(asc(schema.domain.createdAt));
 
   for (const domain of domains) {
     try {

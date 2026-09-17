@@ -2,7 +2,10 @@ import { env } from "~/env";
 import { EmailAttachment } from "~/types";
 import { convert as htmlToText } from "html-to-text";
 import { getConfigurationSetName } from "~/utils/ses-utils";
-import { db } from "../db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { sendRawEmail } from "../aws/ses";
 import {
   createQueue,
@@ -303,7 +306,7 @@ export class EmailQueueService {
   }
 
   public static async init() {
-    const sesSettings = await db.sesSetting.findMany();
+    const sesSettings = await drizzleDb.select().from(schema.sesSetting);
     for (const sesSetting of sesSettings) {
       this.initializeQueue(
         sesSetting.region,
@@ -321,14 +324,20 @@ async function executeEmail(job: QueueEmailJob) {
     `[EmailQueueService]: Executing email job`
   );
 
-  const email = await db.email.findUnique({
-    where: { id: job.data.emailId },
-  });
+  const [email] = await drizzleDb
+    .select()
+    .from(schema.email)
+    .where(eq(schema.email.id, job.data.emailId))
+    .limit(1);
 
   const domain = email?.domainId
-    ? await db.domain.findUnique({
-        where: { id: email?.domainId },
-      })
+    ? ((
+        await drizzleDb
+          .select()
+          .from(schema.domain)
+          .where(eq(schema.domain.id, email.domainId))
+          .limit(1)
+      )[0] ?? null)
     : null;
 
   if (!email) {
@@ -367,26 +376,35 @@ async function executeEmail(job: QueueEmailJob) {
   let subject = email.subject;
 
   if (email.campaignId && email.contactId && subject.includes("{{")) {
-    const contact = await db.contact.findUnique({
-      where: { id: email.contactId },
-      include: {
-        contactBook: {
-          select: { variables: true },
-        },
-      },
-    });
+    const [row] = await drizzleDb
+      .select({
+        contact: schema.contact,
+        variables: schema.contactBook.variables,
+      })
+      .from(schema.contact)
+      .innerJoin(
+        schema.contactBook,
+        eq(schema.contactBook.id, schema.contact.contactBookId),
+      )
+      .where(eq(schema.contact.id, email.contactId))
+      .limit(1);
 
-    if (contact) {
-      subject = replaceContactVariables(subject, contact, [
-        ...BUILT_IN_CONTACT_VARIABLES,
-        ...contact.contactBook.variables,
-      ]);
+    if (row) {
+      subject = replaceContactVariables(
+        subject,
+        // jsonb reads as `unknown`; the helper expects Prisma's JsonValue.
+        { ...row.contact, properties: row.contact.properties ?? {} } as never,
+        [
+          ...BUILT_IN_CONTACT_VARIABLES,
+          ...(row.variables ?? []),
+        ],
+      );
 
       if (subject !== email.subject) {
-        await db.email.update({
-          where: { id: email.id },
-          data: { subject },
-        });
+        await drizzleDb
+          .update(schema.email)
+          .set(withUpdatedAt({ subject }))
+          .where(eq(schema.email.id, email.id));
       }
     }
   }
@@ -394,11 +412,11 @@ async function executeEmail(job: QueueEmailJob) {
   let inReplyToMessageId: string | undefined = undefined;
 
   if (email.inReplyToId) {
-    const replyEmail = await db.email.findUnique({
-      where: {
-        id: email.inReplyToId,
-      },
-    });
+    const [replyEmail] = await drizzleDb
+      .select({ sesEmailId: schema.email.sesEmailId })
+      .from(schema.email)
+      .where(eq(schema.email.id, email.inReplyToId))
+      .limit(1);
 
     if (replyEmail && replyEmail.sesEmailId) {
       inReplyToMessageId = replyEmail.sesEmailId;
@@ -410,22 +428,21 @@ async function executeEmail(job: QueueEmailJob) {
     const limitCheck = await LimitService.checkEmailLimit(email.teamId);
     logger.info({ limitCheck }, `[EmailQueueService]: Limit check`);
     if (limitCheck.isLimitReached) {
-      await db.emailEvent.create({
+      await drizzleDb.insert(schema.emailEvent).values({
+        id: createId(),
+        emailId: email.id,
+        status: "FAILED" as const,
         data: {
-          emailId: email.id,
-          status: "FAILED",
-          data: {
-            error: "Email sending limit reached",
-            reason: limitCheck.reason,
-            limit: limitCheck.limit,
-          },
-          teamId: email.teamId,
+          error: "Email sending limit reached",
+          reason: limitCheck.reason,
+          limit: limitCheck.limit,
         },
+        teamId: email.teamId,
       });
-      await db.email.update({
-        where: { id: email.id },
-        data: { latestStatus: "FAILED" },
-      });
+      await drizzleDb
+        .update(schema.email)
+        .set(withUpdatedAt({ latestStatus: "FAILED" as const }))
+        .where(eq(schema.email.id, email.id));
       return;
     }
 
@@ -435,7 +452,7 @@ async function executeEmail(job: QueueEmailJob) {
       to: email.to,
       from: email.from,
       subject,
-      replyTo: email.replyTo ?? undefined,
+      replyTo: email.replyTo,
       bcc: email.bcc,
       cc: email.cc,
       text,
@@ -457,24 +474,28 @@ async function executeEmail(job: QueueEmailJob) {
     );
 
     // Delete attachments and headers after sending the email
-    await db.email.update({
-      where: { id: email.id },
-      data: { sesEmailId: messageId, text, attachments: null, headers: null },
-    });
+    await drizzleDb
+      .update(schema.email)
+      .set(
+        withUpdatedAt({
+          sesEmailId: messageId,
+          text,
+          attachments: null,
+          headers: null,
+        }),
+      )
+      .where(eq(schema.email.id, email.id));
   } catch (error: any) {
-    await db.emailEvent.create({
-      data: {
-        emailId: email.id,
-        status: "FAILED",
-        data: {
-          error: error.toString(),
-        },
-        teamId: email.teamId,
-      },
+    await drizzleDb.insert(schema.emailEvent).values({
+      id: createId(),
+      emailId: email.id,
+      status: "FAILED" as const,
+      data: { error: error.toString() },
+      teamId: email.teamId,
     });
-    await db.email.update({
-      where: { id: email.id },
-      data: { latestStatus: "FAILED" },
-    });
+    await drizzleDb
+      .update(schema.email)
+      .set(withUpdatedAt({ latestStatus: "FAILED" as const }))
+      .where(eq(schema.email.id, email.id));
   }
 }

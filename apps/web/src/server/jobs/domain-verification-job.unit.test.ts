@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DomainStatus, type Domain } from "@prisma/client";
+import { DomainStatus, type Domain } from "~/types/db";
 
 const {
   mockFindMany,
@@ -27,23 +27,30 @@ vi.mock("~/server/queue/bullmq-driver", () => ({
   },
 }));
 
-vi.mock("~/server/db", () => ({
-  db: {
-    domain: {
-      findMany: mockFindMany,
+vi.mock("~/server/drizzle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/server/drizzle")>();
+
+  return {
+    ...actual,
+    drizzleDb: {
+      select: () => ({ from: () => ({ orderBy: () => mockFindMany() }) }),
     },
-  },
-}));
+  };
+});
 
 vi.mock("~/server/redis", () => ({
   BULL_PREFIX: "bull",
   getRedis: vi.fn(() => ({})),
 }));
 
+// importOriginal on ~/server/drizzle constructs the client, which logs on the
+// way up, so every level has to exist or the mock factory itself throws.
 vi.mock("~/server/logger/log", () => ({
   logger: {
     error: vi.fn(),
+    warn: vi.fn(),
     info: vi.fn(),
+    debug: vi.fn(),
   },
 }));
 

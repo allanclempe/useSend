@@ -1,4 +1,4 @@
-import { DailyEmailUsage, EmailUsageType, Subscription } from "@prisma/client";
+import { DailyEmailUsage, EmailUsageType, Subscription } from "~/types/db";
 import { TRPCError } from "@trpc/server";
 import { format, sub } from "date-fns";
 import { z } from "zod";
@@ -14,7 +14,8 @@ import {
   createCheckoutSessionForTeam,
   getManageSessionUrl,
 } from "~/server/billing/payments";
-import { db } from "~/server/db";
+import { asc, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { TeamService } from "~/server/service/team-service";
 
 export const billingRouter = createTRPCRouter({
@@ -31,12 +32,14 @@ export const billingRouter = createTRPCRouter({
   }),
 
   getSubscriptionDetails: teamProcedure.query(async ({ ctx }) => {
-    const subscription = await db.subscription.findFirst({
-      where: { teamId: ctx.team.id },
-      orderBy: { status: "asc" },
-    });
+    const [subscription] = await drizzleDb
+      .select()
+      .from(schema.subscription)
+      .where(eq(schema.subscription.teamId, ctx.team.id))
+      .orderBy(asc(schema.subscription.status))
+      .limit(1);
 
-    return subscription;
+    return subscription ?? null;
   }),
 
   updateBillingEmail: teamAdminProcedure

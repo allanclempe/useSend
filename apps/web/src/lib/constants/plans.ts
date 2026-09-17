@@ -1,4 +1,4 @@
-import { Plan } from "@prisma/client";
+import { Plan } from "~/types/db";
 
 export enum LimitReason {
   DOMAIN = "DOMAIN",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { WebhookCallStatus } from "@prisma/client";
+import { WebhookCallStatus } from "~/types/db";
 import {
   Table,
   TableBody,

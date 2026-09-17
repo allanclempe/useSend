@@ -1,4 +1,4 @@
-import { WebhookStatus } from "@prisma/client";
+import { WebhookStatus } from "~/types/db";
 
 export function WebhookStatusBadge({ status }: { status: WebhookStatus }) {
   let badgeColor = "bg-gray-700/10 text-gray-400 border border-gray-400/10";

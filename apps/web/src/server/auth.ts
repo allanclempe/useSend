@@ -1,288 +1,192 @@
-import { PrismaAdapter } from "@auth/prisma-adapter";
-import {
-  getServerSession,
-  type Account,
-  type DefaultSession,
-  type NextAuthOptions,
-} from "next-auth";
-import { type Adapter, type AdapterUser } from "next-auth/adapters";
-import GitHubProvider from "next-auth/providers/github";
-import EmailProvider from "next-auth/providers/email";
-import GoogleProvider from "next-auth/providers/google";
-import { Provider } from "next-auth/providers/index";
+import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { customSession, emailOTP } from "better-auth/plugins";
+import { nextCookies } from "better-auth/next-js";
+import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
 
-import { sendSignUpEmail } from "~/server/mailer";
 import { env } from "~/env";
-import { db } from "~/server/db";
-
-const GITHUB_OAUTH_ISSUER = "https://github.com/login/oauth";
+import { drizzleDb, schema } from "~/server/drizzle";
+import {
+  AUTH_MODEL_NAMES,
+  SIGN_IN_OTP_ALLOWED_ATTEMPTS,
+  SIGN_IN_OTP_EXPIRES_IN_SECONDS,
+  SIGN_IN_OTP_LENGTH,
+  generateSignInOtp,
+  getSocialProviders,
+  getTrustedProviders,
+  sendSignInOtp,
+  toAppSessionUser,
+} from "~/server/better-auth";
+import {
+  createSelfHostedUser,
+  SelfHostedRegistrationError,
+} from "~/server/self-hosted-registration";
 
 /**
- * PostgreSQL advisory-lock namespace for self-hosted user creation.
+ * Tables, keyed by the name better-auth will ask for.
  *
- * The lock serializes only transactions that request this same key; it does not
- * lock the User table or any rows. Because pg_advisory_xact_lock is scoped to
- * the current transaction, PostgreSQL releases it automatically on commit,
- * rollback, or connection loss. A concurrent registration may wait briefly for
- * the active registration transaction to finish.
+ * The Drizzle adapter looks up `config.schema[modelName]`, and `modelName` is
+ * what we set below — so these keys are the PascalCase table names, not
+ * better-auth's lowercase model names.
  */
-const SELF_HOSTED_REGISTRATION_LOCK_ID = 1431520590;
-
-export class SelfHostedRegistrationError extends Error {
-  constructor() {
-    super("A team invitation is required to create an account");
-    this.name = "SelfHostedRegistrationError";
-  }
-}
-
-export async function canRegisterSelfHostedUser(
-  email?: string | null,
-  account?: Pick<Account, "provider" | "providerAccountId" | "type"> | null,
-) {
-  if (env.NEXT_PUBLIC_IS_CLOUD) {
-    return true;
-  }
-
-  if (account?.type === "oauth") {
-    const existingAccount = await db.account.findUnique({
-      where: {
-        provider_providerAccountId: {
-          provider: account.provider,
-          providerAccountId: account.providerAccountId,
-        },
-      },
-      select: { id: true },
-    });
-
-    if (existingAccount) {
-      return true;
-    }
-  }
-
-  if (email) {
-    const existingUser = await db.user.findUnique({
-      where: { email },
-      select: { id: true },
-    });
-
-    if (existingUser) {
-      return true;
-    }
-  }
-
-  const registeredUser = await db.user.findFirst({
-    select: { id: true },
-  });
-
-  // An empty installation always allows its bootstrap account.
-  if (!registeredUser) {
-    return true;
-  }
-
-  if (!email) {
-    return false;
-  }
-
-  const invite = await db.teamInvite.findFirst({
-    where: { email },
-    select: { id: true },
-  });
-
-  return Boolean(invite);
-}
-
-/**
- * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
- * object and keep type safety.
- *
- * @see https://next-auth.js.org/getting-started/typescript#module-augmentation
- */
-declare module "next-auth" {
-  // eslint-disable-next-line no-unused-vars
-  interface Session extends DefaultSession {
-    user: {
-      id: number;
-      isBetaUser: boolean;
-      isAdmin: boolean;
-      isWaitlisted: boolean;
-      // ...other properties
-      // role: UserRole;
-    } & DefaultSession["user"];
-  }
-
-  // eslint-disable-next-line no-unused-vars
-  interface User {
-    id: number;
-    isBetaUser: boolean;
-    isAdmin: boolean;
-    isWaitlisted: boolean;
-  }
-}
-
-/**
- * Auth providers
- */
-
-function getProviders() {
-  const providers: Provider[] = [];
-
-  if (env.GITHUB_ID && env.GITHUB_SECRET) {
-    providers.push(
-      GitHubProvider({
-        clientId: env.GITHUB_ID,
-        clientSecret: env.GITHUB_SECRET,
-        // GitHub now includes `iss` on OAuth callbacks, so NextAuth needs the expected issuer.
-        issuer: GITHUB_OAUTH_ISSUER,
-        allowDangerousEmailAccountLinking: true,
-        authorization: {
-          params: {
-            scope: "read:user user:email",
-          },
-        },
-      }),
-    );
-  }
-
-  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
-    providers.push(
-      GoogleProvider({
-        clientId: env.GOOGLE_CLIENT_ID,
-        clientSecret: env.GOOGLE_CLIENT_SECRET,
-        allowDangerousEmailAccountLinking: true,
-      }),
-    );
-  }
-
-  if (env.FROM_EMAIL) {
-    providers.push(
-      EmailProvider({
-        from: env.FROM_EMAIL,
-        async sendVerificationRequest({ identifier: email, url, token }) {
-          await sendSignUpEmail(email, token, url);
-        },
-        async generateVerificationToken() {
-          return Math.random().toString(36).substring(2, 7).toLowerCase();
-        },
-      }),
-    );
-  }
-
-  if (providers.length === 0 && process.env.SKIP_ENV_VALIDATION !== "true") {
-    throw new Error("No auth providers found, need atleast one");
-  }
-
-  return providers;
-}
-
-/**
- * Options for NextAuth.js used to configure adapters, providers, callbacks, etc.
- *
- * @see https://next-auth.js.org/configuration/options
- */
-export const authOptions: NextAuthOptions = {
-  callbacks: {
-    signIn: async ({ user, account }) =>
-      canRegisterSelfHostedUser(user.email, account),
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-        isBetaUser: user.isBetaUser,
-        isAdmin: user.email === env.ADMIN_EMAIL,
-        isWaitlisted: user.isWaitlisted,
-      },
-    }),
-  },
-  adapter: (() => {
-    const prismaAdapter = PrismaAdapter(db);
-
-    return {
-      ...prismaAdapter,
-      async createUser(user: AdapterUser) {
-        if (env.NEXT_PUBLIC_IS_CLOUD) {
-          if (!prismaAdapter.createUser) {
-            throw new Error("Prisma adapter does not support user creation");
-          }
-
-          return prismaAdapter.createUser(user);
-        }
-
-        return db.$transaction(async (tx) => {
-          // Acquire the lock before checking for the first user. Without this,
-          // two concurrent callbacks could both observe an empty User table and
-          // both create an account without an invitation.
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${SELF_HOSTED_REGISTRATION_LOCK_ID})`;
-
-          const registeredUser = await tx.user.findFirst({
-            select: { id: true },
-          });
-
-          if (registeredUser) {
-            if (!user.email) {
-              throw new SelfHostedRegistrationError();
-            }
-
-            const invite = await tx.teamInvite.findFirst({
-              where: { email: user.email },
-              select: { id: true },
-            });
-
-            if (!invite) {
-              throw new SelfHostedRegistrationError();
-            }
-          }
-
-          return tx.user.create({
-            data: {
-              name: user.name,
-              email: user.email,
-              emailVerified: user.emailVerified,
-              image: user.image,
-            },
-          });
-        });
-      },
-    } as Adapter;
-  })(),
-  pages: {
-    signIn: "/login",
-  },
-  events: {
-    createUser: async ({ user }) => {
-      let invitesAvailable = false;
-
-      if (user.email) {
-        const invites = await db.teamInvite.findMany({
-          where: { email: user.email },
-        });
-
-        invitesAvailable = invites.length > 0;
-      }
-
-      if (
-        !env.NEXT_PUBLIC_IS_CLOUD ||
-        env.NODE_ENV === "development" ||
-        invitesAvailable
-      ) {
-        await db.user.update({
-          where: { id: user.id },
-          data: { isBetaUser: true },
-        });
-      } else {
-        await db.user.update({
-          where: { id: user.id },
-          data: { isBetaUser: true, isWaitlisted: true },
-        });
-      }
-    },
-  },
-  providers: getProviders(),
+const authTables = {
+  [AUTH_MODEL_NAMES.user]: schema.user,
+  [AUTH_MODEL_NAMES.session]: schema.session,
+  [AUTH_MODEL_NAMES.account]: schema.account,
+  [AUTH_MODEL_NAMES.verification]: schema.verification,
 };
 
+const baseAdapter = drizzleAdapter(drizzleDb, {
+  provider: "pg",
+  transaction: true,
+  schema: authTables,
+});
+
+type AuthAdapter = ReturnType<typeof baseAdapter>;
+
 /**
- * Wrapper for `getServerSession` so that you don't need to import the `authOptions` in every file.
+ * Wraps the Drizzle adapter so self-hosted user creation runs inside a
+ * transaction holding `pg_advisory_xact_lock`.
  *
- * @see https://next-auth.js.org/configuration/nextjs
+ * This has to happen at the adapter, not in a `databaseHooks` entry.
+ * `createWithHooks` runs `user.create.before` and *then* calls
+ * `adapter.create` (`better-auth/dist/db/with-hooks.mjs:7-41`); the hook never
+ * sees the transaction, so a lock taken there commits and releases before the
+ * insert it is supposed to protect, and the race it exists to prevent reopens.
+ *
+ * At this level the payload is in better-auth's field names and the return
+ * value has to look like better-auth's own output — which means `id` as a
+ * string, since the factory's `transformOutput` has already run by the time we
+ * intercept (`@better-auth/core/dist/db/adapter/factory.mjs:161-162`).
  */
-export const getServerAuthSession = () => getServerSession(authOptions);
+const authDatabase = (
+  options: Parameters<typeof baseAdapter>[0],
+): AuthAdapter => {
+  const adapter = baseAdapter(options);
+
+  return {
+    ...adapter,
+    create: async (args) => {
+      if (args.model !== "user" || env.NEXT_PUBLIC_IS_CLOUD) {
+        return adapter.create(args);
+      }
+
+      const data = args.data as Record<string, unknown>;
+      const email = data.email;
+
+      if (typeof email !== "string" || email.length === 0) {
+        throw new APIError("BAD_REQUEST", {
+          code: "EMAIL_REQUIRED",
+          message: "An email address is required to create an account",
+        });
+      }
+
+      try {
+        const created = await createSelfHostedUser({
+          email,
+          name: typeof data.name === "string" ? data.name : null,
+          emailVerified: data.emailVerified === true,
+          image: typeof data.image === "string" ? data.image : null,
+        });
+
+        return { ...created, id: String(created.id) } as never;
+      } catch (error) {
+        if (error instanceof SelfHostedRegistrationError) {
+          throw new APIError("FORBIDDEN", {
+            code: "REGISTRATION_NOT_ALLOWED",
+            message: error.message,
+          });
+        }
+
+        throw error;
+      }
+    },
+  };
+};
+
+export const auth = betterAuth({
+  secret: env.BETTER_AUTH_SECRET,
+  baseURL: env.BETTER_AUTH_URL,
+  database: authDatabase,
+  // `User.id` is `Int @default(autoincrement())` and stays that way — see #8.
+  // This makes better-auth leave `id` out of inserts so Postgres assigns it,
+  // and coerce it back to a number on lookup.
+  advanced: { database: { generateId: "serial" } },
+  user: {
+    modelName: AUTH_MODEL_NAMES.user,
+    additionalFields: {
+      isBetaUser: { type: "boolean", input: false, defaultValue: false },
+      isWaitlisted: { type: "boolean", input: false, defaultValue: false },
+    },
+  },
+  session: { modelName: AUTH_MODEL_NAMES.session },
+  account: {
+    modelName: AUTH_MODEL_NAMES.account,
+    // The port of `allowDangerousEmailAccountLinking`, which was set on both
+    // NextAuth providers. GitHub and Google both verify an address before
+    // asserting it, which is what makes linking on email safe.
+    accountLinking: { enabled: true, trustedProviders: getTrustedProviders() },
+  },
+  verification: { modelName: AUTH_MODEL_NAMES.verification },
+  socialProviders: getSocialProviders(),
+  databaseHooks: {
+    user: {
+      create: {
+        // The port of NextAuth's `events.createUser`. Everyone is a beta user;
+        // cloud additionally waitlists anyone who arrived without an invite.
+        after: async (user) => {
+          const invites = await drizzleDb
+            .select({ id: schema.teamInvite.id })
+            .from(schema.teamInvite)
+            .where(eq(schema.teamInvite.email, user.email))
+            .limit(1);
+
+          const isWaitlisted =
+            env.NEXT_PUBLIC_IS_CLOUD &&
+            env.NODE_ENV !== "development" &&
+            invites.length === 0;
+
+          await drizzleDb
+            .update(schema.user)
+            .set({ isBetaUser: true, isWaitlisted, updatedAt: new Date() })
+            .where(eq(schema.user.id, Number(user.id)));
+        },
+      },
+    },
+  },
+  plugins: [
+    emailOTP({
+      otpLength: SIGN_IN_OTP_LENGTH,
+      expiresIn: SIGN_IN_OTP_EXPIRES_IN_SECONDS,
+      allowedAttempts: SIGN_IN_OTP_ALLOWED_ATTEMPTS,
+      // The code is the whole credential, so it does not sit in the database in
+      // the clear. NextAuth's `VerificationToken` stored it plainly.
+      storeOTP: "hashed",
+      generateOTP: () => generateSignInOtp(),
+      sendVerificationOTP: async ({ email, otp }) => {
+        await sendSignInOtp({ email, otp });
+      },
+    }),
+    customSession(async ({ user, session }) => ({
+      session,
+      user: toAppSessionUser(user),
+    })),
+    // Must stay last: it flushes better-auth's Set-Cookie headers through
+    // Next's cookie API so server actions and route handlers both see them.
+    nextCookies(),
+  ],
+});
+
+/**
+ * Wrapper for the session lookup so callers don't reach for `auth.api` and
+ * `headers()` individually. Keeps the name `getServerAuthSession` had under
+ * NextAuth, so the seven server-side call sites are a one-line change each.
+ */
+export const getServerAuthSession = async () =>
+  auth.api.getSession({ headers: await headers() });
+
+export type ServerAuthSession = Awaited<
+  ReturnType<typeof getServerAuthSession>
+>;

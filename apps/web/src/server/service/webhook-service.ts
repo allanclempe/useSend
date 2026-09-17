@@ -1,4 +1,4 @@
-import { WebhookCallStatus, WebhookStatus } from "@prisma/client";
+import { WebhookCallStatus, WebhookStatus } from "~/types/db";
 import { createHmac, randomUUID, randomBytes } from "crypto";
 import {
   WebhookEventData,
@@ -89,30 +89,6 @@ export class WebhookQueueService {
       { jobId: callId },
     );
   }
-}
-
-type WebhookRow = typeof schema.webhook.$inferSelect;
-
-/**
- * Normalises a webhook row for callers.
- *
- * `eventTypes` and `domainIds` are nullable in the database, but Prisma typed
- * them as plain arrays and every caller — the dashboard, the public API, the
- * event filter — assumes that. Coercing here keeps the existing contract
- * rather than pushing `| null` out to all of them.
- *
- * Note this means a row with a NULL `eventTypes` reads as `[]`, which the emit
- * filter treats as "no subscription list, receive everything". A NULL row does
- * not actually match that filter in SQL, so such a webhook silently receives
- * nothing. `eventTypes` has no default either, so the state is reachable. That
- * predates this port and is left alone here rather than changed blind.
- */
-function toWebhook(row: WebhookRow) {
-  return {
-    ...row,
-    eventTypes: row.eventTypes ?? [],
-    domainIds: row.domainIds ?? [],
-  };
 }
 
 export class WebhookService {
@@ -277,7 +253,7 @@ export class WebhookService {
       .where(eq(schema.webhook.teamId, teamId))
       .orderBy(desc(schema.webhook.createdAt));
 
-    return rows.map(toWebhook);
+    return rows;
   }
 
   public static async getWebhook(params: { id: string; teamId: number }) {
@@ -299,7 +275,7 @@ export class WebhookService {
       });
     }
 
-    return toWebhook(webhook);
+    return webhook;
   }
 
   public static async createWebhook(params: {
@@ -359,7 +335,7 @@ export class WebhookService {
       });
     }
 
-    return toWebhook(created);
+    return created;
   }
 
   public static async updateWebhook(params: {
@@ -431,7 +407,7 @@ export class WebhookService {
       });
     }
 
-    return toWebhook(updated);
+    return updated;
   }
 
   private static normalizeDomainIds(domainIds?: number[]) {
@@ -508,7 +484,7 @@ export class WebhookService {
       });
     }
 
-    return toWebhook(updated);
+    return updated;
   }
 
   public static async deleteWebhook(params: { id: string; teamId: number }) {
@@ -542,7 +518,7 @@ export class WebhookService {
       });
     }
 
-    return toWebhook(deleted);
+    return deleted;
   }
 
   public static async listWebhookCalls(params: {
