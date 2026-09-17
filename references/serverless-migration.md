@@ -1,6 +1,6 @@
 # Cloudflare migration plan
 
-Status: **in progress — Phases 0–3, 5 and 8 landed; 4, 6, 7, 9 and 10 outstanding.**
+Status: **in progress — Phases 0–3, 5, 8 and 9 landed; 4, 6, 7 and 10 outstanding.**
 Sections marked **Done** record what was actually built and where it differed from the plan; the
 rest is still a plan. Nothing here has run on a Cloudflare account — every measurement is local
 `workerd` under `wrangler dev`.
@@ -17,7 +17,7 @@ rest is still a plan. Nothing here has run on a Cloudflare account — every mea
 | Scheduling | BullMQ repeatable jobs | **Cron Triggers** + **Durable Object alarms** |
 | Locks / ordering | Redis `SET NX PX` + Lua | **Durable Objects** (single-threaded by construction) |
 | Cache / idempotency | Redis | **Workers KV** + **Durable Objects** |
-| API rate limits | Redis `INCR` | **Rate Limiting binding** or a Durable Object |
+| API rate limits | Redis `INCR` | **Durable Object** (exact; the Rate Limiting binding is per-colo) |
 | Object storage | MinIO / S3 | **R2** |
 | IaC | — | **wrangler** |
 | SMTP relay | `apps/smtp-server` container | **unchanged**, stays a container (see §7) |
@@ -470,7 +470,10 @@ requires a Cloudflare account.
      logged at error severity with its source queue — which is §11's alerting path. Nobody has
      written the alert.
 - **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
-  **In progress.** The cache half is done and **the domain verification blocker is cleared**.
+  **Done**, and **the domain verification blocker is cleared**. Nothing outside
+  `server/queue/bullmq-driver.ts` imports `server/redis` any more; what is left of it is three
+  drivers (`server/cache`, `server/rate-limit`, `server/idempotency`) and the integration test
+  helper, all of which Phase 10 deletes.
 
   `getDomainVerificationState` used to read three Redis keys per domain, through the module-level
   `let` in `server/redis.ts` — which on Workers serves exactly one invocation and then hangs, so
