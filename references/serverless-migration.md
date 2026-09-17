@@ -253,8 +253,8 @@ own ticket, not a sub-task.
 | **pino** | `server/logger/log.ts` | Worker threads / transports don't run on Workers. `AsyncLocalStorage` is fine under `nodejs_compat`. Keep the `logger` Proxy and `withLogger` API identical; swap only the implementation. Contained — do it early. |
 | **Stripe SDK** | `billing/payments.ts:14`, `billing/usage.ts:8` | Needs `Stripe.createFetchHttpClient()`. Webhook verification must become `constructEventAsync` + `createSubtleCryptoProvider()`. Silently broken if missed. |
 | **`generateKeyPairSync`** | `aws/ses.ts:17` | BYODKIM keypair generation. Verify under `nodejs_compat`; may need WebCrypto `generateKey`. |
-| **`scryptSync`** | `server/crypto.ts:1` | Sync and CPU-heavy — exactly what the Workers CPU budget punishes. Benchmarked: **18.7ms per call**, on every public-API request, 97% of a transactional send's CPU (§12). Supported under `nodejs_compat`, so it runs — but cache the verification or move to a keyed HMAC. |
-| Other `node:crypto` | 9 more files | `randomBytes`, `createHash`, `createHmac`, `randomUUID`, `timingSafeEqual` — expected to work under `nodejs_compat`. |
+| **`scryptSync`** | ~~`server/crypto.ts:1`~~ | **Resolved — #48.** Was sync and CPU-heavy, exactly what the Workers CPU budget punishes: **18.7ms per call** on every public-API request, 97% of a transactional send's CPU. `crypto.ts` now uses a keyed HMAC-SHA256 with `timingSafeEqual` at **0.004ms**, and `scryptSync` is on no request path at all (§12). |
+| Other `node:crypto` | 9 more files | `randomBytes`, `createHash`, `createHmac`, `randomUUID`, `timingSafeEqual` — expected to work under `nodejs_compat`. Since #48 the last two are **load-bearing, not incidental**: they are the API key check on every public-API request. |
 | **`jsx-email`** | email preview rendering | Verify SSR on Workers. |
 | **`@isaacs/ttlcache`** | in-process cache | Isolates are ephemeral and per-colo; hit rates drop sharply. Move to KV or a DO rather than assuming in-memory carries load. |
 | **Attachment size** | email attachments | Check against Workers request body limits. |
@@ -269,7 +269,7 @@ own ticket, not a sub-task.
 
 | Item | Result |
 |---|---|
-| `scryptSync` | **Runs**, and byte-identical to Node at the same defaults. That parity is load-bearing: `crypto.ts` passes no options, so a different default `N` would silently invalidate every API key hash already stored. ~14ms median against the 18.7ms PR #47 measured under Node on the same machine — Workers does not make #48 worse. |
+| `scryptSync` | **Runs**, and byte-identical to Node at the same defaults — ~14ms median against the 18.7ms PR #47 measured under Node on the same machine. Workers did not make #48 worse; it made it decisive, 14ms against a 10ms Free-tier budget. **#48 has since taken `scryptSync` off the request path** (§12), so the byte-parity finding no longer guards anything — no stored hash is a scrypt hash any more. The `createHmac` that replaced it runs in this same isolate: the Stripe row below builds its signature with one. |
 | `generateKeyPairSync` | **Runs.** rsa-1024, spki/pkcs8 PEM, ~7ms. No WebCrypto rewrite needed. |
 | **nodemailer MIME build** | **Runs.** The stream transport in `sendRawEmail` produces a 367 KB RFC 5322 message including a 256 KB base64 attachment, headers from `buildHeaders` intact. The largest open risk on this list, and it is closed — no rewrite. |
 | `Stripe.createFetchHttpClient()` | **Runs.** `constructEventAsync` + `createSubtleCryptoProvider()` verifies a real signature and rejects a forged one. |
@@ -294,8 +294,18 @@ own ticket, not a sub-task.
    because a consumer holds a blocking Redis connection open for the life of the
    process. `server/queue/index.ts` picks a driver by runtime.
 
-**Free plan is not an option.** Workers Free caps CPU at 10ms per request, and
-one `scryptSync` in the auth middleware is ~14ms. Workers Paid defaults to 30s.
+**Free plan: no longer blocked at the door, still not the plan.** This read *not
+an option*, because Workers Free caps CPU at 10ms per request and one
+`scryptSync` in the auth middleware was ~14ms — authentication alone overran the
+whole request budget, before any work happened. **#48 removed that floor**: the
+HMAC is 0.004ms and an entire transactional send is **0.47 CPU-ms**, under 5% of
+the Free ceiling. What rules Free out now is campaigns, not auth — one 6-section
+newsletter send is 8.6 CPU-ms against that same 10ms cap, and a 30-section one
+is 36ms, over it outright for a *single* recipient. Queues and Durable Objects are
+both available on Free, so the practical ceiling is volume rather than
+capability: 10,000 queue operations/day at §12's 13.5 per email is ~740
+emails/day. Free is a viable hobby tier for transactional sending and cannot run
+campaigns at all. Workers Paid defaults to 30s.
 
 ### Attachment size, measured
 
@@ -409,66 +419,84 @@ send. **The event pipeline is ~78% of infrastructure load.**
 |---|---|---|---|---|
 | Queue operations | 1M/mo | ~13.5 | **~75K emails/mo** | ~$5.40 / 1M emails |
 | Worker requests | 10M/mo | ~4.5 | **~2.2M emails/mo** | ~$1.35 / 1M emails |
-| Worker CPU | 30M CPU-ms | **~9ms campaign, ~19ms transactional** *(measured)* | **~1.6–3.3M emails/mo** | ~$0.18–0.38 / 1M emails |
+| Worker CPU | 30M CPU-ms | **~8.6ms campaign, ~0.49ms transactional** *(measured)* | **~3.5M–61M emails/mo** | ~$0.01–0.17 / 1M emails |
 | DO requests | 1M/mo | ~3 | ~330K emails/mo | ~$0.45 / 1M emails |
 
 **At 10M emails/month the entire Cloudflare bill is roughly $80.** Queues is the first tier to go,
 at ~75K emails — but at $0.40/million operations, crossing it costs pocket change. There is no
-cliff anywhere on the Cloudflare side.
+cliff anywhere on the Cloudflare side. Since #48 the CPU row is the *last* to expire rather than
+the third, outlasting even Worker requests; the bill is unmoved, because CPU was never more than a
+dollar or two of it.
 
 ### CPU per send and per event — measured
 
 The CPU row above used to read *~35ms, estimated*. It is now measured, by
 `apps/web/src/bench/cpu-per-email.bench.ts` (`pnpm --filter=web bench:cpu`). Medians of 25–40
 samples per case, `process.cpuUsage()` user+sys, Node 26 on an AMD Ryzen 9 9900X. Each payload
-class is stated with the size of the HTML it actually produced.
+class is stated with the size of the HTML it actually produced. **Re-measured after #48** replaced
+scrypt with a keyed HMAC; the non-auth rows moved a few percent between the two runs, which is the
+run-to-run noise the caveats below describe.
 
 | Step | Payload | CPU median | CPU p95 |
 |---|---|---|---|
-| `jsx-email` render — `OtpEmail`, the real sign-in template | 9.1 KB out | 1.64 ms | 3.13 ms |
-| `EmailRenderer.render` — double opt-in default (repo fixture) | 4.3 KB out | 0.63 ms | 1.35 ms |
-| `EmailRenderer.render` — 6-section newsletter | 42.3 KB out | 6.06 ms | 11.1 ms |
-| `EmailRenderer.render` — 30-section newsletter | 199.4 KB out | 27.7 ms | 36.2 ms |
-| `html-to-text` — transactional | 9.1 KB in | 0.42 ms | 1.15 ms |
-| `html-to-text` — 6-section newsletter | 42.3 KB in | 0.89 ms | 1.87 ms |
-| `html-to-text` — 30-section newsletter | 199.4 KB in | 2.43 ms | 3.59 ms |
-| MIME build (`nodemailer` stream transport, `ses.ts:183`) | 42.3 KB body | 2.26 ms | 3.44 ms |
-| MIME build + 256 KB attachment | 341.3 KB | 1.54 ms | 2.75 ms |
-| **`scryptSync` — `verifySecureHash`, every public-API request** | — | **18.7 ms** | 19.2 ms |
+| `jsx-email` render — `OtpEmail`, the real sign-in template | 9.1 KB out | 1.66 ms | 2.91 ms |
+| `EmailRenderer.render` — double opt-in default (repo fixture) | 4.3 KB out | 0.573 ms | 1.49 ms |
+| `EmailRenderer.render` — 6-section newsletter | 42.3 KB out | 5.67 ms | 10.1 ms |
+| `EmailRenderer.render` — 30-section newsletter | 199.4 KB out | 25.7 ms | 37.0 ms |
+| `html-to-text` — transactional | 9.1 KB in | 0.360 ms | 0.901 ms |
+| `html-to-text` — 6-section newsletter | 42.3 KB in | 0.751 ms | 1.31 ms |
+| `html-to-text` — 30-section newsletter | 199.4 KB in | 2.34 ms | 3.10 ms |
+| MIME build (`nodemailer` stream transport, `ses.ts:183`) — transactional | 9.1 KB body | 0.465 ms | 0.845 ms |
+| MIME build — 6-section newsletter | 42.3 KB body | 2.13 ms | 3.09 ms |
+| MIME build + 256 KB attachment | 341.3 KB | 1.11 ms | 2.18 ms |
+| **`verifySecureHash` — every public-API request, keyed HMAC since #48** | — | **0.004 ms** | 0.007 ms |
+| `scryptSync` at Node's defaults — what that row cost *before* #48 | — | *16.9 ms* | *17.3 ms* |
 | SES event: `JSON.parse` envelope + inner + status derivation | 2.4 KB | 0.004 ms | 0.007 ms |
 | Webhook sign: `JSON.stringify` + HMAC-SHA256 | — | 0.002 ms | 0.005 ms |
 
-Rolled up: **campaign email ~9.2 CPU-ms** (render + `html-to-text` + MIME), **transactional email
-~19.2 CPU-ms** when each send is its own API request, **~0.7 CPU-ms** when sent through
-`POST /emails/batch` (100 per request, so the `scryptSync` is amortised 100 ways). The whole event
+The scrypt row is no longer on any request path — the benchmark still runs it at explicit
+parameters as a control, which is what keeps the before/after legible instead of a number that
+silently changed. It reads 16.9 ms here against the 18.7 ms PR #47 measured; same machine, same
+parameters, so the spread is run-to-run noise and neither figure is more right than the other.
+
+Rolled up: **campaign email ~8.6 CPU-ms** (render + `html-to-text` + MIME), **transactional email
+~0.49 CPU-ms** — and that is now the figure whether the send is its own API request or one of 100
+in a `POST /emails/batch`. Before #48 those two read ~19.2 and ~0.7, and the whole gap between them
+was one `scryptSync` being amortised 100 ways. **Batching no longer buys CPU; it still buys
+requests and queue operations**, which is where its leverage always mattered more. The whole event
 pipeline is **0.021 CPU-ms per email** — 3.5 events at 0.006 ms each. It is 78% of the request and
 queue load and 0.2% of the CPU.
 
 Three things fall out of this:
 
 1. **The 35ms estimate does not hold, and the error is not where §8 expected.** `jsx-email` and
-   `html-to-text` were the named suspects; together they are ~7ms on a typical marketing email and
-   ~1ms on a transactional one. Marginal CPU cost drops from ~$0.70 to **~$0.18 / 1M campaign
-   emails**, and the free tier stretches from ~850K to ~3.3M emails/month. CPU was never going to
+   `html-to-text` were the named suspects; together they are ~6ms on a typical marketing email and
+   ~1ms on a transactional one. Marginal CPU cost drops from ~$0.70 to **~$0.17 / 1M campaign
+   emails**, and the free tier stretches from ~850K to ~3.5M emails/month. CPU was never going to
    be the binding constraint; queues still are, at ~75K.
-2. **`scryptSync` is the whole transactional figure.** 18.7ms — twice the entire campaign send —
-   and `getTeamAndApiKey` (`api-service.ts:78`) runs it on every request with nothing caching the
-   result. It is Node's default cost (`N=16384, r=8, p=1, keylen=64`; `crypto.ts` passes no
-   options, and an explicit-parameter run reproduces the same 17–19ms). It is also *synchronous*:
-   18ms during which the isolate does nothing else. This is the one number worth acting on.
-3. **Rendering bounds the campaign fan-out batch size.** At 6ms per recipient a single invocation
-   fits ~5,000 renders inside the 30s CPU limit; at 28ms for a long newsletter, ~1,000. The
+2. **`scryptSync` was the whole transactional figure, and #48 removed it.** It measured 18.7ms —
+   twice the entire campaign send — on every request through `getTeamAndApiKey`
+   (`api-service.ts:78`), with nothing caching the result. That was Node's default cost
+   (`N=16384, r=8, p=1, keylen=64`, inherited because `crypto.ts` passed no options) and it was
+   *synchronous*: 18ms in which the isolate did nothing else. It was the one number worth acting
+   on, and acting on it paid ~4,000x on the hash and ~39x on the send. The replacement is a keyed
+   HMAC rather than a cache because **a cache could not have worked**: every cold isolate is a
+   miss, so the p99 stays at the scrypt cost however good the hit rate is.
+3. **Rendering bounds the campaign fan-out batch size.** At 5.7ms per recipient a single invocation
+   fits ~5,000 renders inside the 30s CPU limit; at 26ms for a long newsletter, ~1,100. The
    self-continuation in §4.3 needs a page size well under that, and the subrequest cap (1000) bites
-   first anyway.
+   first anyway. **This is now the only CPU figure that constrains anything** — with auth at
+   0.004ms, rendering is the whole story.
 
 **Caveats.** Measured under Node on x86 Linux, not on a `workerd` isolate on Cloudflare hardware —
 the same V8, but different silicon, different build flags and a colder JIT, so treat these as an
 order of magnitude rather than a bill. The benchmark loops hot, so nothing here captures cold-start
 or JIT warm-up. It covers the named hot paths only: Hono routing, Zod validation, Drizzle query
 construction and row serialisation are all unmeasured, so the per-email totals are a floor, not a
-full accounting. `scryptSync` *is* available under `nodejs_compat` (all `node:crypto` is, bar
-argon2, ed448/x448 and DSA/DH keypairs), so it will run — the open question is what it costs there.
-Re-run on real Workers once #7's account access exists.
+full accounting. All of `node:crypto` is available under `nodejs_compat` bar argon2, ed448/x448 and
+DSA/DH keypairs, and #63 exercised both primitives in a real `workerd` isolate — `scryptSync` at
+~14ms there, and the `createHmac` that replaced it in the same run (§8), though neither was
+timed against Cloudflare hardware. Re-run on real Workers once #7's account access exists.
 
 ### The two things that actually bite
 
@@ -565,8 +593,10 @@ volume — campaign sends spike it. Storage compounds: ~3.5M `EmailEvent` rows/m
    existing `cleanup-email-bodies` job is the pattern to follow. → Phase 0
 3. **Batch the event ingest path.** `sendBatch` from the SNS route; one multi-row INSERT per
    consumer batch. Cuts queue operations and Neon write load together. → Phase 8
-4. **Cache API key verification.** `scryptSync` is 18.7ms of synchronous CPU on *every* public-API
-   request and is 97% of a transactional send. Caching the verified `clientId → team` mapping, or
-   moving to a keyed HMAC over a high-entropy token (these are generated secrets, not passwords —
-   scrypt is protecting against an attack the threat model does not have), removes it. Note the
-   cache has to be KV or a DO, not `@isaacs/ttlcache` (§8). → Phase 5
+4. **~~Cache API key verification.~~ Done — #48.** `scryptSync` was 18.7ms of synchronous CPU on
+   *every* public-API request, 97% of a transactional send. Two options were on the table: cache
+   the verified `clientId → team` mapping, or move to a keyed HMAC over a high-entropy token (these
+   are generated secrets, not passwords — scrypt was protecting against an attack the threat model
+   does not have). The HMAC won outright, because the cache would have needed to be KV or a DO
+   (§8) and still could not have fixed the p99 — every cold isolate is a miss. Shipping no cache
+   also keeps revocation immediate. → landed

@@ -376,29 +376,30 @@ describe("CPU per send and per event", () => {
         { iterations: 25, bytes: bytesOf(attachment) },
       );
 
-      // ----------------------------------------------------------------- scrypt
+      // ------------------------------------------------------- API key hashing
       const apiKeyToken = "3f0c4b4e1d2a4e6f9a8b7c6d5e4f3a2b";
       const storedHash = await createSecureHash(apiKeyToken);
 
       await measure(
-        "scryptSync — createSecureHash (new API key)",
+        "createSecureHash — new API key (keyed HMAC, #48)",
         () => createSecureHash(apiKeyToken),
         { iterations: 25, warmup: 3 },
       );
 
       await measure(
-        "scryptSync — verifySecureHash (every API request)",
+        "verifySecureHash — every API request (keyed HMAC, #48)",
         () => verifySecureHash(apiKeyToken, storedHash),
         { iterations: 25, warmup: 3 },
       );
 
-      // `server/crypto.ts` calls `scryptSync(data, salt, 64)` with no options,
-      // so it inherits Node's defaults: N=16384, r=8, p=1, maxmem=32 MB. Those
-      // cost parameters are the whole story, so spell them out and check the
-      // cost matches — if this row diverges from the two above, the defaults
-      // are not what we think they are.
+      // The pre-#48 control, kept deliberately. `server/crypto.ts` used to call
+      // `scryptSync(data, salt, 64)` with no options, inheriting Node's
+      // defaults: N=16384, r=8, p=1, maxmem=32 MB. Those cost parameters were
+      // the whole story, so they stay spelled out here — this row is what the
+      // `verifySecureHash` row above used to cost, and keeping it measured
+      // rather than remembered is what makes §12's before/after checkable.
       await measure(
-        "scryptSync — N=16384 r=8 p=1 keylen=64 (Node defaults, explicit)",
+        "scryptSync — N=16384 r=8 p=1 keylen=64 (Node defaults, pre-#48 control)",
         () =>
           scryptSync(apiKeyToken, "a3f1c9d2e6b48057", 64, {
             N: 16384,
@@ -441,17 +442,19 @@ describe("CPU per send and per event", () => {
       report();
 
       // ------------------------------------------------------------- roll-ups
-      const scrypt = medianOf(
-        "scryptSync — verifySecureHash (every API request)",
+      const authHash = medianOf(
+        "verifySecureHash — every API request (keyed HMAC, #48)",
       );
       const mime = medianOf("MIME build — transactional");
 
       // `getTeamAndApiKey` (`service/api-service.ts:78`) runs `verifySecureHash`
-      // on every public-API request and nothing caches the result, so one
-      // `scryptSync` is charged per *request* — amortised over the batch when
-      // `POST /emails/batch` carries up to 100 emails.
-      const singleSend = mime + scrypt;
-      const batchSend = mime + scrypt / 100;
+      // on every public-API request and nothing caches the result, so the hash
+      // is charged per *request* — amortised over the batch when
+      // `POST /emails/batch` carries up to 100 emails. Since #48 that
+      // amortisation is worth nothing: the two roll-ups below now differ in the
+      // fourth decimal, where before they were 19.2 vs 0.7 CPU-ms.
+      const singleSend = mime + authHash;
+      const batchSend = mime + authHash / 100;
 
       // Campaign sends are fanned out internally, so they pay no API auth.
       const campaignSend =
@@ -486,9 +489,10 @@ describe("CPU per send and per event", () => {
         "     but it also means the DO/queue side of the cost model is untouched.",
         "  3. The loops run hot, so V8 is fully warmed. A cold Workers isolate",
         "     pays JIT warm-up that this does not capture.",
-        "  4. `scryptSync` is the dominant term. It is pure compute in OpenSSL",
-        "     rather than in V8, so it is the figure most likely to transfer",
-        "     unchanged — but it is also the one worth re-measuring first.",
+        "  4. Rendering is the dominant term, and the only one that constrains",
+        "     anything: API key hashing stopped mattering at #48. The scrypt row",
+        "     is the pre-#48 control, not a live cost — nothing on a request",
+        "     path calls it any more.",
       ].join("\n");
 
       // eslint-disable-next-line no-console
