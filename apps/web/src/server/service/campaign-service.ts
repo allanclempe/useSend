@@ -1,5 +1,9 @@
 import { EmailRenderer } from "@usesend/email-editor/src/renderer";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { createHash } from "crypto";
 import { env } from "~/env";
 import {
@@ -8,6 +12,28 @@ import {
   EmailStatus,
   UnsubscribeReason,
 } from "@prisma/client";
+
+/**
+ * Normalises a campaign row for callers.
+ *
+ * `replyTo`, `cc` and `bcc` are nullable in the database, but Prisma typed them
+ * as plain arrays and the dashboard, public API and send path all assume that.
+ * Coerce here rather than widening the type and pushing `| null` through every
+ * consumer. Same situation as Webhook.eventTypes in #31.
+ */
+function toContact(row: typeof schema.contact.$inferSelect): Contact {
+  // jsonb reads as `unknown` in Drizzle; Prisma typed it JsonValue.
+  return { ...row, properties: (row.properties ?? {}) as Contact["properties"] };
+}
+
+function toCampaign(row: typeof schema.campaign.$inferSelect): Campaign {
+  return {
+    ...row,
+    replyTo: row.replyTo ?? [],
+    cc: row.cc ?? [],
+    bcc: row.bcc ?? [],
+  } as Campaign;
+}
 import { EmailQueueService } from "./email-queue-service";
 import {
   CAMPAIGN_BATCH_QUEUE,
@@ -79,10 +105,15 @@ async function prepareCampaignHtml(
       const html = await renderer.render();
 
       if (campaign.html !== html) {
-        campaign = await db.campaign.update({
-          where: { id: campaign.id },
-          data: { html },
-        });
+        const [updated] = await drizzleDb
+          .update(schema.campaign)
+          .set(withUpdatedAt({ html }))
+          .where(eq(schema.campaign.id, campaign.id))
+          .returning();
+
+        if (updated) {
+          campaign = toCampaign(updated);
+        }
       }
 
       return { campaign, html };
@@ -212,10 +243,16 @@ export async function createCampaignFromApi({
     }
   }
 
-  const contactBook = await db.contactBook.findUnique({
-    where: { id: contactBookId, teamId },
-    select: { id: true },
-  });
+  const [contactBook] = await drizzleDb
+    .select({ id: schema.contactBook.id })
+    .from(schema.contactBook)
+    .where(
+      and(
+        eq(schema.contactBook.id, contactBookId),
+        eq(schema.contactBook.teamId, teamId),
+      ),
+    )
+    .limit(1);
 
   if (!contactBook) {
     throw new UnsendApiError({
@@ -227,10 +264,17 @@ export async function createCampaignFromApi({
   let domain;
 
   if (apiKeyId) {
-    const apiKey = await db.apiKey.findUnique({
-      where: { id: apiKeyId },
-      include: { domain: true },
-    });
+    const [apiKeyRow] = await drizzleDb
+      .select({ apiKey: schema.apiKey, domain: schema.domain })
+      .from(schema.apiKey)
+      .leftJoin(schema.domain, eq(schema.domain.id, schema.apiKey.domainId))
+      .where(eq(schema.apiKey.id, apiKeyId))
+      .limit(1);
+
+    // Reshaped to Prisma's nested include for validateApiKeyDomainAccess.
+    const apiKey = apiKeyRow
+      ? { ...apiKeyRow.apiKey, domain: apiKeyRow.domain }
+      : null;
 
     if (!apiKey || apiKey.teamId !== teamId) {
       throw new UnsendApiError({
@@ -259,28 +303,51 @@ export async function createCampaignFromApi({
     });
   }
 
-  const campaign = await db.campaign.create({
-    data: {
-      name,
-      from,
-      subject,
-      isApi: true,
-      ...(previewText !== undefined ? { previewText } : {}),
-      content: sanitizedContent,
-      ...(sanitizedHtml && sanitizedHtml.length > 0
-        ? { html: sanitizedHtml }
-        : {}),
-      contactBookId,
-      replyTo: sanitizeAddressList(replyTo),
-      cc: sanitizeAddressList(cc),
-      bcc: sanitizeAddressList(bcc),
-      teamId,
-      domainId: domain.id,
-      ...(typeof batchSize === "number" ? { batchSize } : {}),
-    },
-  });
+  const [campaign] = await drizzleDb
+    .insert(schema.campaign)
+    .values(
+      withUpdatedAt({
+        id: createId(),
+        name,
+        from,
+        subject,
+        isApi: true,
+        ...(previewText !== undefined ? { previewText } : {}),
+        content: sanitizedContent,
+        ...(sanitizedHtml && sanitizedHtml.length > 0
+          ? { html: sanitizedHtml }
+          : {}),
+        contactBookId,
+        replyTo: sanitizeAddressList(replyTo),
+        cc: sanitizeAddressList(cc),
+        bcc: sanitizeAddressList(bcc),
+        teamId,
+        domainId: domain.id,
+        ...(typeof batchSize === "number" ? { batchSize } : {}),
+      }),
+    )
+    .returning();
 
-  return campaign;
+  if (!campaign) {
+    throw new UnsendApiError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Failed to create campaign",
+    });
+  }
+
+  return toCampaign(campaign);
+}
+
+/** The projected shape getCampaignForTeam returns, with arrays normalised. */
+function toCampaignSummary<
+  T extends { replyTo: string[] | null; cc: string[] | null; bcc: string[] | null },
+>(row: T) {
+  return {
+    ...row,
+    replyTo: row.replyTo ?? [],
+    cc: row.cc ?? [],
+    bcc: row.bcc ?? [],
+  };
 }
 
 export async function getCampaignForTeam({
@@ -290,37 +357,43 @@ export async function getCampaignForTeam({
   campaignId: string;
   teamId: number;
 }) {
-  const campaign = await db.campaign.findFirst({
-    where: { id: campaignId, teamId },
-    select: {
-      id: true,
-      name: true,
-      from: true,
-      subject: true,
-      previewText: true,
-      contactBookId: true,
-      html: true,
-      content: true,
-      status: true,
-      scheduledAt: true,
-      batchSize: true,
-      batchWindowMinutes: true,
-      total: true,
-      sent: true,
-      delivered: true,
-      opened: true,
-      clicked: true,
-      unsubscribed: true,
-      bounced: true,
-      hardBounced: true,
-      complained: true,
-      replyTo: true,
-      cc: true,
-      bcc: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+  const [campaign] = await drizzleDb
+    .select({
+      id: schema.campaign.id,
+      name: schema.campaign.name,
+      from: schema.campaign.from,
+      subject: schema.campaign.subject,
+      previewText: schema.campaign.previewText,
+      contactBookId: schema.campaign.contactBookId,
+      html: schema.campaign.html,
+      content: schema.campaign.content,
+      status: schema.campaign.status,
+      scheduledAt: schema.campaign.scheduledAt,
+      batchSize: schema.campaign.batchSize,
+      batchWindowMinutes: schema.campaign.batchWindowMinutes,
+      total: schema.campaign.total,
+      sent: schema.campaign.sent,
+      delivered: schema.campaign.delivered,
+      opened: schema.campaign.opened,
+      clicked: schema.campaign.clicked,
+      unsubscribed: schema.campaign.unsubscribed,
+      bounced: schema.campaign.bounced,
+      hardBounced: schema.campaign.hardBounced,
+      complained: schema.campaign.complained,
+      replyTo: schema.campaign.replyTo,
+      cc: schema.campaign.cc,
+      bcc: schema.campaign.bcc,
+      createdAt: schema.campaign.createdAt,
+      updatedAt: schema.campaign.updatedAt,
+    })
+    .from(schema.campaign)
+    .where(
+      and(
+        eq(schema.campaign.id, campaignId),
+        eq(schema.campaign.teamId, teamId),
+      ),
+    )
+    .limit(1);
 
   if (!campaign) {
     throw new UnsendApiError({
@@ -329,17 +402,21 @@ export async function getCampaignForTeam({
     });
   }
 
-  return campaign;
+  return toCampaignSummary(campaign);
 }
 
 export async function sendCampaign(id: string) {
-  let campaign = await db.campaign.findUnique({
-    where: { id },
-  });
+  const [found] = await drizzleDb
+    .select()
+    .from(schema.campaign)
+    .where(eq(schema.campaign.id, id))
+    .limit(1);
 
-  if (!campaign) {
+  if (!found) {
     throw new Error("Campaign not found");
   }
+
+  let campaign = toCampaign(found);
 
   const prepared = await prepareCampaignHtml(campaign);
   campaign = prepared.campaign;
@@ -363,20 +440,26 @@ export async function sendCampaign(id: string) {
   }
 
   // Count subscribed contacts for total, don't load all into memory
-  const total = await db.contact.count({
-    where: { contactBookId: campaign.contactBookId, subscribed: true },
-  });
+  const total = await drizzleDb.$count(
+    schema.contact,
+    and(
+      eq(schema.contact.contactBookId, campaign.contactBookId),
+      eq(schema.contact.subscribed, true),
+    ),
+  );
 
   // Mark as scheduled (or keep running if already running), set totals and scheduledAt if not set
-  await db.campaign.update({
-    where: { id },
-    data: {
-      status: "SCHEDULED",
-      total,
-      scheduledAt: campaign.scheduledAt ?? new Date(),
-      lastCursor: campaign.lastCursor ?? null,
-    },
-  });
+  await drizzleDb
+    .update(schema.campaign)
+    .set(
+      withUpdatedAt({
+        status: "SCHEDULED" as const,
+        total,
+        scheduledAt: campaign.scheduledAt ?? new Date(),
+        lastCursor: campaign.lastCursor ?? null,
+      }),
+    )
+    .where(eq(schema.campaign.id, id));
 
   // Kick off first batch immediately (idempotent by jobId)
   await CampaignBatchService.queueBatch({
@@ -396,9 +479,18 @@ export async function scheduleCampaign({
   scheduledAt?: Date | string;
   batchSize?: number;
 }) {
-  let campaign = await db.campaign.findUnique({
-    where: { id: campaignId, teamId },
-  });
+  const [scheduleTarget] = await drizzleDb
+    .select()
+    .from(schema.campaign)
+    .where(
+      and(
+        eq(schema.campaign.id, campaignId),
+        eq(schema.campaign.teamId, teamId),
+      ),
+    )
+    .limit(1);
+
+  let campaign = scheduleTarget ? toCampaign(scheduleTarget) : undefined;
   if (!campaign) {
     throw new UnsendApiError({
       code: "NOT_FOUND",
@@ -444,9 +536,13 @@ export async function scheduleCampaign({
   }
 
   // Count subscribed contacts for total
-  const total = await db.contact.count({
-    where: { contactBookId: campaign.contactBookId, subscribed: true },
-  });
+  const total = await drizzleDb.$count(
+    schema.contact,
+    and(
+      eq(schema.contact.contactBookId, campaign.contactBookId),
+      eq(schema.contact.subscribed, true),
+    ),
+  );
 
   if (total === 0) {
     throw new UnsendApiError({
@@ -464,16 +560,18 @@ export async function scheduleCampaign({
   const shouldResetCursor =
     campaign.status === "DRAFT" || campaign.status === "SENT";
 
-  await db.campaign.update({
-    where: { id: campaign.id },
-    data: {
-      status: "SCHEDULED",
-      scheduledAt,
-      total,
-      ...(batchSize ? { batchSize } : {}),
-      ...(shouldResetCursor ? { lastCursor: null } : {}),
-    },
-  });
+  await drizzleDb
+    .update(schema.campaign)
+    .set(
+      withUpdatedAt({
+        status: "SCHEDULED" as const,
+        scheduledAt,
+        total,
+        ...(batchSize ? { batchSize } : {}),
+        ...(shouldResetCursor ? { lastCursor: null } : {}),
+      }),
+    )
+    .where(eq(schema.campaign.id, campaign.id));
 
   return { ok: true };
 }
@@ -485,9 +583,16 @@ export async function pauseCampaign({
   campaignId: string;
   teamId: number;
 }) {
-  const campaign = await db.campaign.findUnique({
-    where: { id: campaignId, teamId },
-  });
+  const [campaign] = await drizzleDb
+    .select()
+    .from(schema.campaign)
+    .where(
+      and(
+        eq(schema.campaign.id, campaignId),
+        eq(schema.campaign.teamId, teamId),
+      ),
+    )
+    .limit(1);
 
   if (!campaign) {
     throw new UnsendApiError({
@@ -496,10 +601,10 @@ export async function pauseCampaign({
     });
   }
 
-  await db.campaign.update({
-    where: { id: campaignId },
-    data: { status: "PAUSED" },
-  });
+  await drizzleDb
+    .update(schema.campaign)
+    .set(withUpdatedAt({ status: "PAUSED" as const }))
+    .where(eq(schema.campaign.id, campaignId));
 
   return { ok: true };
 }
@@ -511,9 +616,16 @@ export async function resumeCampaign({
   campaignId: string;
   teamId: number;
 }) {
-  const campaign = await db.campaign.findUnique({
-    where: { id: campaignId, teamId },
-  });
+  const [campaign] = await drizzleDb
+    .select()
+    .from(schema.campaign)
+    .where(
+      and(
+        eq(schema.campaign.id, campaignId),
+        eq(schema.campaign.teamId, teamId),
+      ),
+    )
+    .limit(1);
 
   if (!campaign) {
     throw new UnsendApiError({
@@ -523,15 +635,15 @@ export async function resumeCampaign({
   }
 
   if (campaign.scheduledAt && campaign.scheduledAt.getTime() > Date.now()) {
-    await db.campaign.update({
-      where: { id: campaignId },
-      data: { status: "SCHEDULED" },
-    });
+    await drizzleDb
+      .update(schema.campaign)
+      .set(withUpdatedAt({ status: "SCHEDULED" as const }))
+      .where(eq(schema.campaign.id, campaignId));
   } else {
-    await db.campaign.update({
-      where: { id: campaignId },
-      data: { status: "RUNNING" },
-    });
+    await drizzleDb
+      .update(schema.campaign)
+      .set(withUpdatedAt({ status: "RUNNING" as const }))
+      .where(eq(schema.campaign.id, campaignId));
   }
 
   return { ok: true };
@@ -579,15 +691,17 @@ function verifyUnsubscribeLink(id: string, hash: string) {
 export async function getContactFromUnsubscribeLink(id: string, hash: string) {
   const { contactId } = verifyUnsubscribeLink(id, hash);
 
-  const contact = await db.contact.findUnique({
-    where: { id: contactId },
-  });
+  const [contact] = await drizzleDb
+    .select()
+    .from(schema.contact)
+    .where(eq(schema.contact.id, contactId))
+    .limit(1);
 
   if (!contact) {
     throw new Error("Contact not found");
   }
 
-  return contact;
+  return toContact(contact);
 }
 
 export async function unsubscribeContactFromLink(id: string, hash: string) {
@@ -611,9 +725,11 @@ export async function unsubscribeContact({
 }) {
   // Update the contact's subscription status
   try {
-    const contact = await db.contact.findUnique({
-      where: { id: contactId },
-    });
+    const [contact] = await drizzleDb
+      .select()
+      .from(schema.contact)
+      .where(eq(schema.contact.id, contactId))
+      .limit(1);
 
     if (!contact) {
       throw new Error("Contact not found");
@@ -627,14 +743,16 @@ export async function unsubscribeContact({
       });
 
       if (campaignId) {
-        await db.campaign.update({
-          where: { id: campaignId },
-          data: {
-            unsubscribed: {
-              increment: 1,
-            },
-          },
-        });
+        await drizzleDb
+          .update(schema.campaign)
+          .set(
+            withUpdatedAt({
+              // SQL rather than read-then-write: concurrent unsubscribes on the
+              // same campaign would otherwise lose counts.
+              unsubscribed: sql`${schema.campaign.unsubscribed} + 1`,
+            }),
+          )
+          .where(eq(schema.campaign.id, campaignId));
       }
 
       return updatedContact;
@@ -665,9 +783,11 @@ export async function subscribeContact(id: string, hash: string) {
 
   // Update the contact's subscription status
   try {
-    const contact = await db.contact.findUnique({
-      where: { id: contactId },
-    });
+    const [contact] = await drizzleDb
+      .select()
+      .from(schema.contact)
+      .where(eq(schema.contact.id, contactId))
+      .limit(1);
 
     if (!contact) {
       throw new Error("Contact not found");
@@ -680,14 +800,14 @@ export async function subscribeContact(id: string, hash: string) {
         unsubscribeReason: null,
       });
 
-      await db.campaign.update({
-        where: { id: campaignId },
-        data: {
-          unsubscribed: {
-            decrement: 1,
-          },
-        },
-      });
+      await drizzleDb
+        .update(schema.campaign)
+        .set(
+          withUpdatedAt({
+            unsubscribed: sql`${schema.campaign.unsubscribed} - 1`,
+          }),
+        )
+        .where(eq(schema.campaign.id, campaignId));
     }
 
     return true;
@@ -698,9 +818,11 @@ export async function subscribeContact(id: string, hash: string) {
 }
 
 export async function deleteCampaign(id: string, teamId: number) {
-  const existing = await db.campaign.findFirst({
-    where: { id, teamId },
-  });
+  const [existing] = await drizzleDb
+    .select()
+    .from(schema.campaign)
+    .where(and(eq(schema.campaign.id, id), eq(schema.campaign.teamId, teamId)))
+    .limit(1);
 
   if (!existing) {
     throw new UnsendApiError({
@@ -709,16 +831,24 @@ export async function deleteCampaign(id: string, teamId: number) {
     });
   }
 
-  const campaign = await db.$transaction(async (tx) => {
-    await tx.campaignEmail.deleteMany({
-      where: { campaignId: id },
-    });
+  const campaign = await drizzleDb.transaction(async (tx) => {
+    await tx
+      .delete(schema.campaignEmail)
+      .where(eq(schema.campaignEmail.campaignId, id));
 
-    const campaign = await tx.campaign.delete({
-      where: { id },
-    });
+    const [deleted] = await tx
+      .delete(schema.campaign)
+      .where(eq(schema.campaign.id, id))
+      .returning();
 
-    return campaign;
+    if (!deleted) {
+      throw new UnsendApiError({
+        code: "NOT_FOUND",
+        message: "Campaign not found",
+      });
+    }
+
+    return toCampaign(deleted);
   });
 
   return campaign;
