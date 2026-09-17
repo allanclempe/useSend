@@ -1,6 +1,7 @@
 import { Context } from "hono";
 import { eq } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
+import { withUpdatedAt } from "../drizzle/touch";
 import { UnsendApiError } from "./api-error";
 import { getTeamAndApiKey } from "../service/api-service";
 import { isSelfHosted } from "~/utils/common";
@@ -49,7 +50,7 @@ export const getTeamFromToken = async (c: Context) => {
   // No await so it won't block the request. Need to be moved to a queue in future
   drizzleDb
     .update(schema.apiKey)
-    .set({ lastUsed: new Date() })
+    .set(withUpdatedAt({ lastUsed: new Date() }))
     .where(eq(schema.apiKey.id, apiKey.id))
     .catch((err) =>
       logger.error({ err }, "Failed to update lastUsed on API key")
