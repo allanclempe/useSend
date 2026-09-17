@@ -9,6 +9,11 @@ import { isSelfHosted } from "~/utils/common";
 import { UnsendApiError } from "./api-error";
 import { Team, ApiKey } from "~/types/db";
 import { logger } from "../logger/log";
+import {
+  startTrace,
+  TRACEPARENT_HEADER,
+  withTraceContext,
+} from "../logger/trace-context";
 
 // Define AppEnv for Hono context
 export type AppEnv = {
@@ -21,6 +26,19 @@ export function getApp() {
   const app = new OpenAPIHono<AppEnv>().basePath("/api");
 
   app.onError(handleError);
+
+  // Trace context. First middleware on purpose: everything after it — auth,
+  // rate limiting, handlers, and every queue message they produce — logs under
+  // one trace_id, which is what makes an API → queue → consumer hop followable
+  // (#18). An inbound `traceparent` continues the caller's trace.
+  app.use("*", async (c: Context<AppEnv>, next: Next) => {
+    await withTraceContext(
+      startTrace(c.req.header(TRACEPARENT_HEADER)),
+      async () => {
+        await next();
+      },
+    );
+  });
 
   // Auth and Team Middleware (runs before rate limiter)
   app.use("*", async (c: Context<AppEnv>, next: Next) => {

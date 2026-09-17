@@ -40,6 +40,20 @@ export const env = createEnv({
     // unset (`better-auth/dist/utils/url.mjs:68-71`); set it when a proxy makes
     // the request headers unreliable.
     BETTER_AUTH_URL: z.string().url().optional(),
+    // Keys the HMAC that hashes API keys (`server/crypto.ts`, issue #48).
+    // Generate with `openssl rand -hex 32`.
+    //
+    // Required in every environment, not just production, and deliberately
+    // unlike `NEXTAUTH_SECRET`/`BETTER_AUTH_SECRET` above: those have library
+    // fallbacks, this has none, and a default would be a hardcoded key that
+    // verifies every API key in every install that forgot to set it. Failing to
+    // boot is the better failure. Test runs get theirs from
+    // `src/test/setup/setup-env.ts`.
+    //
+    // Rotating it invalidates every existing API key.
+    API_KEY_HMAC_SECRET: z
+      .string()
+      .min(32, "API_KEY_HMAC_SECRET must be at least 32 characters"),
     GITHUB_ID: z.string().optional(),
     GITHUB_SECRET: z.string().optional(),
     AWS_ACCESS_KEY_ID: z.string().optional(),
@@ -69,11 +83,6 @@ export const env = createEnv({
     DISCORD_WEBHOOK_URL: z.string().optional(),
     REDIS_URL: z.string(),
     REDIS_KEY_PREFIX: z.string().default(""),
-    S3_COMPATIBLE_ACCESS_KEY: z.string().optional(),
-    S3_COMPATIBLE_SECRET_KEY: z.string().optional(),
-    S3_COMPATIBLE_API_URL: z.string().optional(),
-    S3_COMPATIBLE_PUBLIC_URL: z.string().optional(),
-    S3_COMPATIBLE_BUCKET: z.string().optional(),
     STRIPE_SECRET_KEY: z.string().optional(),
     STRIPE_BASIC_PRICE_ID: z.string().optional(),
     STRIPE_BASIC_USAGE_PRICE_ID: z.string().optional(),
@@ -90,10 +99,23 @@ export const env = createEnv({
         .string()
         .optional()
         .transform((str) => (str ? parseInt(str, 10) : undefined)),
+    // Defaults to 30 days rather than being opt-in. It was opt-in so that wiring
+    // up a job that deletes rows would not quietly start deleting them at an
+    // existing install on upgrade; the log is a debugging aid nobody reads at 31
+    // days, and leaving it unbounded by default is the worse failure. Set to 0
+    // to keep it indefinitely.
     WEBHOOK_CALL_RETENTION_DAYS: z
         .string()
-        .optional()
-        .transform((str) => (str ? parseInt(str, 10) : undefined)),
+        .default("30")
+        .transform((str) => parseInt(str, 10)),
+    /**
+     * OpenTelemetry resource attributes stamped on every log record. Declared
+     * here so they are validated and documented; `server/logger/log.ts` reads
+     * them from `process.env` directly, because the logger has to be importable
+     * from modules that run before env validation.
+     */
+    OTEL_SERVICE_NAME: z.string().optional(),
+    OTEL_SERVICE_VERSION: z.string().optional(),
   },
 
   /**
@@ -122,6 +144,7 @@ export const env = createEnv({
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
+    API_KEY_HMAC_SECRET: process.env.API_KEY_HMAC_SECRET,
     GITHUB_ID: process.env.GITHUB_ID,
     GITHUB_SECRET: process.env.GITHUB_SECRET,
     AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY,
@@ -144,11 +167,6 @@ export const env = createEnv({
     REDIS_URL: process.env.REDIS_URL,
     REDIS_KEY_PREFIX: process.env.REDIS_KEY_PREFIX,
     FROM_EMAIL: process.env.FROM_EMAIL,
-    S3_COMPATIBLE_ACCESS_KEY: process.env.S3_COMPATIBLE_ACCESS_KEY,
-    S3_COMPATIBLE_SECRET_KEY: process.env.S3_COMPATIBLE_SECRET_KEY,
-    S3_COMPATIBLE_API_URL: process.env.S3_COMPATIBLE_API_URL,
-    S3_COMPATIBLE_PUBLIC_URL: process.env.S3_COMPATIBLE_PUBLIC_URL,
-    S3_COMPATIBLE_BUCKET: process.env.S3_COMPATIBLE_BUCKET,
     STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
     STRIPE_BASIC_PRICE_ID: process.env.STRIPE_BASIC_PRICE_ID,
     STRIPE_BASIC_USAGE_PRICE_ID: process.env.STRIPE_BASIC_USAGE_PRICE_ID,
@@ -160,6 +178,8 @@ export const env = createEnv({
     EMAIL_CLEANUP_DAYS: process.env.EMAIL_CLEANUP_DAYS,
     EMAIL_EVENT_RETENTION_DAYS: process.env.EMAIL_EVENT_RETENTION_DAYS,
     WEBHOOK_CALL_RETENTION_DAYS: process.env.WEBHOOK_CALL_RETENTION_DAYS,
+    OTEL_SERVICE_NAME: process.env.OTEL_SERVICE_NAME,
+    OTEL_SERVICE_VERSION: process.env.OTEL_SERVICE_VERSION,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

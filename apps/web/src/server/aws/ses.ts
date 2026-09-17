@@ -20,6 +20,7 @@ import { env } from "~/env";
 import { getAwsCredentialOptions } from "~/server/aws/credentials";
 import { EmailContent } from "~/types";
 import { logger } from "../logger/log";
+import { maskEmail } from "../logger/redact";
 import { buildHeaders } from "~/server/utils/email-headers";
 
 let accountId: string | undefined = undefined;
@@ -321,19 +322,22 @@ export async function deleteFromSesSuppressionList(
       EmailAddress: email,
     });
     await sesClient.send(command);
-    logger.info({ email, region }, "Removed email from SES suppression list");
+    logger.info(
+      { email: maskEmail(email), region },
+      "Removed email from SES suppression list"
+    );
     return true;
   } catch (error: any) {
     // NotFoundException means email wasn't in SES suppression list - that's fine
     if (error.name === "NotFoundException") {
       logger.debug(
-        { email, region },
+        { email: maskEmail(email), region },
         "Email not in SES suppression list (already removed or never added)"
       );
       return true;
     }
     logger.error(
-      { email, region, error: error.message },
+      { email: maskEmail(email), region, error: error.message },
       "Failed to remove email from SES suppression list"
     );
     return false;

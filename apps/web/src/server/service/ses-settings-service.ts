@@ -21,6 +21,19 @@ import { sesRegionSchema } from "~/lib/zod/ses-setting-schema";
  *
  * Subscribing to an event we cannot handle costs requests, queue operations and
  * retries for nothing. Add it back only alongside a handler.
+ *
+ * Deliberately excludes SEND too, for the opposite reason: we can handle it, we
+ * just already know it. SEND was roughly a quarter of the pipeline -- an SNS
+ * POST, a queue message and a consumer invocation per email -- to be told that
+ * an email we had just handed to SES had been handed to SES. Everything it drove
+ * is now written locally: `DailyEmailUsage.sent` by `recordAcceptedSends` when
+ * the email is accepted, and the SENT status, the `email.sent` webhook and
+ * `Campaign.sent` by `email-queue-service` the moment `sendRawEmail` returns a
+ * message id. That is strictly better information than the echo -- it is
+ * synchronous, and it cannot be delayed, dropped or replayed.
+ *
+ * REJECT stays: it is the only signal that SES refused at handoff, and it is
+ * rare enough to cost nothing.
  */
 const GENERAL_EVENTS: EventType[] = [
   "BOUNCE",
@@ -29,7 +42,6 @@ const GENERAL_EVENTS: EventType[] = [
   "DELIVERY_DELAY",
   "REJECT",
   "RENDERING_FAILURE",
-  "SEND",
 ];
 
 export class SesSettingsService {

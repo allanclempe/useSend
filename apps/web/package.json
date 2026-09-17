@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "next dev -p 3000 --turbopack",
+    "dev:worker": "wrangler dev --port 8788",
+    "compat:check": "wrangler dev -c wrangler.compat-check.jsonc --port 8790",
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings 0",
@@ -19,6 +21,7 @@
     "test:integration": "RUN_INTEGRATION=true vitest run -c vitest.integration.config.ts",
     "test:integration:full": "pnpm test:integration:prepare:local && pnpm test:integration",
     "test:coverage": "vitest run -c vitest.default.config.ts --coverage",
+    "bench:cpu": "vitest run -c vitest.bench.config.ts",
     "typecheck": "tsc --noEmit --pretty false",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -30,11 +33,9 @@
     "memory:baseline": "node --expose-gc scripts/baseline-test.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1048.0",
     "@aws-sdk/client-sesv2": "^3.1048.0",
     "@aws-sdk/client-sns": "^3.1048.0",
     "@aws-sdk/client-sts": "^3.1047.0",
-    "@aws-sdk/s3-request-presigner": "^3.1048.0",
     "@hono/swagger-ui": "^0.5.1",
     "@hono/zod-openapi": "^0.10.0",
     "@hookform/resolvers": "5.0.1",
@@ -83,6 +84,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@next/eslint-plugin-next": "^15.5.18",
     "@tailwindcss/postcss": "^4.1.0",
     "@types/eslint": "^9.6.1",
@@ -107,7 +109,8 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.3",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.133.0"
   },
   "overrides": {
     "react-is": "^19.0.0-rc-69d4b800-20241021"

@@ -1,0 +1,13 @@
+{
+  "name": "do-hibernation-probe",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Throwaway prototype: does a Durable Object on a 1.5s alarm stay resident between alarms? (issue #7)",
+  "scripts": {
+    "dev": "wrangler dev --port 8799",
+    "experiment": "node run.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.42.0"
+  }
+}

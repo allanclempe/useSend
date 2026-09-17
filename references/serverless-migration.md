@@ -94,7 +94,25 @@ and the settings UI needs copy saying so.
 
 `campaign-scheduler-job.ts:12` — `SCHEDULER_TICK_MS = 1500`. Cron Triggers floor at 1 minute, so
 this one job must be a **Durable Object with a self-rescheduling alarm**, not a Cron Trigger.
-No behaviour change required, unlike the EventBridge design.
+
+**Measured: keep the alarm, drop the 1.5s.** A Durable Object is only removed from memory after
+10s of inactivity, so one that re-arms every 1.5s never leaves it — the constructor runs once and
+the object sits resident for as long as the tick keeps running. Whether that resident time is
+*billed* hangs on a distinction in Cloudflare's pricing wording that cannot be settled without an
+account, and the two readings are 30x apart (§12). **A 30s tick makes the question moot**: at any
+interval past 10s the object is evicted between every alarm, measured. The cost is up to 30s of
+scheduling jitter, which is invisible against `batchWindowMinutes` (minutes) and scheduled sends
+(minute precision) — and §4.5 already accepts one tick of jitter on the same path.
+
+Two constraints on the DO follow, and neither is optional:
+
+- **It must not hold a Postgres connection.** A held-open outbound socket makes a Durable Object
+  ineligible for hibernation, so it is billed wall-clock however coarse the tick. Measured: the
+  same object that was evicted between every 15s alarm stayed resident across all of them with one
+  socket open. A pooled Neon/Hyperdrive connection in the scheduler DO is exactly this. Have the
+  alarm enqueue and let a Queues consumer touch the database, or query over HTTP.
+- **Nothing may be left pending across a tick** — no `setTimeout`, no `setInterval`, no unawaited
+  in-flight `fetch()`. Each was measured to pin the object on its own.
 
 ### 4.3 Workers CPU and subrequest limits vs unbounded loops
 
@@ -221,6 +239,12 @@ own ticket, not a sub-task.
   `forcePathStyle` for MinIO. **Decided: native R2 binding**, not presigned URLs — drop
   `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` and proxy uploads/downloads through a
   Worker route. Removes request-signing overhead and two SDK dependencies from the bundle.
+  **Done in Phase 5.** An R2 binding has no URL to presign, so `getDocumentUploadUrl` now issues a
+  short-lived HMAC-signed URL pointing at `/storage/*` on the Worker, which is what the presigned
+  URL was doing. The route sits outside the Hono app deliberately — it is a dashboard concern, not
+  part of the API contract. Storage became a Worker capability: under Node there is no binding,
+  `isStorageConfigured()` is false, and both editors already hide the file picker on
+  `imageUploadSupported: false`. `S3_COMPATIBLE_*` is gone from `env.js` and `turbo.json`.
 
 ## 8. Runtime compatibility gotchas
 
@@ -229,12 +253,74 @@ own ticket, not a sub-task.
 | **pino** | `server/logger/log.ts` | Worker threads / transports don't run on Workers. `AsyncLocalStorage` is fine under `nodejs_compat`. Keep the `logger` Proxy and `withLogger` API identical; swap only the implementation. Contained — do it early. |
 | **Stripe SDK** | `billing/payments.ts:14`, `billing/usage.ts:8` | Needs `Stripe.createFetchHttpClient()`. Webhook verification must become `constructEventAsync` + `createSubtleCryptoProvider()`. Silently broken if missed. |
 | **`generateKeyPairSync`** | `aws/ses.ts:17` | BYODKIM keypair generation. Verify under `nodejs_compat`; may need WebCrypto `generateKey`. |
-| **`scryptSync`** | `server/crypto.ts:1` | Sync and CPU-heavy — exactly what the Workers CPU budget punishes. Benchmark, consider a WebCrypto KDF. |
-| Other `node:crypto` | 9 more files | `randomBytes`, `createHash`, `createHmac`, `randomUUID`, `timingSafeEqual` — expected to work under `nodejs_compat`. |
+| **`scryptSync`** | ~~`server/crypto.ts:1`~~ | **Resolved — #48.** Was sync and CPU-heavy, exactly what the Workers CPU budget punishes: **18.7ms per call** on every public-API request, 97% of a transactional send's CPU. `crypto.ts` now uses a keyed HMAC-SHA256 with `timingSafeEqual` at **0.004ms**, and `scryptSync` is on no request path at all (§12). |
+| Other `node:crypto` | 9 more files | `randomBytes`, `createHash`, `createHmac`, `randomUUID`, `timingSafeEqual` — expected to work under `nodejs_compat`. Since #48 the last two are **load-bearing, not incidental**: they are the API key check on every public-API request. |
 | **`jsx-email`** | email preview rendering | Verify SSR on Workers. |
 | **`@isaacs/ttlcache`** | in-process cache | Isolates are ephemeral and per-colo; hit rates drop sharply. Move to KV or a DO rather than assuming in-memory carries load. |
 | **Attachment size** | email attachments | Check against Workers request body limits. |
 | **SNS signature verification** | `ses-hook-parser.ts` | Must work via WebCrypto. |
+
+### Verified on `workerd`, not from documentation (Phase 5)
+
+`apps/web/src/worker/compat-check.ts` runs this list inside a real isolate —
+`pnpm --filter=web compat:check`, then `curl localhost:8790`. Under
+`wrangler dev`, workerd 1.20260916.1, `nodejs_compat`, `compatibility_date`
+2026-01-01. Local `workerd`, not Cloudflare hardware.
+
+| Item | Result |
+|---|---|
+| `scryptSync` | **Runs**, and byte-identical to Node at the same defaults — ~14ms median against the 18.7ms PR #47 measured under Node on the same machine. Workers did not make #48 worse; it made it decisive, 14ms against a 10ms Free-tier budget. **#48 has since taken `scryptSync` off the request path** (§12), so the byte-parity finding no longer guards anything — no stored hash is a scrypt hash any more. The `createHmac` that replaced it runs in this same isolate: the Stripe row below builds its signature with one. |
+| `generateKeyPairSync` | **Runs.** rsa-1024, spki/pkcs8 PEM, ~7ms. No WebCrypto rewrite needed. |
+| **nodemailer MIME build** | **Runs.** The stream transport in `sendRawEmail` produces a 367 KB RFC 5322 message including a 256 KB base64 attachment, headers from `buildHeaders` intact. The largest open risk on this list, and it is closed — no rewrite. |
+| `Stripe.createFetchHttpClient()` | **Runs.** `constructEventAsync` + `createSubtleCryptoProvider()` verifies a real signature and rejects a forged one. |
+| `stripe.webhooks.constructEvent` | **Does not run.** The synchronous call at `app/api/webhook/stripe/route.ts:45` throws "SubtleCryptoProvider cannot be used in a synchronous context". Better than §8 feared — it fails loudly, not open — but the route must move to `constructEventAsync` before it runs on Workers. |
+| `process.env` | **Populated** from `vars`, secrets and `.dev.vars` at module scope, so `src/env.js` validates inside a Worker unchanged. A missing variable fails the isolate at startup rather than at request time. |
+| Bundling | Nothing in the dependency tree failed to resolve or bundle — Prisma, ioredis, BullMQ, nodemailer, Stripe and the AWS SDKs all built. |
+
+**What actually breaks is where I/O happens, not which APIs exist.**
+
+1. **Global scope.** Workers reject sockets, timers and `randomUUID()` during
+   module evaluation. `postgres-js` connects when its client is constructed and
+   BullMQ's queue constructor does both, and services hold those in module-level
+   `const`s and `static` fields — so importing `campaign-service.ts` killed the
+   isolate at load. Build clients on first use.
+2. **Across requests.** Workers ties every I/O object to the request that created
+   it. A cached connection serves exactly one request and then fails every one
+   after it with "Cannot perform I/O on behalf of a different request", surfacing
+   as an intermittent 500 from whatever middleware queried first. **Build the
+   database client per request** and let Hyperdrive pool. This is the single
+   least obvious thing on this page.
+3. **BullMQ cannot run in a Worker at all**, not for lack of `node:net` but
+   because a consumer holds a blocking Redis connection open for the life of the
+   process. `server/queue/index.ts` picks a driver by runtime.
+
+**Free plan: no longer blocked at the door, still not the plan.** This read *not
+an option*, because Workers Free caps CPU at 10ms per request and one
+`scryptSync` in the auth middleware was ~14ms — authentication alone overran the
+whole request budget, before any work happened. **#48 removed that floor**: the
+HMAC is 0.004ms and an entire transactional send is **0.47 CPU-ms**, under 5% of
+the Free ceiling. What rules Free out now is campaigns, not auth — one 6-section
+newsletter send is 8.6 CPU-ms against that same 10ms cap, and a 30-section one
+is 36ms, over it outright for a *single* recipient. Queues and Durable Objects are
+both available on Free, so the practical ceiling is volume rather than
+capability: 10,000 queue operations/day at §12's 13.5 per email is ~740
+emails/day. Free is a viable hobby tier for transactional sending and cannot run
+campaigns at all. Workers Paid defaults to 30s.
+
+### Attachment size, measured
+
+| Limit | Value | Binding? |
+|---|---|---|
+| Workers request body | 100 MB Free/Pro, 200 MB Business | No |
+| **SES v2 message, after base64** | **40 MB, not adjustable** | **Yes** |
+| Queue message | 128 KB | No — attachments are stored on the `Email` row, not in the message |
+| What the API enforces | `email-schema.ts:32` caps the attachment *count* at 10. **Nothing caps size.** | — |
+
+A 40 MB request body is accepted and read in full under `wrangler dev`. So the
+ceiling is SES's, not Cloudflare's: ~40 MB of base64, ~30 MB of file bytes. Worth
+enforcing in the schema rather than discovering it as an SES rejection — and note
+`sendRawEmail` buffers the whole message with `Buffer.concat`, so a 40 MB send
+holds several copies inside a 128 MB isolate.
 
 ## 9. Sequencing
 
@@ -263,8 +349,9 @@ requires a Cloudflare account.
   end-to-end with the smallest blast radius.
   - **Instrument CPU-ms per send and per event here.** It is the one number in §12 that is estimated
     rather than measured, and this phase is the cheapest place to measure it.
-  - **Prototype Durable Object hibernation** under a 1.5s alarm before committing to the scheduler
-    design. A 30x cost swing rides on it (§12).
+  - **Durable Object hibernation is measured** — `prototypes/do-hibernation`, results in §12. At a
+    1.5s alarm the object never leaves memory; the scheduler ticks at 30s instead (§4.2). What is
+    left to confirm on a real account is the billing, not the behaviour.
 - **Phase 6 — better-auth.** Auth swap plus session/account data migration. Sequence before the
   framework rip, since TanStack Start has no NextAuth story.
 - **Phase 7 — TanStack Start.** Rip Next.js: 126 files under `src/app`. **All 17 tRPC routers are
@@ -303,6 +390,15 @@ webhook, campaign and domain services.
 4. **Native R2 binding**, not presigned URLs. `storage-service.ts` drops `@aws-sdk/client-s3` and
    `@aws-sdk/s3-request-presigner`; uploads/downloads proxy through a Worker route.
 5. **Scheduled emails move to a sweeper** — see §4.5. `changeDelay` and `chancelEmail` are deleted.
+6. **Logs are OpenTelemetry records on stdout; the export path is Workers Logs.** `server/logger/log.ts`
+   emits the OTel Logs Data Model (`severity_text` / `severity_number`, `body`, `attributes`,
+   `resource`, `trace_id`) as one JSON object per line, and `observability.enabled` in
+   `wrangler.jsonc` is what ships them. **No OTLP exporter in the request path** — a Worker that
+   POSTs to a collector pays a subrequest per log line, against a 1000-subrequest cap, on the same
+   path that is already spending them on SES and Neon. OTLP, if it is ever wanted, goes in a tail
+   worker reading exactly these records. W3C `traceparent` is propagated by the queue seam
+   (`server/queue/index.ts`), so an API request, the message it enqueues and the consumer that runs
+   it share one `trace_id` — no tracer SDK, and nothing to rip out when #7 adds one.
 
 ## 12. Cost model
 
@@ -323,26 +419,162 @@ send. **The event pipeline is ~78% of infrastructure load.**
 |---|---|---|---|---|
 | Queue operations | 1M/mo | ~13.5 | **~75K emails/mo** | ~$5.40 / 1M emails |
 | Worker requests | 10M/mo | ~4.5 | **~2.2M emails/mo** | ~$1.35 / 1M emails |
-| Worker CPU | 30M CPU-ms | ~35ms *(estimated)* | **~850K emails/mo** | ~$0.70 / 1M emails |
+| Worker CPU | 30M CPU-ms | **~8.6ms campaign, ~0.49ms transactional** *(measured)* | **~3.5M–61M emails/mo** | ~$0.01–0.17 / 1M emails |
 | DO requests | 1M/mo | ~3 | ~330K emails/mo | ~$0.45 / 1M emails |
 
 **At 10M emails/month the entire Cloudflare bill is roughly $80.** Queues is the first tier to go,
 at ~75K emails — but at $0.40/million operations, crossing it costs pocket change. There is no
-cliff anywhere on the Cloudflare side.
+cliff anywhere on the Cloudflare side. Since #48 the CPU row is the *last* to expire rather than
+the third, outlasting even Worker requests; the bill is unmoved, because CPU was never more than a
+dollar or two of it.
+
+### CPU per send and per event — measured
+
+The CPU row above used to read *~35ms, estimated*. It is now measured, by
+`apps/web/src/bench/cpu-per-email.bench.ts` (`pnpm --filter=web bench:cpu`). Medians of 25–40
+samples per case, `process.cpuUsage()` user+sys, Node 26 on an AMD Ryzen 9 9900X. Each payload
+class is stated with the size of the HTML it actually produced. **Re-measured after #48** replaced
+scrypt with a keyed HMAC; the non-auth rows moved a few percent between the two runs, which is the
+run-to-run noise the caveats below describe.
+
+| Step | Payload | CPU median | CPU p95 |
+|---|---|---|---|
+| `jsx-email` render — `OtpEmail`, the real sign-in template | 9.1 KB out | 1.66 ms | 2.91 ms |
+| `EmailRenderer.render` — double opt-in default (repo fixture) | 4.3 KB out | 0.573 ms | 1.49 ms |
+| `EmailRenderer.render` — 6-section newsletter | 42.3 KB out | 5.67 ms | 10.1 ms |
+| `EmailRenderer.render` — 30-section newsletter | 199.4 KB out | 25.7 ms | 37.0 ms |
+| `html-to-text` — transactional | 9.1 KB in | 0.360 ms | 0.901 ms |
+| `html-to-text` — 6-section newsletter | 42.3 KB in | 0.751 ms | 1.31 ms |
+| `html-to-text` — 30-section newsletter | 199.4 KB in | 2.34 ms | 3.10 ms |
+| MIME build (`nodemailer` stream transport, `ses.ts:183`) — transactional | 9.1 KB body | 0.465 ms | 0.845 ms |
+| MIME build — 6-section newsletter | 42.3 KB body | 2.13 ms | 3.09 ms |
+| MIME build + 256 KB attachment | 341.3 KB | 1.11 ms | 2.18 ms |
+| **`verifySecureHash` — every public-API request, keyed HMAC since #48** | — | **0.004 ms** | 0.007 ms |
+| `scryptSync` at Node's defaults — what that row cost *before* #48 | — | *16.9 ms* | *17.3 ms* |
+| SES event: `JSON.parse` envelope + inner + status derivation | 2.4 KB | 0.004 ms | 0.007 ms |
+| Webhook sign: `JSON.stringify` + HMAC-SHA256 | — | 0.002 ms | 0.005 ms |
+
+The scrypt row is no longer on any request path — the benchmark still runs it at explicit
+parameters as a control, which is what keeps the before/after legible instead of a number that
+silently changed. It reads 16.9 ms here against the 18.7 ms PR #47 measured; same machine, same
+parameters, so the spread is run-to-run noise and neither figure is more right than the other.
+
+Rolled up: **campaign email ~8.6 CPU-ms** (render + `html-to-text` + MIME), **transactional email
+~0.49 CPU-ms** — and that is now the figure whether the send is its own API request or one of 100
+in a `POST /emails/batch`. Before #48 those two read ~19.2 and ~0.7, and the whole gap between them
+was one `scryptSync` being amortised 100 ways. **Batching no longer buys CPU; it still buys
+requests and queue operations**, which is where its leverage always mattered more. The whole event
+pipeline is **0.021 CPU-ms per email** — 3.5 events at 0.006 ms each. It is 78% of the request and
+queue load and 0.2% of the CPU.
+
+Three things fall out of this:
+
+1. **The 35ms estimate does not hold, and the error is not where §8 expected.** `jsx-email` and
+   `html-to-text` were the named suspects; together they are ~6ms on a typical marketing email and
+   ~1ms on a transactional one. Marginal CPU cost drops from ~$0.70 to **~$0.17 / 1M campaign
+   emails**, and the free tier stretches from ~850K to ~3.5M emails/month. CPU was never going to
+   be the binding constraint; queues still are, at ~75K.
+2. **`scryptSync` was the whole transactional figure, and #48 removed it.** It measured 18.7ms —
+   twice the entire campaign send — on every request through `getTeamAndApiKey`
+   (`api-service.ts:78`), with nothing caching the result. That was Node's default cost
+   (`N=16384, r=8, p=1, keylen=64`, inherited because `crypto.ts` passed no options) and it was
+   *synchronous*: 18ms in which the isolate did nothing else. It was the one number worth acting
+   on, and acting on it paid ~4,000x on the hash and ~39x on the send. The replacement is a keyed
+   HMAC rather than a cache because **a cache could not have worked**: every cold isolate is a
+   miss, so the p99 stays at the scrypt cost however good the hit rate is.
+3. **Rendering bounds the campaign fan-out batch size.** At 5.7ms per recipient a single invocation
+   fits ~5,000 renders inside the 30s CPU limit; at 26ms for a long newsletter, ~1,100. The
+   self-continuation in §4.3 needs a page size well under that, and the subrequest cap (1000) bites
+   first anyway. **This is now the only CPU figure that constrains anything** — with auth at
+   0.004ms, rendering is the whole story.
+
+**Caveats.** Measured under Node on x86 Linux, not on a `workerd` isolate on Cloudflare hardware —
+the same V8, but different silicon, different build flags and a colder JIT, so treat these as an
+order of magnitude rather than a bill. The benchmark loops hot, so nothing here captures cold-start
+or JIT warm-up. It covers the named hot paths only: Hono routing, Zod validation, Drizzle query
+construction and row serialisation are all unmeasured, so the per-email totals are a floor, not a
+full accounting. All of `node:crypto` is available under `nodejs_compat` bar argon2, ed448/x448 and
+DSA/DH keypairs, and #63 exercised both primitives in a real `workerd` isolate — `scryptSync` at
+~14ms there, and the `createHmac` that replaced it in the same run (§8), though neither was
+timed against Cloudflare hardware. Re-run on real Workers once #7's account access exists.
 
 ### The two things that actually bite
 
 **1. Durable Object duration — bites on day one, not at scale.**
 
-DO duration bills wall-clock time while running *or idle but unable to hibernate*: 400,000 GB-s
-included, then $12.50/million GB-s.
+DO duration bills wall-clock time while running *or idle in memory but unable to hibernate*:
+400,000 GB-s included, then $12.50/million GB-s, metered against 128 MB per object whatever it
+actually uses.
 
-The campaign-scheduler DO alarms every 1.5s forever (§4.2). If it stays resident it burns
-~328,000 GB-s/month — **82% of the entire allowance at zero email volume**. If it hibernates
-cleanly between alarms it is ~11,000 GB-s. A 30x swing decided by implementation detail.
+The campaign-scheduler DO alarms every 1.5s forever (§4.2). If resident time is billed it burns
+~332,000 GB-s/month — **83% of the entire allowance at zero email volume**. If idle-but-eligible
+time is free it is 4,000–11,000 GB-s. A 30x swing on a **fixed cost independent of volume**, which
+makes it the only thing here that can surprise you while still small.
 
-This is a **fixed cost independent of volume**, which makes it the only thing here that can
-surprise you while still small. Prototype it in Phase 5.
+### DO residency under a 1.5s alarm — measured
+
+Measured by `prototypes/do-hibernation` (`pnpm experiment`), a Durable Object shaped like the
+campaign scheduler running against real `workerd` under `wrangler dev`. Residency is read off
+instance identity: each instance mints an id in its constructor, so an alarm handled by an instance
+that has handled no earlier alarm means the object was evicted and rebuilt in between.
+
+| Alarm interval | Alarms on a fresh instance | Result |
+|---|---|---|
+| **1500ms** (today's tick) | 0 of 39 | **Never evicted.** One instance handled all 40 alarms, 60s old at the last. |
+| 3000ms | 0 of 7 | Never evicted |
+| 6000ms | 0 of 5 | Never evicted |
+| 9000ms | 0 of 4 | Never evicted |
+| 11000ms | 4 of 4 | **Evicted between every alarm** — each handler ran on a 9ms-old instance |
+| 15000ms | 3 of 3 | Evicted between every alarm |
+| 30000ms | 3 of 3 | Evicted between every alarm |
+
+The cliff sits between 9s and 11s, which is Cloudflare's documented rule: a Durable Object
+hibernates after **10 seconds of inactivity**, and is evicted outright after 70–140s
+([lifecycle](https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/)).
+Nothing about the alarm pins the object — a pending alarm is stored, not held in memory. A 1.5s
+tick simply never idles long enough to reach the threshold.
+
+Same object at 15s, an interval where it otherwise evicts every time, with one thing left behind:
+
+| Left behind across the idle gap | Result |
+|---|---|
+| **An open outbound TCP socket** | **Resident** — never evicted |
+| An in-flight unawaited `fetch()` | Resident — never evicted |
+| A pending `setTimeout` | Resident — never evicted |
+| A running `setInterval` | Resident — never evicted |
+| State hydrated in `blockConcurrencyWhile` | Evicted between every alarm — no effect |
+
+Those four are exactly Cloudflare's documented hibernation-eligibility rules, reproduced by the
+local runtime — which is the reason to trust the measurement: `workerd` implements the same
+eviction path, and `workerd.capnp` documents the same 10s/70s defaults. **The socket row is the one
+with teeth here**: a pooled Postgres connection to Neon held by the scheduler DO would make it
+permanently ineligible, silently, with no error anywhere.
+
+**What this cannot settle: the bill.** `workerd` models eviction but not metering — there is no
+GB-s counter in local dev. And Cloudflare's pricing page says idle time that is *eligible* for
+hibernation is not billed *"even before the runtime has hibernated"*, so a 1.5s ticker that is
+resident-but-eligible may be in the cheap branch already. That sentence was added in February 2026
+and reads as though written for the ~10s window, not for an object that stays hibernation-eligible
+for months. It is the interpretation, not the behaviour, that is unresolved. Only a deployed canary
+reading account duration GB-s over 24h closes it: 11,059 GB-s if resident time is billed, ~370 GB-s
+if it is not.
+
+**So don't bet on the interpretation — design it away.** A 30s tick is in the cheap branch under
+either reading (§4.2), and wins on two axes that do not depend on the interpretation at all: alarm
+invocations are billed as DO requests, and each `setAlarm()` is a billed row write.
+
+| Per month, one scheduler DO | 1.5s tick | 30s tick |
+|---|---|---|
+| Alarm invocations | 1,728,000 — **173% of the 1M included DO requests, at zero volume** | 86,400 (8.6%) |
+| `setAlarm()` row writes | 1,728,000 (3.5% of the included 50M) | 86,400 (0.17%) |
+| Duration if resident time is billed | 331,776 GB-s (83% of allowance) | ~550 GB-s |
+| Duration if it is free | 4,000–11,000 GB-s | ~550 GB-s |
+
+**Caveats.** Local `workerd` on Linux, not Cloudflare's fleet: eviction timing could differ in
+production under memory pressure. The likely direction of that difference is safe — more eviction,
+not less — but 10s is not a contract. Nothing here measures billing. The alarm handler does a ~9ms
+stub query rather than a real Neon round trip, so per-wake duration is a floor. Re-check against a
+real account once #7's access exists.
 
 **2. Neon — the real cost center, at every scale.**
 
@@ -361,9 +593,10 @@ volume — campaign sends spike it. Storage compounds: ~3.5M `EmailEvent` rows/m
    existing `cleanup-email-bodies` job is the pattern to follow. → Phase 0
 3. **Batch the event ingest path.** `sendBatch` from the SNS route; one multi-row INSERT per
    consumer batch. Cuts queue operations and Neon write load together. → Phase 8
-
-### Caveat
-
-The CPU figure is **estimated, not measured**. It depends on `html-to-text` conversion and
-`jsx-email` rendering against real payloads, and is the one number here that could be off by 3x in
-either direction. `scryptSync` (§8) is a further unknown on the same axis. Measure in Phase 5.
+4. **~~Cache API key verification.~~ Done — #48.** `scryptSync` was 18.7ms of synchronous CPU on
+   *every* public-API request, 97% of a transactional send. Two options were on the table: cache
+   the verified `clientId → team` mapping, or move to a keyed HMAC over a high-entropy token (these
+   are generated secrets, not passwords — scrypt was protecting against an attack the threat model
+   does not have). The HMAC won outright, because the cache would have needed to be KV or a DO
+   (§8) and still could not have fixed the p99 — every cold isolate is a miss. Shipping no cache
+   also keeps revocation immediate. → landed

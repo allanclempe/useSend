@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { env } from "~/env";
 import { authedProcedure, createTRPCRouter } from "~/server/api/trpc";
 import { logger } from "~/server/logger/log";
+import { maskEmail } from "~/server/logger/redact";
 import { sendMail } from "~/server/mailer";
 import { getRedis, redisKey } from "~/server/redis";
 import {
@@ -93,7 +94,7 @@ export const waitlistRouter = createTRPCRouter({
       logger.info(
         {
           userId: user.id,
-          email: user.email,
+          email: maskEmail(user.email),
         },
         "Waitlist request submitted"
       );

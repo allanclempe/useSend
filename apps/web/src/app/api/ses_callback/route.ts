@@ -3,6 +3,11 @@ import { eq } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { withUpdatedAt } from "~/server/drizzle/touch";
 import { logger } from "~/server/logger/log";
+import {
+  startTrace,
+  TRACEPARENT_HEADER,
+  withTraceContext,
+} from "~/server/logger/trace-context";
 import { parseSesHook, SesHookParser } from "~/server/service/ses-hook-parser";
 import { SesSettingsService } from "~/server/service/ses-settings-service";
 import { SnsNotificationMessage } from "~/types/aws-types";
@@ -14,15 +19,32 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // The SNS notification is the start of the event pipeline, so the trace
+  // starts here and is carried onto the queue for the consumer (#18). SNS does
+  // not send `traceparent`, but a replay or a test harness can.
+  return withTraceContext(
+    startTrace(req.headers.get(TRACEPARENT_HEADER)),
+    () => handleSesCallback(req),
+  );
+}
+
+async function handleSesCallback(req: Request) {
   const data = await req.json();
 
-  console.log(data, data.Message);
+  // Only the identifiers. The SNS envelope carries the recipient address, the
+  // subject and the full message headers — none of which belong in a log.
+  logger.debug(
+    { snsType: data.Type, snsMessageId: data.MessageId },
+    "Received SES callback",
+  );
 
   const isEventValid = await checkEventValidity(data);
 
-  console.log("Is event valid: ", isEventValid);
-
   if (!isEventValid) {
+    logger.warn(
+      { snsMessageId: data.MessageId },
+      "Rejected SES callback: unknown topic",
+    );
     return Response.json({ data: "Event is not valid" });
   }
 
@@ -42,7 +64,10 @@ export async function POST(req: Request) {
 
     return Response.json({ data: "Success" });
   } catch (e) {
-    console.error(e);
+    logger.error(
+      { err: e, snsMessageId: data.MessageId },
+      "Failed to parse or enqueue SES callback",
+    );
     return Response.json({ data: "Error is parsing hook" });
   }
 }

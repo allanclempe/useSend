@@ -12,9 +12,12 @@ import { logger } from "../logger/log";
  * `WebhookCall` grew without bound. It is now initialised from
  * `instrumentation.ts` like every other job.
  *
- * Retention is opt-in via `WEBHOOK_CALL_RETENTION_DAYS` rather than the 30 days
- * that used to be hardcoded here: wiring up a job that deletes rows should not
- * quietly start deleting them on upgrade. 30 is still a sensible value to set.
+ * `WEBHOOK_CALL_RETENTION_DAYS` defaults back to 30 days. It was briefly opt-in
+ * so that wiring up a job which deletes rows would not quietly start deleting
+ * them at an existing install on upgrade -- a concern that only applies to
+ * installs that exist. Unbounded by default is the worse of the two failures:
+ * the log is a debugging aid nobody reads at 31 days, and it grows with every
+ * webhook a team subscribes to. Set the variable to 0 to keep it indefinitely.
  */
 let initialized = false;
 
@@ -40,7 +43,7 @@ export async function initWebhookCleanupJob() {
     return;
   }
 
-  const retentionDays = env.WEBHOOK_CALL_RETENTION_DAYS!;
+  const retentionDays = env.WEBHOOK_CALL_RETENTION_DAYS;
   const webhookCleanupQueue = createQueue(WEBHOOK_CLEANUP_QUEUE);
 
   createWorker(

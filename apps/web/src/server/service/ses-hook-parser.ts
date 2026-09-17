@@ -29,12 +29,35 @@ import { getChildLogger, logger, withLogger } from "../logger/log";
 import { randomUUID } from "crypto";
 import { SuppressionService } from "./suppression-service";
 import { WebhookService } from "./webhook-service";
+import {
+  buildEmailBasePayload,
+  emailStatusToEvent,
+} from "./email-webhook-payload";
 
 export async function parseSesHook(data: SesEvent) {
+  // `Send` is no longer subscribed (`ses-settings-service`): it was about a
+  // quarter of the pipeline spent being told something we already knew.
+  // `email-queue-service` records the SENT status, the `email.sent` webhook and
+  // the campaign counter itself, at the SES handoff. Events still arrive for a
+  // while after the configuration sets are updated, and SNS can replay an old
+  // one at any time, so they are dropped here rather than left to double-count.
+  if (data.eventType === "Send") {
+    logger.info(
+      { sesEmailId: data.mail.messageId },
+      "Ignoring SES Send event; SENT is recorded locally at handoff",
+    );
+    return true;
+  }
+
   const mailStatus = getEmailStatus(data);
 
   if (!mailStatus) {
-    logger.error({ data }, "Unknown email status");
+    // The event identifies itself; the rest of the payload is the recipient
+    // address, the subject and every header, which do not belong in a log.
+    logger.error(
+      { eventType: data.eventType, sesEmailId: data.mail?.messageId },
+      "Unknown email status",
+    );
     return false;
   }
 
@@ -88,7 +111,10 @@ export async function parseSesHook(data: SesEvent) {
   });
 
   if (!email) {
-    logger.error({ data }, "Email not found");
+    logger.error(
+      { eventType: data.eventType },
+      "Email not found",
+    );
     return false;
   }
 
@@ -213,14 +239,13 @@ export async function parseSesHook(data: SesEvent) {
 
   if (
     !isDuplicateEngagement &&
-    [
-      "DELIVERED",
-      "OPENED",
-      "CLICKED",
-      "BOUNCED",
-      "COMPLAINED",
-      "SENT",
-    ].includes(mailStatus)
+    // "SENT" is deliberately absent. `DailyEmailUsage.sent` is written by
+    // `recordAcceptedSends` when the email is accepted, not by an SES echo --
+    // see `usage-service`. Listing it here as well would double-count any Send
+    // event that slipped through.
+    ["DELIVERED", "OPENED", "CLICKED", "BOUNCED", "COMPLAINED"].includes(
+      mailStatus,
+    )
   ) {
     logger.info("Updating daily email usage");
     const updateField = mailStatus.toLowerCase();
@@ -234,7 +259,6 @@ export async function parseSesHook(data: SesEvent) {
       clicked: schema.dailyEmailUsage.clicked,
       bounced: schema.dailyEmailUsage.bounced,
       complained: schema.dailyEmailUsage.complained,
-      sent: schema.dailyEmailUsage.sent,
     } as const;
 
     const usageColumn = usageColumns[updateField as keyof typeof usageColumns];
@@ -254,7 +278,6 @@ export async function parseSesHook(data: SesEvent) {
           clicked: updateField === "clicked" ? 1 : 0,
           bounced: updateField === "bounced" ? 1 : 0,
           complained: updateField === "complained" ? 1 : 0,
-          sent: updateField === "sent" ? 1 : 0,
           hardBounced: isHardBounced ? 1 : 0,
         }),
       )
@@ -396,18 +419,12 @@ function buildEmailWebhookPayload(params: {
 }): EmailEventPayloadMap[EmailWebhookEventType] {
   const { email, status, eventData, occurredAt, metadata } = params;
 
-  const basePayload: EmailBasePayload = {
-    id: email.id,
+  const basePayload: EmailBasePayload = buildEmailBasePayload({
+    email,
     status,
-    from: email.from,
-    to: email.to,
     occurredAt,
-    campaignId: email.campaignId ?? undefined,
-    contactId: email.contactId ?? undefined,
-    domainId: email.domainId ?? null,
-    subject: email.subject,
     metadata,
-  };
+  });
 
   switch (status) {
     case EmailStatus.BOUNCED: {
@@ -472,39 +489,6 @@ function normalizeBounceSubType(
   }
 
   return "General";
-}
-
-function emailStatusToEvent(status: EmailStatus): EmailWebhookEventType {
-  switch (status) {
-    case EmailStatus.QUEUED:
-      return "email.queued";
-    case EmailStatus.SENT:
-      return "email.sent";
-    case EmailStatus.DELIVERY_DELAYED:
-      return "email.delivery_delayed";
-    case EmailStatus.DELIVERED:
-      return "email.delivered";
-    case EmailStatus.BOUNCED:
-      return "email.bounced";
-    case EmailStatus.REJECTED:
-      return "email.rejected";
-    case EmailStatus.RENDERING_FAILURE:
-      return "email.rendering_failure";
-    case EmailStatus.COMPLAINED:
-      return "email.complained";
-    case EmailStatus.FAILED:
-      return "email.failed";
-    case EmailStatus.CANCELLED:
-      return "email.cancelled";
-    case EmailStatus.SUPPRESSED:
-      return "email.suppressed";
-    case EmailStatus.OPENED:
-      return "email.opened";
-    case EmailStatus.CLICKED:
-      return "email.clicked";
-    default:
-      return "email.queued";
-  }
 }
 
 function buildEmailMetadata(

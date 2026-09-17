@@ -357,6 +357,13 @@ export const email = pgTable("Email", {
 	apiId: integer(),
 	inReplyToId: text(),
 	headers: text(),
+	// Set once, by `recordAcceptedSends`, when this email's `DailyEmailUsage.sent`
+	// increment has been applied. It is the idempotency token for billing: the
+	// counter is bumped only by the statement that wins the transition from NULL,
+	// so a retried enqueue cannot bill the same email twice. Deliberately not
+	// derived from `latestStatus` -- status moves both ways and is written by
+	// several paths, whereas this is one-way and written by exactly one.
+	usageCountedAt: timestamp({ precision: 3, mode: 'date' }),
 }, (table) => [
 	index("Email_campaignId_contactId_idx").using("btree", table.campaignId.asc().nullsLast(), table.contactId.asc().nullsLast()),
 	index("Email_createdAt_idx").using("btree", table.createdAt.desc().nullsFirst()),

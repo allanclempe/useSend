@@ -16,6 +16,7 @@ import { getServerAuthSession } from "~/server/auth";
 import { and, eq } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { getChildLogger, logger, withLogger } from "../logger/log";
+import { newTraceContext, withTraceContext } from "../logger/trace-context";
 import { randomUUID } from "crypto";
 
 /**
@@ -137,20 +138,24 @@ export const teamProcedure = protectedProcedure.use(async ({ ctx, next }) => {
     throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
   }
 
-  return withLogger(
-    getChildLogger({
-      teamId: teamUser.team.id,
-      requestId: randomUUID(),
-    }),
-    async () => {
-      return next({
-        ctx: {
-          team: teamUser.team,
-          teamUser,
-          session: { ...ctx.session, user: ctx.session.user },
-        },
-      });
-    }
+  // A dashboard call is the start of a trace too: it enqueues jobs, and those
+  // consumers log under the same trace_id (#18).
+  return withTraceContext(newTraceContext(), () =>
+    withLogger(
+      getChildLogger({
+        teamId: teamUser.team.id,
+        requestId: randomUUID(),
+      }),
+      async () => {
+        return next({
+          ctx: {
+            team: teamUser.team,
+            teamUser,
+            session: { ...ctx.session, user: ctx.session.user },
+          },
+        });
+      }
+    )
   );
 });
 

@@ -42,18 +42,34 @@ function toJobsOptions(options?: EnqueueOptions): JobsOptions {
 }
 
 class BullMQQueue<T> implements Queue<T> {
-  private readonly queue: BullQueue<T, unknown, string, T, unknown, string>;
+  private instance: BullQueue<T, unknown, string, T, unknown, string> | null =
+    null;
 
   constructor(
+    // eslint-disable-next-line no-unused-vars -- read through `this` in the getter below
     public readonly name: string,
+    // eslint-disable-next-line no-unused-vars -- read through `this` in the getter below
     private readonly defaults?: EnqueueOptions,
-  ) {
-    this.queue = new BullQueue<T, unknown, string, T, unknown, string>(name, {
-      connection: getRedis(),
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
-      defaultJobOptions: toJobsOptions(defaults),
-    });
+  ) {}
+
+  /**
+   * Built on first use, not in the constructor. Several call sites hold a queue
+   * in a module-level `const` or a `static` class field, and BullMQ's
+   * constructor opens a Redis connection and calls `randomUUID()` — both of
+   * which Workers forbid in global scope. Deferring keeps the module graph
+   * loadable on `workerd` even while BullMQ is still the driver.
+   */
+  private get queue() {
+    this.instance ??= new BullQueue<T, unknown, string, T, unknown, string>(
+      this.name,
+      {
+        connection: getRedis(),
+        prefix: BULL_PREFIX,
+        skipVersionCheck: true,
+        defaultJobOptions: toJobsOptions(this.defaults),
+      },
+    );
+    return this.instance;
   }
 
   private opts(options?: EnqueueOptions): JobsOptions {
@@ -119,7 +135,10 @@ class BullMQQueue<T> implements Queue<T> {
   }
 
   async close() {
-    await this.queue.close();
+    // Never through the getter: closing a queue that was never used should not
+    // open a Redis connection in order to close it again.
+    await this.instance?.close();
+    this.instance = null;
   }
 }
 

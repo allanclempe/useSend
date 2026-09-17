@@ -6,6 +6,7 @@ import {
   type TeamJob,
 } from "../queue";
 import { logger } from "../logger/log";
+import { maskEmail } from "../logger/redact";
 import { addOrUpdateContact, ContactInput } from "./contact-service";
 
 type ContactJobData = {
@@ -81,19 +82,19 @@ async function processContactJob(job: ContactJob) {
   const { contactBookId, contact, teamId } = job.data;
 
   logger.info(
-    { contactEmail: contact.email, contactBookId },
+    { contactEmail: maskEmail(contact.email), contactBookId },
     "[ContactQueueService]: Processing contact job",
   );
 
   try {
     await addOrUpdateContact(contactBookId, contact, teamId);
     logger.info(
-      { contactEmail: contact.email },
+      { contactEmail: maskEmail(contact.email) },
       "[ContactQueueService]: Successfully processed contact job",
     );
   } catch (error) {
     logger.error(
-      { contactEmail: contact.email, error },
+      { contactEmail: maskEmail(contact.email), err: error },
       "[ContactQueueService]: Failed to process contact job",
     );
     throw error;

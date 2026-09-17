@@ -14,6 +14,11 @@ allowBuilds:
   puppeteer: true
   sharp: true
   unrs-resolver: true
+  workerd: true
+
+minimumReleaseAgeExclude:
+  - miniflare@5.20260916.0-alpha
+  - wrangler@4.133.0
 
 # pnpm 10+ reads overrides from the workspace configuration. Keep this in sync
 # with package.json for deployment environments that still use pnpm 9.
