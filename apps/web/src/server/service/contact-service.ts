@@ -1,4 +1,5 @@
-import { Prisma, type Contact, UnsubscribeReason } from "@prisma/client";
+import { UnsubscribeReason } from "@prisma/client";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   type ContactPayload,
   type ContactWebhookEventType,
@@ -7,11 +8,15 @@ import {
   mergeContactProperties,
   normalizeContactProperties,
 } from "~/lib/contact-properties";
-import { db } from "../db";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { ContactQueueService } from "./contact-queue-service";
 import { WebhookService } from "./webhook-service";
 import { logger } from "../logger/log";
 import { sendDoubleOptInConfirmationEmail } from "./double-opt-in-service";
+
+type Contact = typeof schema.contact.$inferSelect;
 
 export type ContactInput = {
   email: string;
@@ -26,35 +31,35 @@ export async function addOrUpdateContact(
   contact: ContactInput,
   teamId?: number,
 ) {
-  const contactBook = await db.contactBook.findUnique({
-    where: {
-      id: contactBookId,
-    },
-    select: {
-      doubleOptInEnabled: true,
-      teamId: true,
-      variables: true,
-    },
-  });
+  const [contactBook] = await drizzleDb
+    .select({
+      doubleOptInEnabled: schema.contactBook.doubleOptInEnabled,
+      teamId: schema.contactBook.teamId,
+      variables: schema.contactBook.variables,
+    })
+    .from(schema.contactBook)
+    .where(eq(schema.contactBook.id, contactBookId))
+    .limit(1);
 
   if (!contactBook) {
     throw new Error("Contact book not found");
   }
 
   // Check if contact exists to handle subscribed logic
-  const existingContact = await db.contact.findUnique({
-    where: {
-      contactBookId_email: {
-        contactBookId,
-        email: contact.email,
-      },
-    },
-    select: {
-      subscribed: true,
-      unsubscribeReason: true,
-      properties: true,
-    },
-  });
+  const [existingContact] = await drizzleDb
+    .select({
+      subscribed: schema.contact.subscribed,
+      unsubscribeReason: schema.contact.unsubscribeReason,
+      properties: schema.contact.properties,
+    })
+    .from(schema.contact)
+    .where(
+      and(
+        eq(schema.contact.contactBookId, contactBookId),
+        eq(schema.contact.email, contact.email),
+      ),
+    )
+    .limit(1);
 
   // Determine subscribed value for update
   // Only allow Yes→No transitions (allow unsubscribe, prevent re-subscribe)
@@ -78,7 +83,7 @@ export async function addOrUpdateContact(
 
   const shouldCreatePendingContact =
     contactBook.doubleOptInEnabled &&
-    existingContact === null &&
+    existingContact === undefined &&
     !isExplicitUnsubscribeRequest;
 
   const normalizedProperties =
@@ -94,19 +99,35 @@ export async function addOrUpdateContact(
           contactBook.variables,
         );
 
-  const savedContact = await db.contact.upsert({
-    where: {
-      contactBookId_email: {
-        contactBookId,
-        email: contact.email,
-      },
-    },
-    create: {
+  // Prisma omitted `undefined` fields from an update; build the conflict payload
+  // explicitly so a missing firstName does not blank an existing one.
+  const conflictUpdate: Partial<typeof schema.contact.$inferInsert> = {
+    ...(contact.firstName !== undefined
+      ? { firstName: contact.firstName }
+      : {}),
+    ...(contact.lastName !== undefined ? { lastName: contact.lastName } : {}),
+    ...(mergedProperties !== undefined
+      ? { properties: mergedProperties }
+      : {}),
+    ...(subscribedValue !== undefined
+      ? {
+          subscribed: subscribedValue,
+          unsubscribeReason: subscribedValue
+            ? null
+            : UnsubscribeReason.UNSUBSCRIBED,
+        }
+      : {}),
+  };
+
+  const [savedContact] = await drizzleDb
+    .insert(schema.contact)
+    .values({
+      id: createId(),
       contactBookId,
       email: contact.email,
       firstName: contact.firstName,
       lastName: contact.lastName,
-      properties: (normalizedProperties ?? {}) as Prisma.InputJsonObject,
+      properties: normalizedProperties ?? {},
       subscribed: shouldCreatePendingContact
         ? false
         : (contact.subscribed ?? true),
@@ -115,23 +136,21 @@ export async function addOrUpdateContact(
         : contact.subscribed === false
           ? UnsubscribeReason.UNSUBSCRIBED
           : null,
-    },
-    update: {
-      firstName: contact.firstName,
-      lastName: contact.lastName,
-      ...(mergedProperties !== undefined
-        ? { properties: mergedProperties as Prisma.InputJsonObject }
-        : {}),
-      ...(subscribedValue !== undefined
-        ? {
-            subscribed: subscribedValue,
-            unsubscribeReason: subscribedValue
-              ? null
-              : UnsubscribeReason.UNSUBSCRIBED,
-          }
-        : {}),
-    },
-  });
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [schema.contact.contactBookId, schema.contact.email],
+      // withUpdatedAt also guarantees a non-empty SET. Prisma accepted
+      // `update: {}` as a no-op that still bumped @updatedAt; Drizzle would
+      // generate invalid SQL for an empty set, and this matches the old
+      // behaviour rather than working around it.
+      set: withUpdatedAt(conflictUpdate),
+    })
+    .returning();
+
+  if (!savedContact) {
+    throw new Error("Failed to save contact");
+  }
 
   if (shouldSendDoubleOptIn) {
     try {
@@ -166,12 +185,18 @@ export async function getContactInContactBook(
   contactId: string,
   contactBookId: string,
 ) {
-  return db.contact.findFirst({
-    where: {
-      id: contactId,
-      contactBookId,
-    },
-  });
+  const [found] = await drizzleDb
+    .select()
+    .from(schema.contact)
+    .where(
+      and(
+        eq(schema.contact.id, contactId),
+        eq(schema.contact.contactBookId, contactBookId),
+      ),
+    )
+    .limit(1);
+
+  return found ?? null;
 }
 
 export async function updateContactInContactBook(
@@ -189,10 +214,11 @@ export async function updateContactInContactBook(
     return null;
   }
 
-  const contactBook = await db.contactBook.findUnique({
-    where: { id: contactBookId },
-    select: { variables: true },
-  });
+  const [contactBook] = await drizzleDb
+    .select({ variables: schema.contactBook.variables })
+    .from(schema.contactBook)
+    .where(eq(schema.contactBook.id, contactBookId))
+    .limit(1);
 
   const mergedProperties =
     contact.properties === undefined
@@ -203,24 +229,29 @@ export async function updateContactInContactBook(
           contactBook?.variables ?? [],
         );
 
-  const updatedContact = await db.contact.update({
-    where: {
-      id: contactId,
-    },
-    data: {
-      ...contact,
-      ...(mergedProperties !== undefined
-        ? { properties: mergedProperties as Prisma.InputJsonObject }
-        : {}),
-      ...(contact.subscribed !== undefined
-        ? {
-            unsubscribeReason: contact.subscribed
-              ? null
-              : UnsubscribeReason.UNSUBSCRIBED,
-          }
-        : {}),
-    },
-  });
+  const [updatedContact] = await drizzleDb
+    .update(schema.contact)
+    .set(
+      withUpdatedAt({
+        ...contact,
+        ...(mergedProperties !== undefined
+          ? { properties: mergedProperties }
+          : {}),
+        ...(contact.subscribed !== undefined
+          ? {
+              unsubscribeReason: contact.subscribed
+                ? null
+                : UnsubscribeReason.UNSUBSCRIBED,
+            }
+          : {}),
+      }),
+    )
+    .where(eq(schema.contact.id, contactId))
+    .returning();
+
+  if (!updatedContact) {
+    return null;
+  }
 
   await emitContactEvent(updatedContact, "contact.updated", teamId);
 
@@ -241,11 +272,14 @@ export async function deleteContactInContactBook(
     return null;
   }
 
-  const deletedContact = await db.contact.delete({
-    where: {
-      id: contactId,
-    },
-  });
+  const [deletedContact] = await drizzleDb
+    .delete(schema.contact)
+    .where(eq(schema.contact.id, contactId))
+    .returning();
+
+  if (!deletedContact) {
+    return null;
+  }
 
   await emitContactEvent(deletedContact, "contact.deleted", teamId);
 
@@ -257,23 +291,29 @@ export async function bulkDeleteContactsInContactBook(
   contactBookId: string,
   teamId?: number,
 ) {
-  const contacts = await db.contact.findMany({
-    where: {
-      id: { in: contactIds },
-      contactBookId,
-    },
-  });
+  const contacts = await drizzleDb
+    .select()
+    .from(schema.contact)
+    .where(
+      and(
+        inArray(schema.contact.id, contactIds),
+        eq(schema.contact.contactBookId, contactBookId),
+      ),
+    );
 
   if (contacts.length === 0) {
     return [];
   }
 
-  await db.contact.deleteMany({
-    where: {
-      id: { in: contacts.map((c) => c.id) },
-      contactBookId,
-    },
-  });
+  await drizzleDb.delete(schema.contact).where(
+    and(
+      inArray(
+        schema.contact.id,
+        contacts.map((c) => c.id),
+      ),
+      eq(schema.contact.contactBookId, contactBookId),
+    ),
+  );
 
   await Promise.all(
     contacts.map((contact) =>
@@ -309,12 +349,13 @@ export async function resendDoubleOptInConfirmationInContactBook(
 
   const resolvedTeamId =
     teamId ??
-    (await db.contactBook
-      .findUnique({
-        where: { id: contactBookId },
-        select: { teamId: true },
-      })
-      .then((contactBook) => contactBook?.teamId));
+    (
+      await drizzleDb
+        .select({ teamId: schema.contactBook.teamId })
+        .from(schema.contactBook)
+        .where(eq(schema.contactBook.id, contactBookId))
+        .limit(1)
+    )[0]?.teamId;
 
   if (!resolvedTeamId) {
     throw new Error("Team not found for contact book");
@@ -343,27 +384,22 @@ export async function bulkAddContacts(
 }
 
 export async function unsubscribeContact(contactId: string) {
-  await db.contact.update({
-    where: {
-      id: contactId,
-    },
-    data: {
-      subscribed: false,
-      unsubscribeReason: UnsubscribeReason.UNSUBSCRIBED,
-    },
-  });
+  await drizzleDb
+    .update(schema.contact)
+    .set(
+      withUpdatedAt({
+        subscribed: false,
+        unsubscribeReason: UnsubscribeReason.UNSUBSCRIBED,
+      }),
+    )
+    .where(eq(schema.contact.id, contactId));
 }
 
 export async function subscribeContact(contactId: string) {
-  await db.contact.update({
-    where: {
-      id: contactId,
-    },
-    data: {
-      subscribed: true,
-      unsubscribeReason: null,
-    },
-  });
+  await drizzleDb
+    .update(schema.contact)
+    .set(withUpdatedAt({ subscribed: true, unsubscribeReason: null }))
+    .where(eq(schema.contact.id, contactId));
 }
 
 export async function updateContactSubscription({
@@ -377,10 +413,15 @@ export async function updateContactSubscription({
   unsubscribeReason: UnsubscribeReason | null;
   teamId?: number;
 }) {
-  const updatedContact = await db.contact.update({
-    where: { id: contactId },
-    data: { subscribed, unsubscribeReason },
-  });
+  const [updatedContact] = await drizzleDb
+    .update(schema.contact)
+    .set(withUpdatedAt({ subscribed, unsubscribeReason }))
+    .where(eq(schema.contact.id, contactId))
+    .returning();
+
+  if (!updatedContact) {
+    throw new Error("Contact not found");
+  }
 
   await emitContactEvent(updatedContact, "contact.updated", teamId);
 
@@ -409,12 +450,13 @@ async function emitContactEvent(
   try {
     const resolvedTeamId =
       teamId ??
-      (await db.contactBook
-        .findUnique({
-          where: { id: contact.contactBookId },
-          select: { teamId: true },
-        })
-        .then((contactBook) => contactBook?.teamId));
+      (
+        await drizzleDb
+          .select({ teamId: schema.contactBook.teamId })
+          .from(schema.contactBook)
+          .where(eq(schema.contactBook.id, contact.contactBookId))
+          .limit(1)
+      )[0]?.teamId;
 
     if (!resolvedTeamId) {
       logger.warn(
