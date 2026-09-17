@@ -1,5 +1,8 @@
 import { SuppressionReason, SuppressionList } from "@prisma/client";
-import { db } from "../db";
+import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { UnsendApiError } from "~/server/public-api/api-error";
 import { logger } from "../logger/log";
 import { deleteFromSesSuppressionList } from "../aws/ses";
@@ -36,25 +39,29 @@ export class SuppressionService {
     const { email, teamId, reason, source } = params;
 
     try {
-      const suppression = await db.suppressionList.upsert({
-        where: {
-          teamId_email: {
-            teamId,
+      const [suppression] = await drizzleDb
+        .insert(schema.suppressionList)
+        .values(
+          withUpdatedAt({
+            id: createId(),
             email: email.toLowerCase().trim(),
-          },
-        },
-        create: {
-          email: email.toLowerCase().trim(),
-          teamId,
-          reason,
-          source,
-        },
-        update: {
-          reason,
-          source,
-          updatedAt: new Date(),
-        },
-      });
+            teamId,
+            reason,
+            source,
+          }),
+        )
+        .onConflictDoUpdate({
+          target: [
+            schema.suppressionList.teamId,
+            schema.suppressionList.email,
+          ],
+          set: withUpdatedAt({ reason, source }),
+        })
+        .returning();
+
+      if (!suppression) {
+        throw new Error("Failed to upsert suppression");
+      }
 
       logger.info(
         {
@@ -95,14 +102,16 @@ export class SuppressionService {
     teamId: number
   ): Promise<boolean> {
     try {
-      const suppression = await db.suppressionList.findUnique({
-        where: {
-          teamId_email: {
-            teamId,
-            email: email.toLowerCase().trim(),
-          },
-        },
-      });
+      const [suppression] = await drizzleDb
+        .select({ id: schema.suppressionList.id })
+        .from(schema.suppressionList)
+        .where(
+          and(
+            eq(schema.suppressionList.teamId, teamId),
+            eq(schema.suppressionList.email, email.toLowerCase().trim()),
+          ),
+        )
+        .limit(1);
 
       return !!suppression;
     } catch (error) {
@@ -128,10 +137,10 @@ export class SuppressionService {
 
     // Get all unique regions from team's domains for AWS SES cleanup
     try {
-      const teamDomains = await db.domain.findMany({
-        where: { teamId },
-        select: { region: true },
-      });
+      const teamDomains = await drizzleDb
+        .select({ region: schema.domain.region })
+        .from(schema.domain)
+        .where(eq(schema.domain.teamId, teamId));
       const uniqueRegions = [...new Set(teamDomains.map((d) => d.region))];
 
       // Attempt to remove from AWS SES in all regions (best effort, don't throw)
@@ -174,14 +183,19 @@ export class SuppressionService {
 
     // Delete from local database
     try {
-      const deleted = await db.suppressionList.delete({
-        where: {
-          teamId_email: {
-            teamId,
-            email: normalizedEmail,
-          },
-        },
-      });
+      const [deleted] = await drizzleDb
+        .delete(schema.suppressionList)
+        .where(
+          and(
+            eq(schema.suppressionList.teamId, teamId),
+            eq(schema.suppressionList.email, normalizedEmail),
+          ),
+        )
+        .returning();
+
+      if (!deleted) {
+        throw new Error("Suppression not found");
+      }
 
       logger.info(
         {
@@ -241,26 +255,30 @@ export class SuppressionService {
 
     const offset = (page - 1) * limit;
 
-    const where = {
-      teamId,
-      ...(search && {
-        email: {
-          contains: search,
-          mode: "insensitive" as const,
-        },
-      }),
-      ...(reason && { reason }),
-    };
+    const where = and(
+      eq(schema.suppressionList.teamId, teamId),
+      search ? ilike(schema.suppressionList.email, `%${search}%`) : undefined,
+      reason ? eq(schema.suppressionList.reason, reason) : undefined,
+    );
+
+    // The sort column is chosen at runtime, so it is looked up rather than named.
+    const sortColumns = {
+      email: schema.suppressionList.email,
+      reason: schema.suppressionList.reason,
+      createdAt: schema.suppressionList.createdAt,
+    } as const;
+    const sortColumn = sortColumns[sortBy] ?? schema.suppressionList.createdAt;
 
     try {
       const [suppressions, total] = await Promise.all([
-        db.suppressionList.findMany({
-          where,
-          skip: offset,
-          take: limit,
-          orderBy: { [sortBy]: sortOrder },
-        }),
-        db.suppressionList.count({ where }),
+        drizzleDb
+          .select()
+          .from(schema.suppressionList)
+          .where(where)
+          .orderBy(sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn))
+          .offset(offset)
+          .limit(limit),
+        drizzleDb.$count(schema.suppressionList, where),
       ]);
 
       return {
@@ -305,24 +323,28 @@ export class SuppressionService {
       for (let i = 0; i < uniqueEmails.length; i += batchSize) {
         const batch = uniqueEmails.slice(i, i + batchSize);
 
-        const alreadySuppressed = await db.suppressionList.findMany({
-          where: {
-            teamId,
-            email: { in: batch },
-          },
-        });
+        const alreadySuppressed = await drizzleDb
+          .select({ email: schema.suppressionList.email })
+          .from(schema.suppressionList)
+          .where(
+            and(
+              eq(schema.suppressionList.teamId, teamId),
+              inArray(schema.suppressionList.email, batch),
+            ),
+          );
 
         const emailsToAdd = batch.filter(
           (email) => !alreadySuppressed.some((s) => s.email === email)
         );
 
-        await db.suppressionList.createMany({
-          data: emailsToAdd.map((email) => ({
-            teamId,
-            email,
-            reason,
-          })),
-        });
+        if (emailsToAdd.length > 0) {
+          // Drizzle rejects an empty values list, where createMany accepted one.
+          await drizzleDb.insert(schema.suppressionList).values(
+            emailsToAdd.map((email) =>
+              withUpdatedAt({ id: createId(), teamId, email, reason }),
+            ),
+          );
+        }
       }
 
       logger.info(
@@ -356,11 +378,15 @@ export class SuppressionService {
     teamId: number
   ): Promise<Record<SuppressionReason, number>> {
     try {
-      const stats = await db.suppressionList.groupBy({
-        by: ["reason"],
-        where: { teamId },
-        _count: { _all: true },
-      });
+      const stats = await drizzleDb
+        .select({
+          reason: schema.suppressionList.reason,
+          // COUNT returns bigint, which postgres-js hands back as a string.
+          count: sql<number>`COUNT(*)::integer`,
+        })
+        .from(schema.suppressionList)
+        .where(eq(schema.suppressionList.teamId, teamId))
+        .groupBy(schema.suppressionList.reason);
 
       const result: Record<SuppressionReason, number> = {
         HARD_BOUNCE: 0,
@@ -369,7 +395,7 @@ export class SuppressionService {
       };
 
       stats.forEach((stat) => {
-        result[stat.reason] = stat._count._all;
+        result[stat.reason] = stat.count;
       });
 
       return result;
@@ -401,17 +427,15 @@ export class SuppressionService {
         email.toLowerCase().trim()
       );
 
-      const suppressions = await db.suppressionList.findMany({
-        where: {
-          teamId,
-          email: {
-            in: normalizedEmails,
-          },
-        },
-        select: {
-          email: true,
-        },
-      });
+      const suppressions = await drizzleDb
+        .select({ email: schema.suppressionList.email })
+        .from(schema.suppressionList)
+        .where(
+          and(
+            eq(schema.suppressionList.teamId, teamId),
+            inArray(schema.suppressionList.email, normalizedEmails),
+          ),
+        );
 
       const suppressedEmails = new Set(suppressions.map((s) => s.email));
 
