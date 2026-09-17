@@ -91,6 +91,21 @@ EMAIL_CLEANUP_DAYS=30
 Leave it unset to keep email content indefinitely.
 
   </Step>
+  <Step title="Event and webhook log retention (optional)">
+  Two more tables grow without bound and have their own windows.
+
+`EmailEvent` holds the per-email delivery history — one row per delivery, open, click, bounce and so on, so roughly 3.5 rows per email. It is the fastest-growing table in the database. `WebhookCall` holds the webhook delivery log.
+
+```env
+EMAIL_EVENT_RETENTION_DAYS=90
+WEBHOOK_CALL_RETENTION_DAYS=30
+```
+
+Both are unset by default, which keeps everything. The event cleanup runs daily at 00:30 UTC, the webhook one at 03:00 UTC.
+
+Set the event window in days rather than weeks-to-months if you can: deleting an open or click row lets a later event for the same email be counted again in your usage totals. Anything beyond the point where SES still reports engagement is safe.
+
+  </Step>
 </Steps>
 
 ## Step 2: Setting up the app

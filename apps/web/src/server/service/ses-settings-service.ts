@@ -12,6 +12,16 @@ import { smallNanoid } from "../nanoid";
 import { logger } from "../logger/log";
 import { sesRegionSchema } from "~/lib/zod/ses-setting-schema";
 
+/**
+ * Deliberately excludes SUBSCRIPTION. SES fires it when a recipient uses its
+ * subscription-management page, but `SesEventType` has no such member and
+ * `getEmailStatus` has no branch for it, so the event walked the whole pipeline
+ * and then failed on the NOT NULL `EmailEvent.status` insert -- which sent the
+ * job back through its full retry schedule, repeating the work each time.
+ *
+ * Subscribing to an event we cannot handle costs requests, queue operations and
+ * retries for nothing. Add it back only alongside a handler.
+ */
 const GENERAL_EVENTS: EventType[] = [
   "BOUNCE",
   "COMPLAINT",
@@ -20,7 +30,6 @@ const GENERAL_EVENTS: EventType[] = [
   "REJECT",
   "RENDERING_FAILURE",
   "SEND",
-  "SUBSCRIPTION",
 ];
 
 export class SesSettingsService {

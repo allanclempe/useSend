@@ -75,6 +75,14 @@ export const env = createEnv({
         .string()
         .optional()
         .transform((str) => (str ? parseInt(str, 10) : undefined)),
+    EMAIL_EVENT_RETENTION_DAYS: z
+        .string()
+        .optional()
+        .transform((str) => (str ? parseInt(str, 10) : undefined)),
+    WEBHOOK_CALL_RETENTION_DAYS: z
+        .string()
+        .optional()
+        .transform((str) => (str ? parseInt(str, 10) : undefined)),
   },
 
   /**
@@ -137,6 +145,8 @@ export const env = createEnv({
     SMTP_USER: process.env.SMTP_USER,
     CONTACT_BOOK_ID: process.env.CONTACT_BOOK_ID,
     EMAIL_CLEANUP_DAYS: process.env.EMAIL_CLEANUP_DAYS,
+    EMAIL_EVENT_RETENTION_DAYS: process.env.EMAIL_EVENT_RETENTION_DAYS,
+    WEBHOOK_CALL_RETENTION_DAYS: process.env.WEBHOOK_CALL_RETENTION_DAYS,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
