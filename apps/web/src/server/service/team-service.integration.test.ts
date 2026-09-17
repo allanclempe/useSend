@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { attachUserToTeam, createUser } from "~/test/factories/core";
-import { getRedis } from "~/server/redis";
+import { cacheGet } from "~/server/cache";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -110,7 +110,7 @@ describeIntegration("team-service", () => {
     expect(afterUpdate.name).toBe("renamed");
 
     await TeamService.invalidateTeamCache(team!.id);
-    expect(await getRedis().get(`team:${team!.id}`)).toBeNull();
+    expect(await cacheGet(`team:${team!.id}`)).toBeNull();
   });
 
   it("bumps updatedAt when updating a team", async () => {

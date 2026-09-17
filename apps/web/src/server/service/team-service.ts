@@ -9,19 +9,44 @@ import { logger } from "~/server/logger/log";
 type Team = typeof schema.team.$inferSelect;
 type TeamInvite = typeof schema.teamInvite.$inferSelect;
 import { UnsendApiError } from "../public-api/api-error";
-import { getRedis, redisKey } from "~/server/redis";
+import { cacheAdd, cacheDelete, cacheGet, cachePut } from "~/server/cache";
 import { LimitReason } from "~/lib/constants/plans";
 import { LimitService } from "./limit-service";
 import { renderUsageLimitReachedEmail } from "../email-templates/UsageLimitReachedEmail";
 import { renderUsageWarningEmail } from "../email-templates/UsageWarningEmail";
 
-// Cache stores exactly Prisma Team shape (no counts)
+// Cache stores exactly the Team row shape (no counts)
 
+/**
+ * Two minutes, and on Workers that is a floor rather than a ceiling.
+ *
+ * KV serves reads from a colo edge cache whose own TTL is also 60 seconds, so a
+ * team row can be up to about three minutes stale there against two under
+ * Redis. `invalidateTeamCache` narrows that but does not close it: a KV delete
+ * is eventually consistent like everything else. Every reader of this cache is
+ * a limit check or a plan lookup, where being a minute behind a plan change is
+ * a billing question rather than a correctness one — and the hard limits
+ * (`isBlocked`, the daily cap) are re-read from Postgres on the paths that
+ * enforce them.
+ */
 const TEAM_CACHE_TTL_SECONDS = 120; // 2 minutes
+
+/**
+ * One limit notification per team per reason per day.
+ *
+ * `cacheAdd` is a real `SET NX` on Redis and a read-then-write on KV, so on
+ * Workers two callers racing inside KV's consistency window can both win and
+ * the team gets two copies of the same email. That is the whole cost, it is
+ * bounded by how often a team crosses a limit, and the alternative — a Durable
+ * Object per team per reason — buys exactness nobody is asking for here. The
+ * cases that genuinely cannot tolerate this are idempotency and rate limiting,
+ * and neither of them is on KV.
+ */
+const NOTIFICATION_COOLDOWN_SECONDS = 24 * 60 * 60;
 
 export class TeamService {
   private static cacheKey(teamId: number) {
-    return redisKey(`team:${teamId}`);
+    return `team:${teamId}`;
   }
 
   static async refreshTeamCache(teamId: number): Promise<Team | null> {
@@ -33,23 +58,18 @@ export class TeamService {
 
     if (!team) return null;
 
-    const redis = getRedis();
-    await redis.setex(
-      TeamService.cacheKey(teamId),
-      TEAM_CACHE_TTL_SECONDS,
-      JSON.stringify(team),
-    );
+    await cachePut(TeamService.cacheKey(teamId), JSON.stringify(team), {
+      ttlSeconds: TEAM_CACHE_TTL_SECONDS,
+    });
     return team;
   }
 
   static async invalidateTeamCache(teamId: number) {
-    const redis = getRedis();
-    await redis.del(TeamService.cacheKey(teamId));
+    await cacheDelete(TeamService.cacheKey(teamId));
   }
 
   static async getTeamCached(teamId: number): Promise<Team> {
-    const redis = getRedis();
-    const raw = await redis.get(TeamService.cacheKey(teamId));
+    const raw = await cacheGet(TeamService.cacheKey(teamId));
     if (raw) {
       return JSON.parse(raw) as Team;
     }
@@ -455,12 +475,11 @@ export class TeamService {
       return;
     }
 
-    const redis = getRedis();
-    const cacheKey = redisKey(`limit:notify:${teamId}:${reason}`);
-    // Atomic SET NX to prevent race conditions: only one concurrent caller
-    // can acquire the cooldown key. TTL = 24 hours (one notification per day).
-    const acquired = await redis.set(cacheKey, "1", "EX", 24 * 60 * 60, "NX");
-    if (acquired !== "OK") {
+    const cacheKey = `limit:notify:${teamId}:${reason}`;
+    const acquired = await cacheAdd(cacheKey, "1", {
+      ttlSeconds: NOTIFICATION_COOLDOWN_SECONDS,
+    });
+    if (!acquired) {
       logger.info(
         { teamId, cacheKey },
         "[TeamService]: Skipping notify — cooldown active",
@@ -519,7 +538,7 @@ export class TeamService {
 
   /**
    * Notify all team users that they're nearing their email limit.
-   * Rate limited via Redis to avoid spamming; sends at most once per day per reason.
+   * Cooled down to avoid spamming; sends at most once per day per reason.
    */
   static async sendWarningEmail(
     teamId: number,
@@ -552,12 +571,11 @@ export class TeamService {
       return;
     }
 
-    const redis = getRedis();
-    const cacheKey = redisKey(`limit:warning:${teamId}:${reason}`);
-    // Atomic SET NX to prevent race conditions: only one concurrent caller
-    // can acquire the cooldown key. TTL = 24 hours (one notification per day).
-    const acquired = await redis.set(cacheKey, "1", "EX", 24 * 60 * 60, "NX");
-    if (acquired !== "OK") {
+    const cacheKey = `limit:warning:${teamId}:${reason}`;
+    const acquired = await cacheAdd(cacheKey, "1", {
+      ttlSeconds: NOTIFICATION_COOLDOWN_SECONDS,
+    });
+    if (!acquired) {
       logger.info(
         { teamId, cacheKey },
         "[TeamService]: Skipping warning — cooldown active",
