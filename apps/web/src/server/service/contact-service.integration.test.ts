@@ -1,5 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { db } from "~/server/db";
+import { eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -52,7 +55,7 @@ describeIntegration("contact-service", () => {
     mockSendDoubleOptInConfirmationEmail.mockResolvedValue(undefined);
     mockWebhookEmit.mockResolvedValue(undefined);
 
-    const team = await db.team.create({ data: { name: "cs-team" } });
+    const team = await createTeam({ name: "cs-team" });
     teamId = team.id;
   });
 
@@ -67,16 +70,21 @@ describeIntegration("contact-service", () => {
       id?: string;
     } = {},
   ) {
-    return db.contactBook.create({
-      data: {
-        id: overrides.id ?? `cb_${Math.random().toString(36).slice(2, 10)}`,
-        name: "book",
-        teamId,
-        properties: {},
-        variables: overrides.variables ?? [],
-        doubleOptInEnabled: overrides.doubleOptInEnabled ?? false,
-      },
-    });
+    const [book] = await drizzleDb
+      .insert(schema.contactBook)
+      .values(
+        withUpdatedAt({
+          id: overrides.id ?? `cb_${Math.random().toString(36).slice(2, 10)}`,
+          name: "book",
+          teamId,
+          properties: {},
+          variables: overrides.variables ?? [],
+          doubleOptInEnabled: overrides.doubleOptInEnabled ?? false,
+        }),
+      )
+      .returning();
+
+    return book!;
   }
 
   it("creates pending contacts and sends double opt-in confirmation", async () => {
@@ -160,9 +168,10 @@ describeIntegration("contact-service", () => {
     expect(second.id).toBe(first.id);
     expect(second.firstName).toBe("Second");
 
-    const all = await db.contact.findMany({
-      where: { contactBookId: book.id },
-    });
+    const all = await drizzleDb
+      .select()
+      .from(schema.contact)
+      .where(eq(schema.contact.contactBookId, book.id));
     expect(all).toHaveLength(1);
   });
 

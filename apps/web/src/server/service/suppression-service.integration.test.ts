@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { db } from "~/server/db";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { createTeam } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -21,7 +22,7 @@ describeIntegration("suppression-service", () => {
   beforeEach(async () => {
     await resetDatabase();
     vi.clearAllMocks();
-    const team = await db.team.create({ data: { name: "supp-team" } });
+    const team = await createTeam({ name: "supp-team" });
     teamId = team.id;
   });
 
@@ -50,7 +51,7 @@ describeIntegration("suppression-service", () => {
 
     expect(second.id).toBe(first.id);
     expect(second.reason).toBe("COMPLAINT");
-    expect(await db.suppressionList.count()).toBe(1);
+    expect(await drizzleDb.$count(schema.suppressionList)).toBe(1);
   });
 
   it("bumps updatedAt on a repeat suppression", async () => {
@@ -73,7 +74,7 @@ describeIntegration("suppression-service", () => {
   });
 
   it("scopes suppression checks to the team", async () => {
-    const other = await db.team.create({ data: { name: "other" } });
+    const other = await createTeam({ name: "other" });
     await SuppressionService.addSuppression({
       email: "x@example.com",
       teamId,
@@ -114,7 +115,7 @@ describeIntegration("suppression-service", () => {
 
     await SuppressionService.removeSuppression("gone@example.com", teamId);
 
-    expect(await db.suppressionList.count()).toBe(0);
+    expect(await drizzleDb.$count(schema.suppressionList)).toBe(0);
   });
 
   it("counts by reason, as numbers not bigint strings", async () => {
@@ -185,7 +186,7 @@ describeIntegration("suppression-service", () => {
       "HARD_BOUNCE",
     );
 
-    expect(await db.suppressionList.count()).toBe(2);
+    expect(await drizzleDb.$count(schema.suppressionList)).toBe(2);
   });
 
   it("tolerates a bulk add where everything is already suppressed", async () => {
@@ -205,6 +206,6 @@ describeIntegration("suppression-service", () => {
       ),
     ).resolves.not.toThrow();
 
-    expect(await db.suppressionList.count()).toBe(1);
+    expect(await drizzleDb.$count(schema.suppressionList)).toBe(1);
   });
 });

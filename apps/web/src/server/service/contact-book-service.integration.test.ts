@@ -3,7 +3,9 @@ import {
   DEFAULT_DOUBLE_OPT_IN_CONTENT,
   DEFAULT_DOUBLE_OPT_IN_SUBJECT,
 } from "~/lib/constants/double-opt-in";
-import { db } from "~/server/db";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
+import { createTeam } from "~/test/factories/core";
 import {
   closeIntegrationConnections,
   integrationEnabled,
@@ -45,7 +47,7 @@ describeIntegration("contact-book-service", () => {
     mockCheckContactBookLimit.mockResolvedValue({ isLimitReached: false });
     mockValidateDomainFromEmail.mockResolvedValue(undefined);
 
-    const team = await db.team.create({ data: { name: "cb-team" } });
+    const team = await createTeam({ name: "cb-team" });
     teamId = team.id;
   });
 
@@ -69,12 +71,20 @@ describeIntegration("contact-book-service", () => {
 
   it("returns contact books with a contact count", async () => {
     const book = await createContactBook(teamId, "counted");
-    await db.contact.createMany({
-      data: [
-        { id: "c1", contactBookId: book.id, email: "a@example.com", properties: {} },
-        { id: "c2", contactBookId: book.id, email: "b@example.com", properties: {} },
-      ],
-    });
+    await drizzleDb.insert(schema.contact).values([
+      withUpdatedAt({
+        id: "c1",
+        contactBookId: book.id,
+        email: "a@example.com",
+        properties: {},
+      }),
+      withUpdatedAt({
+        id: "c2",
+        contactBookId: book.id,
+        email: "b@example.com",
+        properties: {},
+      }),
+    ]);
 
     const [listed] = await getContactBooks(teamId);
 
@@ -103,7 +113,7 @@ describeIntegration("contact-book-service", () => {
   });
 
   it("excludes other teams' books", async () => {
-    const other = await db.team.create({ data: { name: "other" } });
+    const other = await createTeam({ name: "other" });
     await createContactBook(teamId, "mine");
     await createContactBook(other.id, "theirs");
 
@@ -210,23 +220,21 @@ describeIntegration("contact-book-service", () => {
 
   it("reports contact book details", async () => {
     const book = await createContactBook(teamId, "details");
-    await db.contact.createMany({
-      data: [
-        {
-          id: "d1",
-          contactBookId: book.id,
-          email: "a@example.com",
-          properties: {},
-        },
-        {
-          id: "d2",
-          contactBookId: book.id,
-          email: "b@example.com",
-          properties: {},
-          subscribed: false,
-        },
-      ],
-    });
+    await drizzleDb.insert(schema.contact).values([
+      withUpdatedAt({
+        id: "d1",
+        contactBookId: book.id,
+        email: "a@example.com",
+        properties: {},
+      }),
+      withUpdatedAt({
+        id: "d2",
+        contactBookId: book.id,
+        email: "b@example.com",
+        properties: {},
+        subscribed: false,
+      }),
+    ]);
 
     const details = await getContactBookDetails(book.id);
 
