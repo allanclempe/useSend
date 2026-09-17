@@ -1,7 +1,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { CampaignStatus, Prisma } from "@prisma/client";
+import { CampaignStatus } from "@prisma/client";
 import { PublicAPIApp } from "~/server/public-api/hono";
-import { db } from "~/server/db";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 
 const statuses = Object.values(CampaignStatus) as [CampaignStatus];
 
@@ -58,64 +59,47 @@ function getCampaigns(app: PublicAPIApp) {
 	app.openapi(route, async (c) => {
 		const team = c.var.team;
 		const pageParam = c.req.query("page");
-		const statusParam = c.req.query("status") as
-			| Prisma.EnumCampaignStatusFilter<"Campaign">
-			| undefined;
+		const statusParam = c.req.query("status") as CampaignStatus | undefined;
 		const searchParam = c.req.query("search");
 
 		const page = pageParam ? Number(pageParam) : 1;
 		const limit = 30;
 		const offset = (page - 1) * limit;
 
-		const whereConditions: Prisma.CampaignWhereInput = {
-			teamId: team.id,
-		};
+		const where = and(
+			eq(schema.campaign.teamId, team.id),
+			statusParam ? eq(schema.campaign.status, statusParam) : undefined,
+			// Prisma's `contains` with mode "insensitive".
+			searchParam
+				? or(
+						ilike(schema.campaign.name, `%${searchParam}%`),
+						ilike(schema.campaign.subject, `%${searchParam}%`),
+					)
+				: undefined,
+		);
 
-		if (statusParam) {
-			whereConditions.status = statusParam;
-		}
+		const countP = drizzleDb.$count(schema.campaign, where);
 
-		if (searchParam) {
-			whereConditions.OR = [
-				{
-					name: {
-						contains: searchParam,
-						mode: "insensitive",
-					},
-				},
-				{
-					subject: {
-						contains: searchParam,
-						mode: "insensitive",
-					},
-				},
-			];
-		}
-
-		const countP = db.campaign.count({ where: whereConditions });
-
-		const campaignsP = db.campaign.findMany({
-			where: whereConditions,
-			select: {
-				id: true,
-				name: true,
-				from: true,
-				subject: true,
-				createdAt: true,
-				updatedAt: true,
-				status: true,
-				scheduledAt: true,
-				total: true,
-				sent: true,
-				delivered: true,
-				unsubscribed: true,
-			},
-			orderBy: {
-				createdAt: "desc",
-			},
-			skip: offset,
-			take: limit,
-		});
+		const campaignsP = drizzleDb
+			.select({
+				id: schema.campaign.id,
+				name: schema.campaign.name,
+				from: schema.campaign.from,
+				subject: schema.campaign.subject,
+				createdAt: schema.campaign.createdAt,
+				updatedAt: schema.campaign.updatedAt,
+				status: schema.campaign.status,
+				scheduledAt: schema.campaign.scheduledAt,
+				total: schema.campaign.total,
+				sent: schema.campaign.sent,
+				delivered: schema.campaign.delivered,
+				unsubscribed: schema.campaign.unsubscribed,
+			})
+			.from(schema.campaign)
+			.orderBy(desc(schema.campaign.createdAt))
+			.where(where)
+			.offset(offset)
+			.limit(limit);
 
 		const [campaigns, count] = await Promise.all([campaignsP, countP]);
 

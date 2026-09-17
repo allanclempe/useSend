@@ -1,7 +1,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ContactBookSchema } from "~/lib/zod/contact-book-schema";
 import { PublicAPIApp } from "~/server/public-api/hono";
-import { db } from "~/server/db";
+import { and, eq, sql } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { UnsendApiError } from "../../api-error";
 
 const route = createRoute({
@@ -56,17 +57,27 @@ function getContactBook(app: PublicAPIApp) {
     const team = c.var.team;
     const contactBookId = c.req.valid("param").contactBookId;
 
-    const contactBook = await db.contactBook.findFirst({
-      where: {
-        id: contactBookId,
-        teamId: team.id,
-      },
-      include: {
-        _count: {
-          select: { contacts: true },
-        },
-      },
-    });
+    // LEFT JOIN + GROUP BY stands in for Prisma's `_count`. `COUNT(col)` skips
+    // NULLs so an empty book counts 0, and the ::integer cast keeps postgres-js
+    // from handing back bigint-as-string.
+    const [contactBook] = await drizzleDb
+      .select({
+        book: schema.contactBook,
+        contactCount: sql<number>`COUNT(${schema.contact.id})::integer`,
+      })
+      .from(schema.contactBook)
+      .leftJoin(
+        schema.contact,
+        eq(schema.contact.contactBookId, schema.contactBook.id),
+      )
+      .where(
+        and(
+          eq(schema.contactBook.id, contactBookId),
+          eq(schema.contactBook.teamId, team.id),
+        ),
+      )
+      .groupBy(schema.contactBook.id)
+      .limit(1);
 
     if (!contactBook) {
       throw new UnsendApiError({
@@ -76,8 +87,9 @@ function getContactBook(app: PublicAPIApp) {
     }
 
     return c.json({
-      ...contactBook,
-      properties: contactBook.properties as Record<string, string>,
+      ...contactBook.book,
+      properties: (contactBook.book.properties ?? {}) as Record<string, string>,
+      _count: { contacts: contactBook.contactCount },
     });
   });
 }

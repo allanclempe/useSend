@@ -2,7 +2,6 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { DomainSchema } from "~/lib/zod/domain-schema";
 import { PublicAPIApp } from "~/server/public-api/hono";
 import { UnsendApiError } from "../../api-error";
-import { db } from "~/server/db";
 import { getDomain as getDomainService } from "~/server/service/domain-service";
 
 const route = createRoute({

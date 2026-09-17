@@ -1,6 +1,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { PublicAPIApp } from "~/server/public-api/hono";
-import { db } from "~/server/db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
+import { withUpdatedAt } from "~/server/drizzle/touch";
 
 const route = createRoute({
   method: "put",
@@ -55,42 +57,36 @@ function verifyDomain(app: PublicAPIApp) {
     const team = c.var.team;
     const domainId = c.req.valid("param").id;
 
-    // Check if API key has access to this domain
-    let domain = null;
-    
-    if (team.apiKey.domainId) {
-      // If API key is restricted to a specific domain, verify the requested domain matches
-      if (domainId === team.apiKey.domainId) {
-        domain = await db.domain.findFirst({
-          where: { 
-            teamId: team.id, 
-            id: domainId
-          },
-        });
-      }
-      // If domainId doesn't match the API key's restriction, domain remains null
-    } else {
-      // API key has access to all team domains
-      domain = await db.domain.findFirst({ 
-        where: { 
-          teamId: team.id, 
-          id: domainId 
-        } 
-      });
-    }
+    // A domain-restricted API key may only verify its own domain; anything
+    // else falls through with `domain` unset and 404s below.
+    const restricted = team.apiKey.domainId !== null;
+    const allowed = !restricted || domainId === team.apiKey.domainId;
+
+    const [domain] = allowed
+      ? await drizzleDb
+          .select()
+          .from(schema.domain)
+          .where(
+            and(
+              eq(schema.domain.teamId, team.id),
+              eq(schema.domain.id, domainId),
+            ),
+          )
+          .limit(1)
+      : [];
 
     if (!domain) {
       return c.json({
-        error: team.apiKey.domainId 
-          ? "API key doesn't have access to this domain" 
-          : "Domain not found"
+        error: restricted
+          ? "API key doesn't have access to this domain"
+          : "Domain not found",
       }, 404);
     }
 
-    await db.domain.update({
-      where: { id: domainId },
-      data: { isVerifying: true },
-    });
+    await drizzleDb
+      .update(schema.domain)
+      .set(withUpdatedAt({ isVerifying: true }))
+      .where(eq(schema.domain.id, domainId));
 
     return c.json({
       message: "Domain verification started",

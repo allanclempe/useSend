@@ -1,5 +1,6 @@
 import { Context } from "hono";
-import { db } from "../db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
 import { UnsendApiError } from "./api-error";
 
 export const getContactBook = async (c: Context, teamId: number) => {
@@ -12,9 +13,16 @@ export const getContactBook = async (c: Context, teamId: number) => {
     });
   }
 
-  const contactBook = await db.contactBook.findUnique({
-    where: { id: contactBookId, teamId },
-  });
+  const [contactBook] = await drizzleDb
+    .select()
+    .from(schema.contactBook)
+    .where(
+      and(
+        eq(schema.contactBook.id, contactBookId),
+        eq(schema.contactBook.teamId, teamId),
+      ),
+    )
+    .limit(1);
 
   if (!contactBook) {
     throw new UnsendApiError({
@@ -27,7 +35,11 @@ export const getContactBook = async (c: Context, teamId: number) => {
 };
 
 export const checkIsValidEmailId = async (emailId: string, teamId: number) => {
-  const email = await db.email.findUnique({ where: { id: emailId, teamId } });
+  const [email] = await drizzleDb
+    .select({ id: schema.email.id })
+    .from(schema.email)
+    .where(and(eq(schema.email.id, emailId), eq(schema.email.teamId, teamId)))
+    .limit(1);
 
   if (!email) {
     throw new UnsendApiError({ code: "NOT_FOUND", message: "Email not found" });
@@ -39,16 +51,20 @@ export const checkIsValidEmailIdWithDomainRestriction = async (
   teamId: number, 
   apiKeyDomainId?: number
 ) => {
-  const whereClause: { id: string; teamId: number; domainId?: number } = {
-    id: emailId,
-    teamId,
-  };
-
-  if (apiKeyDomainId !== undefined) {
-    whereClause.domainId = apiKeyDomainId;
-  }
-
-  const email = await db.email.findUnique({ where: whereClause });
+  const [email] = await drizzleDb
+    .select()
+    .from(schema.email)
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.teamId, teamId),
+        // Domain-restricted keys can only reach emails on their own domain.
+        apiKeyDomainId !== undefined
+          ? eq(schema.email.domainId, apiKeyDomainId)
+          : undefined,
+      ),
+    )
+    .limit(1);
 
   if (!email) {
     throw new UnsendApiError({ code: "NOT_FOUND", message: "Email not found" });

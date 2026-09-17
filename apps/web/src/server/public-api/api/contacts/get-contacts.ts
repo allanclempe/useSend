@@ -1,7 +1,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { PublicAPIApp } from "~/server/public-api/hono";
 import { getTeamFromToken } from "~/server/public-api/auth";
-import { db } from "~/server/db";
+import { and, eq, inArray } from "drizzle-orm";
+import { drizzleDb, schema } from "~/server/drizzle";
 import { UnsendApiError } from "../../api-error";
 import { getContactBook } from "../../api-utils";
 
@@ -60,20 +61,24 @@ function getContacts(app: PublicAPIApp) {
     const page = c.req.query("page") ? Number(c.req.query("page")) : 1;
     const limit = c.req.query("limit") ? Number(c.req.query("limit")) : 5000;
 
-    const contacts = await db.contact.findMany({
-      where: {
-        id: { in: contactIds },
-        email: { in: emails },
-        contactBookId: cb.id,
-      },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    const contacts = await drizzleDb
+      .select()
+      .from(schema.contact)
+      .where(
+        and(
+          eq(schema.contact.contactBookId, cb.id),
+          // Prisma treated `{ in: undefined }` as no filter at all.
+          contactIds ? inArray(schema.contact.id, contactIds) : undefined,
+          emails ? inArray(schema.contact.email, emails) : undefined,
+        ),
+      )
+      .offset((page - 1) * limit)
+      .limit(limit);
 
     // Ensure properties is a Record<string, string>
     const sanitizedContacts = contacts.map((contact) => ({
       ...contact,
-      properties: contact.properties as Record<string, string>,
+      properties: (contact.properties ?? {}) as Record<string, string>,
     }));
 
     return c.json(sanitizedContacts);
