@@ -52,7 +52,12 @@ export async function parseSesHook(data: SesEvent) {
   const mailStatus = getEmailStatus(data);
 
   if (!mailStatus) {
-    logger.error({ data }, "Unknown email status");
+    // The event identifies itself; the rest of the payload is the recipient
+    // address, the subject and every header, which do not belong in a log.
+    logger.error(
+      { eventType: data.eventType, sesEmailId: data.mail?.messageId },
+      "Unknown email status",
+    );
     return false;
   }
 
@@ -106,7 +111,10 @@ export async function parseSesHook(data: SesEvent) {
   });
 
   if (!email) {
-    logger.error({ data }, "Email not found");
+    logger.error(
+      { eventType: data.eventType },
+      "Email not found",
+    );
     return false;
   }
 

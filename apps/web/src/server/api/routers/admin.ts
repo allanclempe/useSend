@@ -11,6 +11,7 @@ import { drizzleDb, schema } from "~/server/drizzle";
 import { withUpdatedAt } from "~/server/drizzle/touch";
 import { sendMail } from "~/server/mailer";
 import { logger } from "~/server/logger/log";
+import { maskEmail } from "~/server/logger/redact";
 import { UseSend } from "usesend-js";
 import { isCloud } from "~/utils/common";
 import { toPlainHtml } from "~/server/utils/email-content";
@@ -214,7 +215,7 @@ export const adminRouter = createTRPCRouter({
             logger.error(
               {
                 userId: updatedUser.id,
-                email: updatedUser.email,
+                email: maskEmail(updatedUser.email),
                 error: result.error,
               },
               "Failed to add user to contact book",
@@ -223,7 +224,7 @@ export const adminRouter = createTRPCRouter({
             logger.info(
               {
                 userId: updatedUser.id,
-                email: updatedUser.email,
+                email: maskEmail(updatedUser.email),
                 contactId: result.data?.contactId,
               },
               "Successfully added user to contact book",
@@ -233,7 +234,7 @@ export const adminRouter = createTRPCRouter({
           logger.error(
             {
               userId: updatedUser.id,
-              email: updatedUser.email,
+              email: maskEmail(updatedUser.email),
               error,
             },
             "Error adding user to contact book",
