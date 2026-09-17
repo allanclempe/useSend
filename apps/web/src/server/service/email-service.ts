@@ -271,9 +271,6 @@ export async function sendEmail(
   }
 
   const scheduledAtDate = scheduledAt ? new Date(scheduledAt) : undefined;
-  const delay = scheduledAtDate
-    ? Math.max(0, scheduledAtDate.getTime() - Date.now())
-    : undefined;
 
   const [email] = await drizzleDb
     .insert(schema.email)
@@ -294,7 +291,12 @@ export async function sendEmail(
         domainId: domain.id,
         ...(attachments ? { attachments: JSON.stringify(attachments) } : {}),
         scheduledAt: scheduledAtDate,
-        latestStatus: scheduledAtDate ? ("SCHEDULED" as const) : ("QUEUED" as const),
+        // Always SCHEDULED at insert, whether or not there is a `scheduledAt`.
+        // `QUEUED` is now what the *consumer* claims the row as, and that claim
+        // -- `SET latestStatus = 'QUEUED' WHERE latestStatus = 'SCHEDULED'` --
+        // is the whole idempotency guard (§4.4). It only works if there is
+        // exactly one pre-send state. See `executeEmail`.
+        latestStatus: "SCHEDULED" as const,
         apiId: apiKeyId,
         inReplyToId,
         ...(headers ? { headers: JSON.stringify(headers) } : {}),
@@ -309,14 +311,20 @@ export async function sendEmail(
     });
   }
 
+  // A scheduled send is a row and nothing else. The campaign scheduler sweeps
+  // for what is due and enqueues it then, which is what makes reschedule and
+  // cancel plain UPDATEs instead of queue surgery (§4.5).
+  if (scheduledAtDate) {
+    return email;
+  }
+
   try {
     await EmailQueueService.queueEmail(
       email.id,
       teamId,
       domain.region,
       true,
-      undefined,
-      delay
+      undefined
     );
   } catch (error: any) {
     await drizzleDb.insert(schema.emailEvent).values({
@@ -344,7 +352,7 @@ export async function updateEmail(
     scheduledAt?: string;
   }
 ) {
-  const { email, domain } = await checkIfValidEmail(emailId);
+  const { email } = await checkIfValidEmail(emailId);
 
   if (email.latestStatus !== "SCHEDULED") {
     throw new UnsendApiError({
@@ -354,20 +362,25 @@ export async function updateEmail(
   }
 
   const scheduledAtDate = scheduledAt ? new Date(scheduledAt) : undefined;
-  const delay = scheduledAtDate
-    ? Math.max(0, scheduledAtDate.getTime() - Date.now())
-    : undefined;
 
+  // A pure database write. There is no queued job to move: a scheduled send is
+  // not enqueued until the sweeper finds it due, so changing `scheduledAt`
+  // changes when that happens and nothing else (§4.5). The `WHERE` clause is
+  // what makes it safe -- a row the consumer has already claimed is no longer
+  // SCHEDULED, so a reschedule that lost the race writes nothing.
   await drizzleDb
     .update(schema.email)
     .set(withUpdatedAt({ scheduledAt: scheduledAtDate }))
-    .where(eq(schema.email.id, emailId));
-
-  await EmailQueueService.changeDelay(emailId, domain.region, true, delay ?? 0);
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "SCHEDULED"),
+      ),
+    );
 }
 
 export async function cancelEmail(emailId: string) {
-  const { email, domain } = await checkIfValidEmail(emailId);
+  const { email } = await checkIfValidEmail(emailId);
 
   if (email.latestStatus !== "SCHEDULED") {
     throw new UnsendApiError({
@@ -376,12 +389,19 @@ export async function cancelEmail(emailId: string) {
     });
   }
 
-  await EmailQueueService.chancelEmail(emailId, domain.region, true);
-
+  // Also a pure database write, and now strictly stronger than what it
+  // replaced. Removing the job from the queue could not stop a send that a
+  // worker had already picked up; this can, because the consumer claims the row
+  // before it calls SES and a CANCELLED row cannot be claimed (§4.5).
   await drizzleDb
     .update(schema.email)
     .set(withUpdatedAt({ latestStatus: "CANCELLED" as const }))
-    .where(eq(schema.email.id, emailId));
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "SCHEDULED"),
+      ),
+    );
 
   await drizzleDb.insert(schema.emailEvent).values({
     id: createId(),
@@ -745,9 +765,6 @@ export async function sendBulkEmails(
       }
 
       const scheduledAtDate = scheduledAt ? new Date(scheduledAt) : undefined;
-      const delay = scheduledAtDate
-        ? Math.max(0, scheduledAtDate.getTime() - Date.now())
-        : undefined;
 
       try {
         const [email] = await drizzleDb
@@ -771,9 +788,9 @@ export async function sendBulkEmails(
                 ? { attachments: JSON.stringify(attachments) }
                 : {}),
               scheduledAt: scheduledAtDate,
-              latestStatus: scheduledAtDate
-                ? ("SCHEDULED" as const)
-                : ("QUEUED" as const),
+              // See the single-send path: one pre-send state, so the
+              // consumer's claim is the idempotency guard.
+              latestStatus: "SCHEDULED" as const,
               apiId: apiKeyId,
               ...(headers ? { headers: JSON.stringify(headers) } : {}),
             }),
@@ -786,15 +803,17 @@ export async function sendBulkEmails(
 
         createdEmails.push({ email, originalIndex });
 
-        // Prepare queue job
-        queueJobs.push({
-          emailId: email.id,
-          teamId,
-          region: domain.region,
-          transactional: true, // Bulk emails are still transactional
-          delay,
-          timestamp: Date.now(),
-        });
+        // A scheduled send in a batch is a row and nothing else, same as the
+        // single-send path: the sweeper enqueues it when it is due (§4.5).
+        if (!scheduledAtDate) {
+          queueJobs.push({
+            emailId: email.id,
+            teamId,
+            region: domain.region,
+            transactional: true, // Bulk emails are still transactional
+            timestamp: Date.now(),
+          });
+        }
       } catch (error: any) {
         logger.error(
           { err: error, to },
@@ -805,7 +824,9 @@ export async function sendBulkEmails(
     }
   }
 
-  if (queueJobs.length === 0) {
+  // Rows, not jobs: a batch made entirely of scheduled sends enqueues nothing
+  // and is still a success. Only "no rows at all" is a failure.
+  if (createdEmails.length === 0 && suppressedEmails.length === 0) {
     throw new UnsendApiError({
       code: "INTERNAL_SERVER_ERROR",
       message: "Failed to create any email records",

@@ -27,6 +27,7 @@ import {
   WEBHOOK_DISPATCH_QUEUE,
 } from "./queue-constants";
 import {
+  SEND_QUEUE_MAX_ATTEMPTS,
   SEND_QUEUE_MAX_CONCURRENCY,
   SEND_QUEUE_SUFFIXES,
   sendQueueName,
@@ -123,7 +124,7 @@ const SEND_QUEUES: readonly QueueDefinition[] = SUPPORTED_SES_REGIONS.flatMap(
   (region) =>
     SEND_QUEUE_SUFFIXES.map((suffix) =>
       define(sendQueueName(region, suffix), {
-        maxAttempts: 3,
+        maxAttempts: SEND_QUEUE_MAX_ATTEMPTS,
         retry: { type: "exponential", delayMs: 30_000 },
         maxBatchSize: 1,
         maxBatchTimeout: 1,

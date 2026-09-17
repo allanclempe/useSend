@@ -1338,10 +1338,14 @@ export class CampaignBatchService {
       );
     }
 
-    await this.batchQueue.enqueue(
-      `campaign-${campaignId}`,
-      { campaignId, teamId },
-      { jobId: `campaign-batch-${campaignId}` },
-    );
+    // The `jobId` dedup key is gone with the rest of `EnqueueOptions.jobId`:
+    // Cloudflare has no equivalent, so nothing may be built on it. The window
+    // it protected -- two scheduler ticks enqueueing one campaign -- is closed
+    // by the `batchWindowMinutes` check above and by the consumer advancing
+    // `lastCursor`, not by the queue.
+    await this.batchQueue.enqueue(`campaign-${campaignId}`, {
+      campaignId,
+      teamId,
+    });
   }
 }

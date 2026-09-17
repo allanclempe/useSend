@@ -12,15 +12,11 @@ import {
 const {
   mockQueueEmail,
   mockQueueBulk,
-  mockChangeDelay,
-  mockCancelEmail,
   mockCheckMultipleEmails,
   mockValidateDomainFromEmail,
 } = vi.hoisted(() => ({
   mockQueueEmail: vi.fn(),
   mockQueueBulk: vi.fn(),
-  mockChangeDelay: vi.fn(),
-  mockCancelEmail: vi.fn(),
   mockCheckMultipleEmails: vi.fn(),
   mockValidateDomainFromEmail: vi.fn(),
 }));
@@ -31,12 +27,12 @@ vi.mock("~/server/mailer", () => ({
   sendSignUpEmail: vi.fn(),
 }));
 
+// `changeDelay` and `chancelEmail` are gone: reschedule and cancel are plain
+// database writes now (§4.5).
 vi.mock("~/server/service/email-queue-service", () => ({
   EmailQueueService: {
     queueEmail: mockQueueEmail,
     queueBulk: mockQueueBulk,
-    changeDelay: mockChangeDelay,
-    chancelEmail: mockCancelEmail,
   },
 }));
 
@@ -57,6 +53,20 @@ import {
 } from "~/server/service/email-service";
 
 const describeIntegration = integrationEnabled ? describe : describe.skip;
+
+/**
+ * What the consumer does before it calls SES: takes the row out of SCHEDULED.
+ *
+ * Reschedule and cancel are only legal until this happens, and after it they
+ * are no-ops — which is the point of the claim, and stronger than removing a
+ * job from a queue ever was.
+ */
+async function claim(emailId: string) {
+  await drizzleDb
+    .update(schema.email)
+    .set({ latestStatus: "QUEUED" as const, updatedAt: new Date() })
+    .where(eq(schema.email.id, emailId));
+}
 
 describeIntegration("email-service", () => {
   let teamId: number;
@@ -103,7 +113,9 @@ describeIntegration("email-service", () => {
       const email = await sendEmail({ ...base, teamId });
 
       expect(email.id).toMatch(/^c[0-9a-z]{24}$/);
-      expect(email.latestStatus).toBe("QUEUED");
+      // SCHEDULED, not QUEUED, even with no `scheduledAt`: there is exactly one
+      // pre-send state so the consumer's claim can be the idempotency guard.
+      expect(email.latestStatus).toBe("SCHEDULED");
       expect(email.to).toEqual(["to@example.com"]);
       expect(email.domainId).toBe(domainId);
       expect(mockQueueEmail).toHaveBeenCalledTimes(1);
@@ -178,7 +190,7 @@ describeIntegration("email-service", () => {
         cc: ["cc@example.com", "ok@example.com"],
       });
 
-      expect(email.latestStatus).toBe("QUEUED");
+      expect(email.latestStatus).toBe("SCHEDULED");
       const [stored] = await drizzleDb
         .select()
         .from(schema.email)
@@ -252,11 +264,14 @@ describeIntegration("email-service", () => {
         .where(eq(schema.email.id, email.id))
         .limit(1);
       expect(stored?.scheduledAt?.getTime()).toBe(next.getTime());
-      expect(mockChangeDelay).toHaveBeenCalledTimes(1);
+      // Nothing touches a queue: a scheduled send is not enqueued until the
+      // sweeper finds it due, so rescheduling is one UPDATE (§4.5).
+      expect(mockQueueEmail).not.toHaveBeenCalled();
     });
 
-    it("refuses to reschedule an already processed email", async () => {
+    it("refuses to reschedule an email that has already been claimed", async () => {
       const email = await sendEmail({ ...base, teamId });
+      await claim(email.id);
 
       await expect(
         updateEmail(email.id, { scheduledAt: new Date().toISOString() }),
@@ -288,8 +303,9 @@ describeIntegration("email-service", () => {
       expect(events.map((e) => e.status)).toContain("CANCELLED");
     });
 
-    it("refuses to cancel an already processed email", async () => {
+    it("refuses to cancel an email that has already been claimed", async () => {
       const email = await sendEmail({ ...base, teamId });
+      await claim(email.id);
 
       await expect(cancelEmail(email.id)).rejects.toThrow(
         "Email already processed",

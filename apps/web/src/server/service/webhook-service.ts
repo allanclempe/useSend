@@ -120,7 +120,7 @@ export class WebhookQueueService {
       );
     }
 
-    await dispatchQueue.enqueue(callId, { callId, teamId }, { jobId: callId });
+    await dispatchQueue.enqueue(callId, { callId, teamId });
   }
 }
 

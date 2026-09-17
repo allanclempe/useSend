@@ -6,6 +6,7 @@ import {
   type TeamJob,
 } from "../queue";
 import { CampaignBatchService } from "../service/campaign-service";
+import { sweepDueScheduledEmails } from "../service/scheduled-email-sweeper";
 import { and, inArray, isNull, lte, or } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { logger } from "../logger/log";
@@ -44,6 +45,16 @@ export class CampaignSchedulerService {
   static worker = createWorker(
     CAMPAIGN_SCHEDULER_QUEUE,
     createWorkerHandler(async (_job: SchedulerJob) => {
+      // Scheduled emails ride the same tick rather than getting a mechanism of
+      // their own — §4.5 extends this sweep rather than inventing a second one.
+      // Its own try/catch so a failure here cannot stop campaigns, and the
+      // reverse.
+      try {
+        await sweepDueScheduledEmails();
+      } catch (err) {
+        logger.error({ err }, "Scheduled email sweep failed");
+      }
+
       try {
         const now = new Date();
         const campaigns = await drizzleDb

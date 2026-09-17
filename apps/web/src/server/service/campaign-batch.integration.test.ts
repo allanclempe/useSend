@@ -384,7 +384,7 @@ describeIntegration("campaign batch", () => {
   });
 
   describe("queueBatch", () => {
-    it("enqueues with a stable, queue-safe job id", async () => {
+    it("enqueues the campaign by id, with no dedup key", async () => {
       const campaign = await makeCampaign({
         status: "SCHEDULED",
         batchWindowMinutes: 0,
@@ -392,11 +392,15 @@ describeIntegration("campaign batch", () => {
 
       await CampaignBatchService.queueBatch({ campaignId: campaign.id, teamId });
 
-      // The job id is what makes re-queuing the same campaign idempotent.
+      // `EnqueueOptions.jobId` is gone: Cloudflare Queues has no dedup key, so
+      // nothing may be built on one (§4.4). What keeps a re-queue harmless is
+      // the batch window above and the consumer advancing `lastCursor`.
+      // The trailing `undefined` is the seam passing `options` straight
+      // through; there are no options left to pass.
       expect(mockBatchEnqueue).toHaveBeenCalledWith(
         `campaign-${campaign.id}`,
         { campaignId: campaign.id, teamId },
-        expect.objectContaining({ jobId: `campaign-batch-${campaign.id}` }),
+        undefined,
       );
     });
 

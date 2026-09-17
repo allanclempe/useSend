@@ -9,7 +9,6 @@ import { DEFAULT_QUEUE_OPTIONS } from "./queue-constants";
 import type {
   BulkJob,
   EnqueueOptions,
-  EnqueuedJob,
   JobHandler,
   Queue,
   QueueDriver,
@@ -34,7 +33,6 @@ function toJobsOptions(options?: EnqueueOptions): JobsOptions {
   return {
     // Retention is a driver concern, not something call sites should specify.
     ...DEFAULT_QUEUE_OPTIONS,
-    ...(options?.jobId !== undefined ? { jobId: options.jobId } : {}),
     ...(options?.delay !== undefined ? { delay: options.delay } : {}),
     ...(options?.attempts !== undefined ? { attempts: options.attempts } : {}),
     ...(options?.backoff !== undefined ? { backoff: options.backoff } : {}),
@@ -100,22 +98,6 @@ class BullMQQueue<T> implements Queue<T> {
     await this.queue.upsertJobScheduler(id, repeat, {
       opts: toJobsOptions(this.defaults),
     });
-  }
-
-  async getJob(id: string): Promise<EnqueuedJob | undefined> {
-    const job = await this.queue.getJob(id);
-    if (!job) {
-      return undefined;
-    }
-
-    return {
-      id: job.id,
-      delay: job.delay,
-      changeDelay: (delayMs: number) => job.changeDelay(delayMs),
-      remove: async () => {
-        await job.remove();
-      },
-    };
   }
 
   async getStats(): Promise<QueueStats> {

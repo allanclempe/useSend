@@ -206,8 +206,26 @@ RETURNING id
 Zero rows returned means already-claimed or cancelled: ack the message and drop it. One atomic
 statement covers duplicate delivery, cancellation, and any stale message left by a reschedule.
 
-**Trade-off:** up to one alarm tick (~1.5s) of scheduling jitter, on an email scheduled hours out.
-In exchange the current race disappears.
+**Trade-off:** up to one alarm tick (30s, §4.2) of scheduling jitter, on an email scheduled hours
+out. In exchange the current race disappears.
+
+**Done**, with two corrections the plan as written needed. Both were found by running it.
+
+- **The claim as specified loses emails.** `SCHEDULED → QUEUED` is one-way, so a handler that
+  throws *after* claiming and *before* reaching a terminal status leaves the row in QUEUED, where
+  the redelivery cannot claim it: never sent, never FAILED, nothing to say so. It reproduced on the
+  first local run, when `getConfigurationSetName` threw for an unconfigured region. The handler now
+  **releases the claim** (`QUEUED → SCHEDULED`, only if still QUEUED) before rethrowing, so the
+  redelivery can take it.
+- **Releasing it forever is a loop.** A row back in SCHEDULED and still due is re-enqueued by the
+  next sweep, every 30 seconds, for as long as the failure lasts. So on its *last* attempt the
+  handler marks the email FAILED terminally instead of releasing, which ends the loop and still
+  lets the message reach the dead letter queue on the way out.
+
+One more consequence: with `SCHEDULED` as the only pre-send state, `sendEmail` writes it for
+**immediate** sends too, and `QUEUED` now means "a consumer has claimed this". An immediate send is
+therefore briefly `SCHEDULED` with a null `scheduledAt` — and, less obviously, becomes cancellable
+in that window, which it was not before.
 
 **Rejected:** a Durable Object per scheduled email would give an exact `changeDelay` equivalent
 (`setAlarm()` moves freely and can be cleared), but that is one billed object per scheduled email to

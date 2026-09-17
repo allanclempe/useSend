@@ -23,7 +23,6 @@ vi.mock("./bullmq-driver", () => ({
       enqueue: mockEnqueue,
       enqueueBulk: mockEnqueueBulk,
       schedule: vi.fn(),
-      getJob: vi.fn(),
       getStats: vi.fn(),
       close: vi.fn(),
     }),

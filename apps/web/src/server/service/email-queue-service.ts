@@ -2,7 +2,7 @@ import { env } from "~/env";
 import { EmailAttachment } from "~/types";
 import { convert as htmlToText } from "html-to-text";
 import { getConfigurationSetName } from "~/utils/ses-utils";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";
 import { withUpdatedAt } from "../drizzle/touch";
@@ -16,6 +16,7 @@ import {
   type Worker,
 } from "../queue";
 import {
+  SEND_QUEUE_MAX_ATTEMPTS,
   SEND_QUEUE_SUFFIXES,
   sendQueueName,
   SUPPORTED_SES_REGIONS,
@@ -170,8 +171,7 @@ export class EmailQueueService {
     teamId: number,
     region: string,
     transactional: boolean,
-    unsubUrl?: string,
-    delay?: number
+    unsubUrl?: string
   ) {
     if (!this.initialized) {
       await this.init();
@@ -191,8 +191,7 @@ export class EmailQueueService {
         unsubUrl,
         isBulk,
         teamId,
-      },
-      { jobId: emailId, delay }
+      }
     );
 
     // This is where a send becomes billable. Every path -- the public API, the
@@ -221,7 +220,6 @@ export class EmailQueueService {
       region: string;
       transactional: boolean;
       unsubUrl?: string;
-      delay?: number;
       timestamp?: number; // Optional: pass timestamp if needed for data
     }[]
   ): Promise<void> {
@@ -291,10 +289,6 @@ export class EmailQueueService {
           isBulk,
           teamId: job.teamId,
         },
-        options: {
-          jobId: job.emailId, // Use emailId as jobId
-          delay: job.delay,
-        },
       }));
 
       logger.info(
@@ -325,50 +319,17 @@ export class EmailQueueService {
     );
   }
 
-  public static async changeDelay(
-    emailId: string,
-    region: string,
-    transactional: boolean,
-    delay: number
-  ) {
-    if (!this.initialized) {
-      await this.init();
-    }
-    const queue = transactional
-      ? this.transactionalQueue.get(region)
-      : this.marketingQueue.get(region);
-    if (!queue) {
-      throw new Error(unknownRegion(region));
-    }
-
-    const job = await queue.getJob(emailId);
-    if (!job) {
-      throw new Error(`Job ${emailId} not found`);
-    }
-    await job.changeDelay(delay);
-  }
-
-  public static async chancelEmail(
-    emailId: string,
-    region: string,
-    transactional: boolean
-  ) {
-    if (!this.initialized) {
-      await this.init();
-    }
-    const queue = transactional
-      ? this.transactionalQueue.get(region)
-      : this.marketingQueue.get(region);
-    if (!queue) {
-      throw new Error(unknownRegion(region));
-    }
-
-    const job = await queue.getJob(emailId);
-    if (!job) {
-      throw new Error(`Job ${emailId} not found`);
-    }
-    await job.remove();
-  }
+  /*
+   * `changeDelay` and `chancelEmail` used to live here. Both are deleted.
+   *
+   * Neither has a Cloudflare Queues equivalent -- a queued message cannot be
+   * looked up, moved or withdrawn -- and neither was ever needed: Postgres was
+   * already the source of truth, and the queue mutation was redundant
+   * bookkeeping that could not even do its job, since a message already picked
+   * up by a worker sent regardless of what the row said. `updateEmail` and
+   * `cancelEmail` are plain UPDATEs now, and the claim below is what makes them
+   * authoritative. See §4.5.
+   */
 
   public static async init() {
     if (isWorkersRuntime()) {
@@ -427,12 +388,141 @@ if (isWorkersRuntime()) {
   EmailQueueService.registerSupportedRegions();
 }
 
+/**
+ * Takes an email out of SCHEDULED, or reports that it could not.
+ *
+ * This one statement is the whole idempotency story for the send path (§4.4,
+ * §4.5). Cloudflare Queues are at-least-once where BullMQ was effectively
+ * at-most-once per attempt, so the same message can arrive twice — most often
+ * because a handler succeeded and the ack was lost — and without this that is a
+ * second copy of someone's email.
+ *
+ * `SCHEDULED` is the only pre-send state, which is why `sendEmail` writes it
+ * even for an immediate send. That makes the transition a one-way gate, and it
+ * covers three things at once:
+ *
+ * - **duplicate delivery** — the second arrival finds the row already QUEUED
+ *   and updates nothing
+ * - **cancellation** — a CANCELLED row cannot be claimed, so `cancelEmail` now
+ *   stops a send that is already in flight, which removing a job from a queue
+ *   never could
+ * - **a stale message left by a reschedule** — same mechanism
+ *
+ * Returns false when zero rows came back: someone else has it, or nobody
+ * should. Ack the message and drop it.
+ */
+export async function claimEmailForSending(emailId: string): Promise<boolean> {
+  const claimed = await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ latestStatus: "QUEUED" as const }))
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "SCHEDULED"),
+      ),
+    )
+    .returning({ id: schema.email.id });
+
+  return claimed.length > 0;
+}
+
+/**
+ * Puts an unsent email back where the claim found it.
+ *
+ * Without this the claim would turn every retryable failure into a lost email:
+ * the row is QUEUED, the redelivery cannot claim it, and it sits there forever
+ * -- never sent, never FAILED, with nothing to say so. Seen for real on the
+ * first local run, where `getConfigurationSetName` threw after the claim.
+ *
+ * The `WHERE` clause matters. Only a row still sitting in QUEUED is released:
+ * anything the handler already moved on -- SENT, FAILED -- is left alone.
+ */
+async function releaseEmailClaim(emailId: string) {
+  await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ latestStatus: "SCHEDULED" as const }))
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "QUEUED"),
+      ),
+    );
+}
+
 async function executeEmail(job: QueueEmailJob) {
   logger.info(
     { emailId: job.data.emailId, elapsed: Date.now() - job.data.timestamp },
     `[EmailQueueService]: Executing email job`
   );
 
+  const claimed = await claimEmailForSending(job.data.emailId);
+
+  if (!claimed) {
+    logger.info(
+      { emailId: job.data.emailId },
+      `[EmailQueueService]: Email is not claimable (already sent, claimed or cancelled); dropping`
+    );
+    return;
+  }
+
+  try {
+    await sendClaimedEmail(job);
+  } catch (error) {
+    if (job.attemptsMade + 1 >= SEND_QUEUE_MAX_ATTEMPTS) {
+      // Out of attempts. Releasing the claim here would put the row back in
+      // SCHEDULED, where the sweeper would find it due and enqueue it again --
+      // every 30 seconds, forever. A terminal status ends that, and the message
+      // still reaches the dead letter queue on the way out.
+      await failEmail(job.data.emailId, error);
+    } else {
+      // Hand the claim back so the redelivery can take it, then let the queue
+      // see the failure and count the attempt.
+      await releaseEmailClaim(job.data.emailId);
+    }
+
+    throw error;
+  }
+}
+
+async function failEmail(emailId: string, error: unknown) {
+  const [email] = await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ latestStatus: "FAILED" as const }))
+    .where(
+      and(
+        eq(schema.email.id, emailId),
+        eq(schema.email.latestStatus, "QUEUED"),
+      ),
+    )
+    .returning({ teamId: schema.email.teamId });
+
+  if (!email) {
+    return;
+  }
+
+  await drizzleDb.insert(schema.emailEvent).values({
+    id: createId(),
+    emailId,
+    status: "FAILED" as const,
+    data: { error: error instanceof Error ? error.message : String(error) },
+    teamId: email.teamId,
+  });
+
+  // Accepted but never delivered to SES. Same reasoning as the other two
+  // failure branches: we bill for accepted sends, not for sends we failed.
+  await reverseAcceptedSend(emailId);
+
+  logger.error(
+    { err: error, emailId },
+    `[EmailQueueService]: Email failed on its last attempt; marked FAILED`
+  );
+}
+
+/**
+ * Everything after the claim. Split out only so the claim can be released if
+ * this throws -- there is one caller.
+ */
+async function sendClaimedEmail(job: QueueEmailJob) {
   const [email] = await drizzleDb
     .select()
     .from(schema.email)

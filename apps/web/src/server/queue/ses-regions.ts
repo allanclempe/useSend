@@ -60,3 +60,13 @@ export function isSupportedSesRegion(region: string): boolean {
  * Cloudflare autoscales up to this; it does not hold it open.
  */
 export const SEND_QUEUE_MAX_CONCURRENCY = 20;
+
+/**
+ * Deliveries of a send message before it is dead-lettered.
+ *
+ * Read by `email-queue-service` as well as by the registry: the handler has to
+ * know when it is on its last attempt, because that is when an unexpected
+ * failure has to become a terminal FAILED rather than another released claim.
+ * Otherwise the sweeper re-enqueues the same row every tick, forever.
+ */
+export const SEND_QUEUE_MAX_ATTEMPTS = 3;

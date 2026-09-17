@@ -15,7 +15,6 @@ import {
 import type {
   BulkJob,
   EnqueueOptions,
-  EnqueuedJob,
   JobHandler,
   Queue,
   QueueDriver,
@@ -165,14 +164,6 @@ function delaySecondsFor(
 class WorkersQueue<T> implements Queue<T> {
   constructor(public readonly name: string) {}
 
-  /**
-   * `options.jobId` is dropped, and that is a real behaviour change rather than
-   * an omission. It is BullMQ's dedup key — enqueueing the same id twice while
-   * the job still exists is a no-op — and Cloudflare Queues has no equivalent
-   * at all. AGENTS.md already says not to build on it for that reason. Until
-   * §4.4 puts an idempotency guard in each handler, a duplicate enqueue on this
-   * driver is a duplicate delivery.
-   */
   async enqueue(name: string, data: T, options?: EnqueueOptions): Promise<void> {
     const { definition, producer } = resolve(this.name);
     const { body } = encoded(this.name, { name, queue: this.name, data });
@@ -273,13 +264,6 @@ class WorkersQueue<T> implements Queue<T> {
           `It would never fire.`,
       );
     }
-  }
-
-  async getJob(_id: string): Promise<EnqueuedJob | undefined> {
-    // Cloudflare Queues has no equivalent and never will: a queued message
-    // cannot be looked up, moved or withdrawn. §4.5 replaces the two callers
-    // with plain database writes.
-    return undefined;
   }
 
   async getStats(): Promise<QueueStats> {
