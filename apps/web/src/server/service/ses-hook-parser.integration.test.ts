@@ -206,10 +206,10 @@ describeIntegration("ses-hook-parser", () => {
   });
 
   describe("latestStatus only moves forward", () => {
-    it("does not downgrade a DELIVERED email to SENT", async () => {
-      const email = await makeEmail({ latestStatus: "DELIVERED" });
+    it("does not downgrade a CLICKED email to DELIVERED", async () => {
+      const email = await makeEmail({ latestStatus: "CLICKED" });
 
-      await parseSesHook(buildEvent("Send", email.sesEmailId!));
+      await parseSesHook(buildEvent("Delivery", email.sesEmailId!));
 
       // SES events arrive out of order; the raw SQL CASE keeps the status
       // monotonic rather than letting a late event overwrite a later one.
@@ -218,7 +218,7 @@ describeIntegration("ses-hook-parser", () => {
         .from(schema.email)
         .where(eq(schema.email.id, email.id))
         .limit(1);
-      expect(stored?.latestStatus).toBe("DELIVERED");
+      expect(stored?.latestStatus).toBe("CLICKED");
     });
 
     it("upgrades a SENT email to DELIVERED", async () => {
@@ -237,14 +237,50 @@ describeIntegration("ses-hook-parser", () => {
     it("upgrades a SCHEDULED email regardless of ordering", async () => {
       const email = await makeEmail({ latestStatus: "SCHEDULED" });
 
-      await parseSesHook(buildEvent("Send", email.sesEmailId!));
+      await parseSesHook(buildEvent("Delivery", email.sesEmailId!));
 
       const [stored] = await drizzleDb
         .select()
         .from(schema.email)
         .where(eq(schema.email.id, email.id))
         .limit(1);
-      expect(stored?.latestStatus).toBe("SENT");
+      expect(stored?.latestStatus).toBe("DELIVERED");
+    });
+  });
+
+  describe("Send events are no longer ours to handle", () => {
+    // `SEND` is no longer subscribed, but SES keeps delivering for a while after
+    // the configuration sets change and SNS can replay an old notification at
+    // any time. `email-queue-service` already recorded all of this at the
+    // handoff, so anything the parser did with a Send event now double-counts.
+    it("does not touch latestStatus", async () => {
+      const email = await makeEmail({ latestStatus: "QUEUED" });
+
+      await expect(
+        parseSesHook(buildEvent("Send", email.sesEmailId!)),
+      ).resolves.toBe(true);
+
+      const [stored] = await drizzleDb
+        .select()
+        .from(schema.email)
+        .where(eq(schema.email.id, email.id))
+        .limit(1);
+      expect(stored?.latestStatus).toBe("QUEUED");
+    });
+
+    it("writes no EmailEvent, no usage and no webhook", async () => {
+      const email = await makeEmail({ latestStatus: "QUEUED" });
+
+      await parseSesHook(buildEvent("Send", email.sesEmailId!));
+
+      const events = await drizzleDb
+        .select()
+        .from(schema.emailEvent)
+        .where(eq(schema.emailEvent.emailId, email.id));
+
+      expect(events).toHaveLength(0);
+      expect(await usageRow()).toBeUndefined();
+      expect(mockWebhookEmit).not.toHaveBeenCalled();
     });
   });
 

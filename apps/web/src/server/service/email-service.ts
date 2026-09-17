@@ -13,6 +13,7 @@ import { EmailRenderer } from "@usesend/email-editor/src/renderer";
 import { logger } from "../logger/log";
 import { SuppressionService } from "./suppression-service";
 import { sanitizeCustomHeaders } from "~/server/utils/email-headers";
+import { reverseAcceptedSend } from "./usage-service";
 
 async function checkIfValidEmail(emailId: string) {
   const [email] = await drizzleDb
@@ -388,6 +389,12 @@ export async function cancelEmail(emailId: string) {
     status: "CANCELLED" as const,
     teamId: email.teamId,
   });
+
+  // The scheduled send was counted against usage when it was accepted. It never
+  // reached SES, and the customer retracted it themselves, so the count goes
+  // back. Before `sent` moved to enqueue time this cost nothing -- no handoff
+  // meant no SES `Send` event, so nothing had been counted in the first place.
+  await reverseAcceptedSend(emailId);
 }
 
 /**
