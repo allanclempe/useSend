@@ -2,7 +2,11 @@
 
 ## Project Structure & Module Organization
 
-- apps/web: Next.js app (primary product). Uses Drizzle, TRPC, Tailwind.
+- apps/web: the product. Mid-migration (#9): TanStack Start on Cloudflare Workers is being
+  stood up beside the Next.js App Router, one dashboard area at a time, and Next.js still
+  serves `src/app` until the last PR of that stack deletes it. New pages are TanStack routes
+  under `src/routes`; new server-side calls are TanStack Start server functions under
+  `src/server/functions`, not tRPC routers. Uses Drizzle and Tailwind.
 - apps/marketing: Public marketing site (Next.js, static export).
 - apps/docs: Mintlify docs content.
 - apps/smtp-server: SMTP proxy/server (TypeScript → tsup build).
@@ -18,7 +22,8 @@
 - `pnpm start:web:local`: Run only `apps/web` locally on port 3000.
 - `pnpm build`: Turbo build across the monorepo.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
-- `pnpm dev:worker`: Run the public API on Cloudflare Workers locally (see below).
+- `pnpm dev:worker`: Run the whole Worker — dashboard and public API — on a local `workerd`
+  via `vite dev` (see below).
 - Database (apps/web filter): `db:generate` | `db:migrate` | `db:push` | `db:studio`.
 - Migrations are drizzle-kit's, in `apps/web/src/server/drizzle/migrations`. The workflow is: edit
   `src/server/drizzle/schema.ts` (the hand-authored source of truth), run `pnpm --filter=web
@@ -36,11 +41,20 @@
 
 ## Running the Worker locally
 
-`apps/web/wrangler.jsonc` serves the Hono public API (`src/worker/index.ts`) on
-Cloudflare Workers. **No Cloudflare account and no `wrangler login` are needed**:
-`wrangler dev` runs the real `workerd` binary locally and simulates KV, R2,
-Queues and Durable Objects on disk under `apps/web/.wrangler`. Only
-`wrangler deploy` needs an account.
+`apps/web/wrangler.jsonc` describes one Worker — `src/server.ts` — carrying the
+dashboard, the Hono public API, the queue consumer, the cron handler and the
+four Durable Object classes. **No Cloudflare account and no `wrangler login`
+are needed**: the dev server runs the real `workerd` binary locally and
+simulates KV, R2, Queues and Durable Objects on disk under `apps/web/.wrangler`.
+Only `wrangler deploy` needs an account.
+
+**The dev server is Vite, and Vite is `workerd`.** `@cloudflare/vite-plugin`
+runs the server half of the app inside a real isolate with every binding in
+`wrangler.jsonc`, so there is no second "now try it on Workers" step. Plain
+`wrangler dev` cannot build `src/server.ts` — the TanStack Start handler is
+assembled from virtual modules only the Vite plugin provides — so
+`pnpm dev:worker` is `vite dev`. The three fixture Workers below keep their own
+configs and are still plain `wrangler dev`.
 
 1. `pnpm test:infra:up`, then `pnpm --filter=web test:integration:prepare:local`
    once to migrate the throwaway `usesend_test` container. That is the database
@@ -52,8 +66,16 @@ Queues and Durable Objects on disk under `apps/web/.wrangler`. Only
    `src/env.js` validates inside the Worker exactly as it does under Node — an
    env var missing from `.dev.vars` fails the isolate at startup, not at request
    time.
-3. `pnpm dev:worker`. The API is on `http://localhost:8788/api`; `GET /api/v1/doc`
-   serves the OpenAPI document and needs no auth.
+3. `pnpm dev:worker`. Everything is on `http://localhost:8788` — the dashboard
+   at `/`, the public API under `/api/v1`, `GET /api/v1/doc` for the OpenAPI
+   document (no auth), `/storage/*` for R2 and `/api/health` for a liveness
+   check that touches nothing.
+
+The Worker's request routing is written down once, in the order it is
+evaluated, in `src/worker/routing.ts`: `/storage/*`, then the SES callback,
+then `/api/v1/*` to Hono, then TanStack Start for everything else. `src/server.ts`
+is the entry that gives it the Start handler and holds the exports Cloudflare
+looks up by name.
 
 Things that behave differently inside the Worker, by design:
 
@@ -119,7 +141,7 @@ Things that behave differently inside the Worker, by design:
 - **KV namespaces and Durable Object bindings live in `server/binding-registry.ts`**,
   and `binding-registry.unit.test.ts` fails if `wrangler.jsonc` disagrees. Same
   rule as queues: **adding one means editing both**, plus a `migrations` entry
-  for a new Durable Object class and an `export` from `src/worker/index.ts`.
+  for a new Durable Object class and an `export` from `src/server.ts`.
 - **`wrangler dev` writes nothing to Cloudflare.** Never run `wrangler deploy` or
   `wrangler login` without being asked.
 
@@ -194,7 +216,9 @@ curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
 
 ## Rules
 
-- Prefer to use trpc alway unless asked otherwise
+- **tRPC is being retired (#9).** The 17 routers under `src/server/api/routers` are the old
+  world and are deleted area by area. Do not add a procedure to one. A new server-side call is
+  a TanStack Start server function in `src/server/functions/<area>.ts`.
 - **Do not add work to the SES event pipeline to learn something we already
   know.** Every subscribed SES event costs an SNS POST, a queue message and a
   consumer invocation per email, and the pipeline is the single largest line in

@@ -10,6 +10,10 @@
         "name": "next"
       }
     ],
+    // `preserve` is what Next.js wants; Vite compiles JSX itself and only
+    // `tsc --noEmit` reads this, so the automatic runtime is what the
+    // TanStack route files are checked against.
+    "jsx": "react-jsx",
     "strictNullChecks": true
   },
   "include": [
@@ -21,5 +25,5 @@
     ".next/types/**/*.ts",
     ".eslintrc.cjs"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", ".wrangler", "dist"]
 }
