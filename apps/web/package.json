@@ -8,6 +8,7 @@
     "dev:worker": "wrangler dev --port 8788",
     "compat:check": "wrangler dev -c wrangler.compat-check.jsonc --port 8790",
     "queue:check": "wrangler dev -c wrangler.queue-check.jsonc --port 8791",
+  "bindings:check": "wrangler dev -c wrangler.binding-check.jsonc --port 8792",
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings 0",

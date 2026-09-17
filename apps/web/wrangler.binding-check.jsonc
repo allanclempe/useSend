@@ -1,0 +1,37 @@
+/**
+ * A fixture Worker, never deployed.
+ *
+ * `src/worker/binding-check.ts` exercises the Phase 9 seams inside a real
+ * `workerd` isolate: the KV cache binding, and a rate limit counted in a
+ * Durable Object under twenty concurrent callers. Both are simulated locally by
+ * `wrangler dev`, on disk under `.wrangler`, with no Cloudflare account.
+ *
+ * Separate config from `wrangler.jsonc` so the fixture can never end up in the
+ * API's bundle. The binding names and class names are deliberately the same as
+ * the real ones — the point is to exercise the objects the API will use — but
+ * the declarations are a copy rather than a shared file, because a fixture that
+ * could change the API's deploy-time configuration would be worse than a
+ * duplicated block.
+ *
+ *   pnpm --filter=web bindings:check
+ *   curl -s http://localhost:8792/ | jq
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "usesend-binding-check",
+  "main": "src/worker/binding-check.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RateLimiter"] }]
+}

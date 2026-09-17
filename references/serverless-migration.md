@@ -34,7 +34,7 @@ Redis carries five unrelated responsibilities. Only the first is a queue.
 | 1 | Job queues | BullMQ, 8 queues | **Cloudflare Queues** + **Cron Triggers** |
 | 2 | Per-webhook ordering lock | `SET NX PX` + Lua release (`webhook-service.ts:681-703`) | **Durable Object per `webhookId`** — the lock is deleted, not ported |
 | 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** (needs strong consistency) |
-| 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Rate Limiting binding**, or a DO for exact counts |
+| 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Durable Object**, one per bucket — `server/rate-limit/`, **done** |
 | 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` (`team-service.ts:398`) | **Workers KV** with TTL — `server/cache/`, **done** |
 
 **Do not use KV for #3 or #4.** KV is eventually consistent (~60s global propagation). Idempotency
@@ -483,6 +483,21 @@ requires a Cloudflare account.
   there from `server/redis.ts` unchanged. Two KV properties the callers have to live with, and do:
   **no TTL below 60 seconds**, and **no conditional write** — so `CacheStore.add` is exact on Redis
   and best-effort on KV, which is only ever used for notification cooldowns.
+
+  **Rate limits are a Durable Object per bucket** (`server/rate-limit/`), and the plan's "**Rate
+  Limiting binding**, or a DO" is settled as the DO. The Rate Limiting binding is per-colo and
+  approximate; `Team.apiRateLimit` defaults to **two requests per second**, so a customer spread
+  over ten colos would be granted twenty — an over-grant of the same order as the limit itself. It
+  also reports no count, no remaining and no reset, and the API returns all three as headers. What
+  the DO costs instead is latency: an object lives in one place, and a caller far from it pays the
+  round trip on every request. Verified exact in a real isolate — twenty concurrent calls on one
+  bucket return the counts 1..20 with no duplicate, and exactly `limit` of them come back allowed
+  (`pnpm --filter=web bindings:check`).
+
+  There is deliberately **no alarm on the rate limit object**, so an abandoned bucket leaves one
+  small row behind forever. Reclaiming it would cost a Durable Object request per window per
+  bucket, and the busiest bucket has a one-second window — roughly doubling requests on the hottest
+  path in the API to recover tens of bytes.
 - **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
   from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
 
@@ -518,6 +533,14 @@ webhook, campaign and domain services.
    worker reading exactly these records. W3C `traceparent` is propagated by the queue seam
    (`server/queue/index.ts`), so an API request, the message it enqueues and the consumer that runs
    it share one `trace_id` — no tracer SDK, and nothing to rip out when #7 adds one.
+
+7. **Rate limiting fails open; the waitlist fails closed.** The API limiter and the auth-email
+   limiter both let a request through when the limiter itself errors, which is what they already
+   did on Redis. The reasoning is that a rate limiter here is a cost control, not a security
+   control — authentication and authorisation have already run by the time any of them do — so an
+   outage of the limiter should degrade billing accuracy rather than take out sign-in and the whole
+   public API. The waitlist keeps its throw: it is one user submitting one form, and what it
+   protects is the founder's inbox. Revisit if abuse ever becomes the reason a limiter exists.
 
 ## 12. Cost model
 

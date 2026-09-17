@@ -5,7 +5,7 @@ import { authedProcedure, createTRPCRouter } from "~/server/api/trpc";
 import { logger } from "~/server/logger/log";
 import { maskEmail } from "~/server/logger/redact";
 import { sendMail } from "~/server/mailer";
-import { getRedis, redisKey } from "~/server/redis";
+import { consumeRateLimit, rateLimitBucket } from "~/server/rate-limit";
 import {
   WAITLIST_EMAIL_TYPES,
   waitlistSubmissionSchema,
@@ -40,27 +40,23 @@ export const waitlistRouter = createTRPCRouter({
         });
       }
 
-      const redis = getRedis();
-      const rateKey = redisKey(`waitlist:requests:${user.id}`);
+      // Fail *closed*, unlike the other two limiters: a throw here is a tRPC
+      // error shown to one user submitting one form, and what it protects is
+      // the founder's inbox. See `server/rate-limit/index.ts`.
+      const rateLimit = await consumeRateLimit(
+        rateLimitBucket.waitlist(user.id),
+        {
+          limit: RATE_LIMIT_MAX_ATTEMPTS,
+          windowSeconds: RATE_LIMIT_WINDOW_SECONDS,
+        },
+      );
 
-      const currentCountRaw = await redis.get(rateKey);
-      const currentCount = currentCountRaw ? Number(currentCountRaw) : 0;
-
-      if (Number.isNaN(currentCount)) {
-        logger.warn({ currentCountRaw }, "Unexpected rate limit counter value");
-      } else if (currentCount >= RATE_LIMIT_MAX_ATTEMPTS) {
+      if (rateLimit.limited) {
         throw new TRPCError({
           code: "TOO_MANY_REQUESTS",
           message: "You have reached the waitlist request limit. Please try later.",
         });
       }
-
-      const pipeline = redis.multi();
-      pipeline.incr(rateKey);
-      if (!currentCountRaw) {
-        pipeline.expire(rateKey, RATE_LIMIT_WINDOW_SECONDS);
-      }
-      await pipeline.exec();
 
       const typesLabel = input.emailTypes
         .map((type) => EMAIL_TYPE_LABEL[type])

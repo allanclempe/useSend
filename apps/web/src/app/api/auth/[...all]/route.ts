@@ -2,7 +2,10 @@ import { toNextJsHandler } from "better-auth/next-js";
 
 import { auth } from "~/server/auth";
 import { env } from "~/env";
-import { getRedis, redisKey } from "~/server/redis";
+import {
+  consumeRateLimitFailOpen,
+  rateLimitBucket,
+} from "~/server/rate-limit";
 import { logger } from "~/server/logger/log";
 
 /**
@@ -11,6 +14,9 @@ import { logger } from "~/server/logger/log";
  * `/signin/email`.
  */
 const SEND_OTP_PATH = "/email-otp/send-verification-otp";
+
+/** `AUTH_EMAIL_RATE_LIMIT` OTP sends per IP per minute. */
+const AUTH_EMAIL_RATE_LIMIT_WINDOW_SECONDS = 60;
 
 const handler = toNextJsHandler(auth);
 
@@ -60,31 +66,36 @@ export async function POST(req: Request) {
   if (env.AUTH_EMAIL_RATE_LIMIT > 0) {
     const url = new URL(req.url);
     if (url.pathname.endsWith(SEND_OTP_PATH)) {
-      try {
-        const ip = getClientIp(req);
-        if (!ip) {
-          logger.warn("Auth email rate limit skipped: missing client IP");
-          return handler.POST(req);
-        }
-        const redis = getRedis();
-        const key = redisKey(`auth-rl:${ip}`);
-        const ttl = 60;
-        const count = await redis.incr(key);
-        if (count === 1) await redis.expire(key, ttl);
-        if (count > env.AUTH_EMAIL_RATE_LIMIT) {
-          logger.warn({ ip }, "Auth email rate limit exceeded");
-          return Response.json(
-            {
-              error: {
-                code: "RATE_LIMITED",
-                message: "Too many requests",
-              },
+      const ip = getClientIp(req);
+
+      if (!ip) {
+        logger.warn("Auth email rate limit skipped: missing client IP");
+        return handler.POST(req);
+      }
+
+      // Fail open, as this has always done: an OTP that cannot be sent is a
+      // user who cannot sign in, and the limiter is a cost control rather than
+      // an authentication control. See `server/rate-limit/index.ts`.
+      const result = await consumeRateLimitFailOpen(
+        rateLimitBucket.authEmail(ip),
+        {
+          limit: env.AUTH_EMAIL_RATE_LIMIT,
+          windowSeconds: AUTH_EMAIL_RATE_LIMIT_WINDOW_SECONDS,
+        },
+        (error) => logger.error({ err: error }, "Auth email rate limit failed"),
+      );
+
+      if (result?.limited) {
+        logger.warn({ ip }, "Auth email rate limit exceeded");
+        return Response.json(
+          {
+            error: {
+              code: "RATE_LIMITED",
+              message: "Too many requests",
             },
-            { status: 429 }
-          );
-        }
-      } catch (error) {
-        logger.error({ err: error }, "Auth email rate limit failed");
+          },
+          { status: 429 }
+        );
       }
     }
   }
