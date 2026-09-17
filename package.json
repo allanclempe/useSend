@@ -34,8 +34,8 @@
     "load-env": "dotenv -e .env",
     "d": "pnpm dx && pnpm dev",
     "dx": "pnpm i && pnpm dx:up && pnpm db:migrate-dev",
-    "dx:up": "docker compose -f docker/dev/compose.yml up -d",
-    "dx:down": "docker compose -f docker/dev/compose.yml down"
+    "dx:up": "docker compose --project-directory . -f docker/dev/compose.yml up -d",
+    "dx:down": "docker compose --project-directory . -f docker/dev/compose.yml down"
   },
   "devDependencies": {
     "@usesend/eslint-config": "workspace:*",
