@@ -7,30 +7,69 @@ const {
   mockRecipientSelect,
   mockGetDomainIdentity,
   mockWebhookEmit,
-  mockRedis,
+  mockCache,
   mockSendMail,
   mockRenderDomainVerificationStatusEmail,
   mockResolveTxt,
-} = vi.hoisted(() => ({
-  mockDomainUpdate: vi.fn(),
-  mockDomainSelect: vi.fn(),
-  mockRecipientSelect: vi.fn(),
-  mockGetDomainIdentity: vi.fn(),
-  mockWebhookEmit: vi.fn(),
-  mockRedis: {
-    mget: vi.fn(),
-    set: vi.fn(),
-    del: vi.fn(),
-  },
-  mockSendMail: vi.fn(),
-  mockRenderDomainVerificationStatusEmail: vi.fn(),
-  mockResolveTxt: vi.fn(),
-}));
+} = vi.hoisted(() => {
+  /**
+   * An in-memory `CacheStore`, not a mocked Redis client.
+   *
+   * The service no longer knows which backend it is on, so the test should not
+   * either: mocking the seam is what makes these assertions true of both the KV
+   * and the Redis driver. `add` is exact here, which matches Redis and is the
+   * optimistic reading of KV -- the pessimistic one costs a duplicate email and
+   * is documented at the call site.
+   */
+  const store = new Map<string, string>();
+
+  return {
+    mockDomainUpdate: vi.fn(),
+    mockDomainSelect: vi.fn(),
+    mockRecipientSelect: vi.fn(),
+    mockGetDomainIdentity: vi.fn(),
+    mockWebhookEmit: vi.fn(),
+    mockCache: {
+      store,
+      get: vi.fn(async (key: string) => store.get(key) ?? null),
+      put: vi.fn(async (key: string, value: string) => {
+        store.set(key, value);
+      }),
+      add: vi.fn(async (key: string, value: string) => {
+        if (store.has(key)) {
+          return false;
+        }
+        store.set(key, value);
+        return true;
+      }),
+      delete: vi.fn(async (...keys: string[]) => {
+        for (const key of keys) store.delete(key);
+      }),
+    },
+    mockSendMail: vi.fn(),
+    mockRenderDomainVerificationStatusEmail: vi.fn(),
+    mockResolveTxt: vi.fn(),
+  };
+});
+
+const DOMAIN_STATE_KEY = "domain:verification:42";
+
+function storeVerificationState(state: {
+  lastCheckedAt?: string | null;
+  lastNotifiedStatus?: string | null;
+  hasEverVerified?: boolean;
+}) {
+  mockCache.store.set(DOMAIN_STATE_KEY, JSON.stringify(state));
+}
 
 function wasLastNotifiedStatusStored() {
-  return mockRedis.set.mock.calls.some(
-    (call) => call[0] === "domain:verification:last-notified-status:42",
-  );
+  return mockCache.put.mock.calls.some(([key, value]) => {
+    if (key !== DOMAIN_STATE_KEY || typeof value !== "string") {
+      return false;
+    }
+    const parsed = JSON.parse(value) as { lastNotifiedStatus: string | null };
+    return parsed.lastNotifiedStatus !== null;
+  });
 }
 
 vi.mock("dns", () => ({
@@ -85,9 +124,11 @@ vi.mock("~/server/service/webhook-service", () => ({
   },
 }));
 
-vi.mock("~/server/redis", () => ({
-  getRedis: () => mockRedis,
-  redisKey: (key: string) => key,
+vi.mock("~/server/cache", () => ({
+  cacheGet: (key: string) => mockCache.get(key),
+  cachePut: (key: string, value: string) => mockCache.put(key, value),
+  cacheAdd: (key: string, value: string) => mockCache.add(key, value),
+  cacheDelete: (...keys: string[]) => mockCache.delete(...keys),
 }));
 
 vi.mock("~/server/mailer", () => ({
@@ -140,9 +181,11 @@ describe("domain-service", () => {
     capturedUpdate.value = undefined;
     mockGetDomainIdentity.mockReset();
     mockWebhookEmit.mockReset();
-    mockRedis.mget.mockReset();
-    mockRedis.set.mockReset();
-    mockRedis.del.mockReset();
+    mockCache.store.clear();
+    mockCache.get.mockClear();
+    mockCache.put.mockClear();
+    mockCache.add.mockClear();
+    mockCache.delete.mockClear();
     mockSendMail.mockReset();
     mockRenderDomainVerificationStatusEmail.mockReset();
     mockResolveTxt.mockReset();
@@ -150,7 +193,6 @@ describe("domain-service", () => {
     mockRenderDomainVerificationStatusEmail.mockResolvedValue(
       "<p>domain status</p>",
     );
-    mockRedis.set.mockResolvedValue("OK");
     mockRecipientSelect.mockResolvedValue([
       { email: "alice@example.com" },
       { email: "bob@example.com" },
@@ -164,7 +206,6 @@ describe("domain-service", () => {
 
   it("sends success status emails to all team members when a new domain becomes verified", async () => {
     const domain = createDomain();
-    mockRedis.mget.mockResolvedValue([null, null, null]);
     mockGetDomainIdentity.mockResolvedValue({
       DkimAttributes: { Status: DomainStatus.SUCCESS },
       MailFromAttributes: { MailFromDomainStatus: DomainStatus.SUCCESS },
@@ -201,7 +242,6 @@ describe("domain-service", () => {
 
   it("sends one failure email and stops polling on terminal failure", async () => {
     const domain = createDomain();
-    mockRedis.mget.mockResolvedValue([null, null, null]);
     mockGetDomainIdentity.mockResolvedValue({
       DkimAttributes: { Status: DomainStatus.PENDING },
       MailFromAttributes: { MailFromDomainStatus: DomainStatus.PENDING },
@@ -239,11 +279,11 @@ describe("domain-service", () => {
       status: DomainStatus.SUCCESS,
       isVerifying: false,
     });
-    mockRedis.mget.mockResolvedValue([
-      new Date("2026-03-08T12:00:00.000Z").toISOString(),
-      DomainStatus.SUCCESS,
-      "1",
-    ]);
+    storeVerificationState({
+      lastCheckedAt: new Date("2026-03-08T12:00:00.000Z").toISOString(),
+      lastNotifiedStatus: DomainStatus.SUCCESS,
+      hasEverVerified: true,
+    });
     mockGetDomainIdentity.mockResolvedValue({
       DkimAttributes: { Status: DomainStatus.SUCCESS },
       MailFromAttributes: { MailFromDomainStatus: DomainStatus.SUCCESS },
@@ -275,7 +315,6 @@ describe("domain-service", () => {
       spfDetails: DomainStatus.SUCCESS,
       isVerifying: false,
     });
-    mockRedis.mget.mockResolvedValue([null, null, null]);
     mockGetDomainIdentity.mockResolvedValue({
       DkimAttributes: { Status: DomainStatus.SUCCESS },
       MailFromAttributes: { MailFromDomainStatus: DomainStatus.SUCCESS },
@@ -303,20 +342,6 @@ describe("domain-service", () => {
 
   it("reserves the notification so concurrent refreshes do not double-send", async () => {
     const domain = createDomain();
-    mockRedis.mget.mockResolvedValue([null, null, null]);
-    let reservedOnce = false;
-    mockRedis.set.mockImplementation(async (key: string) => {
-      if (key.includes("notification-lock")) {
-        if (reservedOnce) {
-          return null;
-        }
-
-        reservedOnce = true;
-        return "OK";
-      }
-
-      return "OK";
-    });
     mockGetDomainIdentity.mockResolvedValue({
       DkimAttributes: { Status: DomainStatus.SUCCESS },
       MailFromAttributes: { MailFromDomainStatus: DomainStatus.SUCCESS },
@@ -347,7 +372,6 @@ describe("domain-service", () => {
 
   it("logs and continues when sending the status email fails", async () => {
     const domain = createDomain();
-    mockRedis.mget.mockResolvedValue([null, null, null]);
     mockGetDomainIdentity.mockResolvedValue({
       DkimAttributes: { Status: DomainStatus.SUCCESS },
       MailFromAttributes: { MailFromDomainStatus: DomainStatus.SUCCESS },
@@ -379,46 +403,42 @@ describe("domain-service", () => {
 
   it("uses a 6 hour cadence for domains that have never verified", async () => {
     const domain = createDomain({ status: DomainStatus.PENDING });
-    mockRedis.mget.mockResolvedValue([
-      new Date(
+    storeVerificationState({
+      lastCheckedAt: new Date(
         Date.now() - DOMAIN_UNVERIFIED_RECHECK_MS + 5 * 60 * 1000,
       ).toISOString(),
-      null,
-      null,
-    ]);
+    });
 
     await expect(isDomainVerificationDue(domain)).resolves.toBe(false);
 
-    mockRedis.mget.mockResolvedValue([
-      new Date(
+    storeVerificationState({
+      lastCheckedAt: new Date(
         Date.now() - DOMAIN_UNVERIFIED_RECHECK_MS - 5 * 60 * 1000,
       ).toISOString(),
-      null,
-      null,
-    ]);
+    });
 
     await expect(isDomainVerificationDue(domain)).resolves.toBe(true);
   });
 
   it("uses a 30 day cadence after a domain has been verified", async () => {
     const domain = createDomain({ status: DomainStatus.FAILED });
-    mockRedis.mget.mockResolvedValue([
-      new Date(
+    storeVerificationState({
+      lastCheckedAt: new Date(
         Date.now() - DOMAIN_VERIFIED_RECHECK_MS + 5 * 60 * 1000,
       ).toISOString(),
-      DomainStatus.SUCCESS,
-      "1",
-    ]);
+      lastNotifiedStatus: DomainStatus.SUCCESS,
+      hasEverVerified: true,
+    });
 
     await expect(isDomainVerificationDue(domain)).resolves.toBe(false);
 
-    mockRedis.mget.mockResolvedValue([
-      new Date(
+    storeVerificationState({
+      lastCheckedAt: new Date(
         Date.now() - DOMAIN_VERIFIED_RECHECK_MS - 5 * 60 * 1000,
       ).toISOString(),
-      DomainStatus.SUCCESS,
-      "1",
-    ]);
+      lastNotifiedStatus: DomainStatus.SUCCESS,
+      hasEverVerified: true,
+    });
 
     await expect(isDomainVerificationDue(domain)).resolves.toBe(true);
   });
@@ -428,11 +448,10 @@ describe("domain-service", () => {
       status: DomainStatus.FAILED,
       isVerifying: false,
     });
-    mockRedis.mget.mockResolvedValue([
-      new Date("2026-03-09T06:00:00.000Z").toISOString(),
-      DomainStatus.FAILED,
-      null,
-    ]);
+    storeVerificationState({
+      lastCheckedAt: new Date("2026-03-09T06:00:00.000Z").toISOString(),
+      lastNotifiedStatus: DomainStatus.FAILED,
+    });
 
     await expect(isDomainVerificationDue(domain)).resolves.toBe(false);
   });
