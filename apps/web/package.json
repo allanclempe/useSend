@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3000 --turbopack",
     "dev:worker": "wrangler dev --port 8788",
+    "compat:check": "wrangler dev -c wrangler.compat-check.jsonc --port 8790",
     "build": "next build",
     "start": "next start",
     "lint": "eslint . --max-warnings 0",

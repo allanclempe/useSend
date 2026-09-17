@@ -236,6 +236,58 @@ own ticket, not a sub-task.
 | **Attachment size** | email attachments | Check against Workers request body limits. |
 | **SNS signature verification** | `ses-hook-parser.ts` | Must work via WebCrypto. |
 
+### Verified on `workerd`, not from documentation (Phase 5)
+
+`apps/web/src/worker/compat-check.ts` runs this list inside a real isolate —
+`pnpm --filter=web compat:check`, then `curl localhost:8790`. Under
+`wrangler dev`, workerd 1.20260916.1, `nodejs_compat`, `compatibility_date`
+2026-01-01. Local `workerd`, not Cloudflare hardware.
+
+| Item | Result |
+|---|---|
+| `scryptSync` | **Runs**, and byte-identical to Node at the same defaults. That parity is load-bearing: `crypto.ts` passes no options, so a different default `N` would silently invalidate every API key hash already stored. ~14ms median against the 18.7ms PR #47 measured under Node on the same machine — Workers does not make #48 worse. |
+| `generateKeyPairSync` | **Runs.** rsa-1024, spki/pkcs8 PEM, ~7ms. No WebCrypto rewrite needed. |
+| **nodemailer MIME build** | **Runs.** The stream transport in `sendRawEmail` produces a 367 KB RFC 5322 message including a 256 KB base64 attachment, headers from `buildHeaders` intact. The largest open risk on this list, and it is closed — no rewrite. |
+| `Stripe.createFetchHttpClient()` | **Runs.** `constructEventAsync` + `createSubtleCryptoProvider()` verifies a real signature and rejects a forged one. |
+| `stripe.webhooks.constructEvent` | **Does not run.** The synchronous call at `app/api/webhook/stripe/route.ts:45` throws "SubtleCryptoProvider cannot be used in a synchronous context". Better than §8 feared — it fails loudly, not open — but the route must move to `constructEventAsync` before it runs on Workers. |
+| `process.env` | **Populated** from `vars`, secrets and `.dev.vars` at module scope, so `src/env.js` validates inside a Worker unchanged. A missing variable fails the isolate at startup rather than at request time. |
+| Bundling | Nothing in the dependency tree failed to resolve or bundle — Prisma, ioredis, BullMQ, nodemailer, Stripe and the AWS SDKs all built. |
+
+**What actually breaks is where I/O happens, not which APIs exist.**
+
+1. **Global scope.** Workers reject sockets, timers and `randomUUID()` during
+   module evaluation. `postgres-js` connects when its client is constructed and
+   BullMQ's queue constructor does both, and services hold those in module-level
+   `const`s and `static` fields — so importing `campaign-service.ts` killed the
+   isolate at load. Build clients on first use.
+2. **Across requests.** Workers ties every I/O object to the request that created
+   it. A cached connection serves exactly one request and then fails every one
+   after it with "Cannot perform I/O on behalf of a different request", surfacing
+   as an intermittent 500 from whatever middleware queried first. **Build the
+   database client per request** and let Hyperdrive pool. This is the single
+   least obvious thing on this page.
+3. **BullMQ cannot run in a Worker at all**, not for lack of `node:net` but
+   because a consumer holds a blocking Redis connection open for the life of the
+   process. `server/queue/index.ts` picks a driver by runtime.
+
+**Free plan is not an option.** Workers Free caps CPU at 10ms per request, and
+one `scryptSync` in the auth middleware is ~14ms. Workers Paid defaults to 30s.
+
+### Attachment size, measured
+
+| Limit | Value | Binding? |
+|---|---|---|
+| Workers request body | 100 MB Free/Pro, 200 MB Business | No |
+| **SES v2 message, after base64** | **40 MB, not adjustable** | **Yes** |
+| Queue message | 128 KB | No — attachments are stored on the `Email` row, not in the message |
+| What the API enforces | `email-schema.ts:32` caps the attachment *count* at 10. **Nothing caps size.** | — |
+
+A 40 MB request body is accepted and read in full under `wrangler dev`. So the
+ceiling is SES's, not Cloudflare's: ~40 MB of base64, ~30 MB of file bytes. Worth
+enforcing in the schema rather than discovering it as an SES rejection — and note
+`sendRawEmail` buffers the whole message with `Buffer.concat`, so a 40 MB send
+holds several copies inside a 128 MB isolate.
+
 ## 9. Sequencing
 
 **Do not run the three migrations concurrently.** ORM, framework, and infra are each independently

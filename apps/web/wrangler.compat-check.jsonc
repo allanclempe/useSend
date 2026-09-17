@@ -1,0 +1,20 @@
+/**
+ * A fixture Worker, never deployed.
+ *
+ * `src/worker/compat-check.ts` runs the §8 runtime compatibility list inside a
+ * real `workerd` isolate — scryptSync, generateKeyPairSync, the nodemailer MIME
+ * build and Stripe webhook verification — and reports what actually happened.
+ *
+ * Separate config from `wrangler.jsonc` so the fixture can never end up in the
+ * API's bundle, and so it needs no bindings and no `.dev.vars`.
+ *
+ *   pnpm --filter=web compat:check
+ *   curl -s http://localhost:8790/ | jq
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "usesend-compat-check",
+  "main": "src/worker/compat-check.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"]
+}

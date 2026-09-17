@@ -63,8 +63,16 @@ Things that behave differently inside the Worker, by design:
 - **No BullMQ.** `server/queue/index.ts` picks a driver by runtime. Inside a
   Worker, consumers are not started and `enqueue` throws, until Cloudflare Queue
   bindings land in Phase 8.
+- **No connection reuse across requests.** Workers ties an I/O object to the
+  request that created it, so the Worker builds a database client per request
+  and publishes it through `AsyncLocalStorage`. Do not cache a connection, a
+  socket or a stream in module scope.
 - **`wrangler dev` writes nothing to Cloudflare.** Never run `wrangler deploy` or
   `wrangler login` without being asked.
+
+`pnpm --filter=web compat:check` runs the §8 runtime-compatibility list
+(`src/worker/compat-check.ts`) inside a real isolate and reports what passed.
+Run it after changing anything in the Worker's dependency tree.
 
 ## Coding Style & Naming Conventions
 
