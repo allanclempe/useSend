@@ -26,6 +26,16 @@ import {
   WEBHOOK_DISPATCH_QUEUE,
 } from "./queue-constants";
 
+/**
+ * Not a queue on Cloudflare at all: `webhook-dispatch` becomes one Durable
+ * Object per `webhookId` (§3), because what it needs is ordering and a queue
+ * cannot give it. Named here so a missing binding says that rather than
+ * "unknown queue". BullMQ still uses the name under Node.
+ */
+const DURABLE_OBJECT_QUEUES: Record<string, string> = {
+  [WEBHOOK_DISPATCH_QUEUE]: "the WEBHOOK_DISPATCHER Durable Object",
+};
+
 export type QueueDefinition = {
   /** The name `createQueue`/`createWorker` use — unchanged from BullMQ. */
   readonly name: string;
@@ -103,18 +113,6 @@ export const QUEUES: readonly QueueDefinition[] = [
     maxConcurrency: null,
   }),
   /**
-   * Retries are the delivery contract customers see, so this one keeps BullMQ's
-   * six attempts. Ordering per webhook is *not* provided here — that is what
-   * the Durable Object in §3 is for.
-   */
-  define(WEBHOOK_DISPATCH_QUEUE, {
-    maxAttempts: 6,
-    retry: { type: "exponential", delayMs: 5_000 },
-    maxBatchSize: 10,
-    maxBatchTimeout: 1,
-    maxConcurrency: null,
-  }),
-  /**
    * One message per contact today. The batch is small because each message does
    * its own upsert; the page-and-continue work in §4.3 changes what a message
    * means here, not how many arrive at once.
@@ -161,6 +159,14 @@ export function queueDefinitionByQueueName(
  * mistake worth naming rather than a missing-binding error to puzzle over.
  */
 export const CRON_ONLY_QUEUES: readonly string[] = Object.keys(CRON_TRIGGERS);
+
+/** Where a name that is not a queue actually went, for the error message. */
+export function nonQueueDestination(name: string): string | undefined {
+  if (CRON_ONLY_QUEUES.includes(name)) {
+    return "a Cron Trigger on Cloudflare, not a queue; it carries a schedule, never a message";
+  }
+  return DURABLE_OBJECT_QUEUES[name];
+}
 
 /** Cloudflare counts retries, not attempts. Convert in exactly one place. */
 export function maxRetriesFor(queue: QueueDefinition): number {

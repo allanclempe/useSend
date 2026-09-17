@@ -17,8 +17,9 @@ const { capturedHandler, mockQueueAdd, mockLimitService } = vi.hoisted(() => ({
   mockLimitService: { checkWebhookLimit: vi.fn() },
 }));
 
-// Capture the worker handler instead of running a queue; everything else —
-// database, Redis lock — is real.
+// Capture the worker handler instead of running a queue; the database is real.
+// There is no lock any more: ordering comes from where dispatch runs — a
+// Durable Object per webhook on Workers, concurrency 1 under Node (§3).
 vi.mock("~/server/queue/bullmq-driver", () => ({
   bullmqDriver: {
     createQueue: () => ({ enqueue: mockQueueAdd }),

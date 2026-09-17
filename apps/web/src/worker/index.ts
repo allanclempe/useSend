@@ -11,6 +11,12 @@ import { handleScheduled } from "./scheduled";
 import { handleStorageRequest, isStorageRequest } from "./storage-routes";
 
 /**
+ * Durable Object classes have to be exported from the Worker's entry module for
+ * `wrangler.jsonc` to bind them by class name.
+ */
+export { WebhookDispatcher } from "./webhook-dispatcher";
+
+/**
  * The public API, served from a Cloudflare Worker.
  *
  * `server/public-api/hono.ts` is already Hono, so there is nothing to rewrite:

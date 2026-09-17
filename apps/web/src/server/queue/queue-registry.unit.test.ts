@@ -6,6 +6,7 @@ import {
   CRON_ONLY_QUEUES,
   DEAD_LETTER_QUEUE_NAME,
   maxRetriesFor,
+  nonQueueDestination,
   QUEUES,
   queueNameFor,
   retryDelaySeconds,
@@ -43,20 +44,28 @@ describe("queue registry", () => {
   });
 
   it("grows the retry delay with the attempt, capped at 12 hours", () => {
-    const webhook = QUEUES.find((queue) => queue.name === "webhook-dispatch")!;
+    const sesWebhook = QUEUES.find((queue) => queue.name === "ses-webhook")!;
 
-    expect(retryDelaySeconds(webhook, 0)).toBe(5);
-    expect(retryDelaySeconds(webhook, 1)).toBe(10);
-    expect(retryDelaySeconds(webhook, 4)).toBe(80);
+    expect(retryDelaySeconds(sesWebhook, 0)).toBe(5);
+    expect(retryDelaySeconds(sesWebhook, 1)).toBe(10);
+    expect(retryDelaySeconds(sesWebhook, 4)).toBe(80);
     // A pathological attempt count must still be a legal delaySeconds.
-    expect(retryDelaySeconds(webhook, 40)).toBe(43_200);
+    expect(retryDelaySeconds(sesWebhook, 40)).toBe(43_200);
   });
 
   it("counts retries as one fewer than attempts", () => {
-    const webhook = QUEUES.find((queue) => queue.name === "webhook-dispatch")!;
+    const sesWebhook = QUEUES.find((queue) => queue.name === "ses-webhook")!;
 
-    expect(webhook.maxAttempts).toBe(6);
-    expect(maxRetriesFor(webhook)).toBe(5);
+    expect(sesWebhook.maxAttempts).toBe(5);
+    expect(maxRetriesFor(sesWebhook)).toBe(4);
+  });
+
+  it("says where a name that is not a queue actually went", () => {
+    // `webhook-dispatch` is still a name the code uses -- it is the BullMQ
+    // queue under Node -- and on Workers it is a Durable Object, not a queue.
+    expect(nonQueueDestination("webhook-dispatch")).toMatch(/Durable Object/);
+    expect(nonQueueDestination("domain-verification")).toMatch(/Cron Trigger/);
+    expect(nonQueueDestination("ses-webhook")).toBeUndefined();
   });
 });
 

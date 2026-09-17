@@ -68,7 +68,18 @@ Three of the hardest problems collapse into one primitive:
 
 - **Webhook ordering.** A DO is single-threaded per object ID. `webhook-service.ts:536-703` —
   `acquireLock`, `releaseLock`, the Lua script, `WEBHOOK_LOCK_TTL_MS`, `WEBHOOK_LOCK_RETRY_DELAY_MS`,
-  and the lock-not-acquired retry path all **delete**.
+  and the lock-not-acquired retry path all **delete**. **Done.**
+  `src/worker/webhook-dispatcher.ts`. Two consequences the plan did not call out:
+  - **Retry is an alarm, not a redelivery.** A queue would put a failed message back at an
+    arbitrary position relative to the messages behind it, which is the ordering the lock existed
+    to protect. The DO keeps the failed call at the head and re-arms.
+  - **That means head-of-line blocking**, which the Redis lock did *not* have: a dead endpoint now
+    stalls its own webhook's backlog for the full retry ladder (~2.5 minutes over 6 attempts)
+    instead of letting later events past. Bounded by auto-disable at 30 consecutive failures, and
+    per-webhook — one bad endpoint cannot affect another, because it is a different object.
+  - **Under Node the lock is replaced by concurrency 1**, not by a port. Stronger than the lock
+    (global serialisation) and slower. Node is being deleted; keeping the lock alive for it is not
+    worth it.
 - **The 1.5s scheduler tick.** `setAlarm()` is millisecond-precision. No 1-minute floor.
 - **Delayed sends and idempotency.** Transactional DO storage with strong consistency, plus alarms.
 

@@ -7,7 +7,10 @@ import {
   withWorkerBindings,
   type WorkerBindings,
 } from "~/server/worker-bindings";
+import { WebhookQueueService } from "~/server/service/webhook-service";
 import { handleQueueBatch } from "./queue-consumer";
+
+export { WebhookDispatcher } from "./webhook-dispatcher";
 
 /**
  * A fixture Worker, never deployed. Sibling of `compat-check.ts`.
@@ -23,8 +26,14 @@ import { handleQueueBatch } from "./queue-consumer";
  *   curl -s -X POST 'http://localhost:8791/enqueue?count=3'
  *   curl -s http://localhost:8791/received | jq
  *
+ * It also hosts the `WEBHOOK_DISPATCHER` Durable Object under the same class
+ * and binding name the real Worker uses, so `/webhook-deliver` exercises the
+ * ordering guarantee that replaced the Redis lock (§3) against pre-seeded
+ * `WebhookCall` rows.
+ *
  * This runs the production code: the real driver, the real registry, the real
- * `handleQueueBatch`. The only thing that is a fixture is the handler, and the
+ * `handleQueueBatch`, the real dispatcher. The only thing that is a fixture is
+ * the queue handler, and the
  * way it gets there is worth stating plainly, because it is order-dependent:
  * `./queue-consumer` imports the service modules that call `createWorker` for
  * each real queue, and ES modules evaluate imports before the importing
@@ -145,6 +154,28 @@ export default {
           return Response.json({ enqueued: 1 });
         }
 
+        case "/webhook-deliver": {
+          // Hands a set of pre-seeded WebhookCall rows to the dispatcher for
+          // one webhook. They go to one Durable Object, which is the claim
+          // under test: single-threaded per object id, so deliveries to one
+          // endpoint cannot overlap however fast they are handed over.
+          const webhookId = url.searchParams.get("webhookId") ?? "";
+          const teamId = Number(url.searchParams.get("teamId") ?? "1");
+          const callIds = (url.searchParams.get("calls") ?? "")
+            .split(",")
+            .filter(Boolean);
+
+          // In parallel on purpose: if ordering came from the caller rather
+          // than from the object, this is where it would break.
+          await Promise.all(
+            callIds.map((callId) =>
+              WebhookQueueService.enqueueCall(callId, webhookId, teamId),
+            ),
+          );
+
+          return Response.json({ handedOver: callIds });
+        }
+
         case "/enqueue-oversized": {
           try {
             await fastQueue.enqueue("oversized", {
@@ -166,6 +197,7 @@ export default {
               "POST /enqueue-bulk?count=",
               "POST /enqueue-poison",
               "POST /enqueue-oversized",
+              "POST /webhook-deliver?webhookId=&teamId=&calls=",
               "GET /received",
               "POST /reset",
             ],

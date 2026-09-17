@@ -56,6 +56,28 @@
     }
   ],
 
+  // Durable Objects (§3). One object per `webhookId`, which is what replaces
+  // the Redis lock that used to serialise deliveries to one endpoint — a DO is
+  // single-threaded per object id, so ordering is a property of where the code
+  // runs rather than something to acquire.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WEBHOOK_DISPATCHER",
+        "class_name": "WebhookDispatcher"
+      }
+    ]
+  },
+
+  // SQLite-backed storage is the only option for new classes, and is what the
+  // pricing in §12 assumes.
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WebhookDispatcher"]
+    }
+  ],
+
   // Cron Triggers (§2). Five BullMQ queues carried a recurring job and never a
   // real message; on Cloudflare they are these, and the queues disappear.
   // `server/queue/cron-registry.ts` is the source of truth — the job modules
@@ -89,7 +111,6 @@
   "queues": {
     "producers": [
       { "queue": "usesend-ses-webhook", "binding": "QUEUE_SES_WEBHOOK" },
-      { "queue": "usesend-webhook-dispatch", "binding": "QUEUE_WEBHOOK_DISPATCH" },
       { "queue": "usesend-contact-bulk-add", "binding": "QUEUE_CONTACT_BULK_ADD" },
       { "queue": "usesend-campaign-batch", "binding": "QUEUE_CAMPAIGN_BATCH" }
     ],
@@ -99,13 +120,6 @@
         "max_batch_size": 100,
         "max_batch_timeout": 5,
         "max_retries": 4,
-        "dead_letter_queue": "usesend-dead-letter"
-      },
-      {
-        "queue": "usesend-webhook-dispatch",
-        "max_batch_size": 10,
-        "max_batch_timeout": 1,
-        "max_retries": 5,
         "dead_letter_queue": "usesend-dead-letter"
       },
       {

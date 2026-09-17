@@ -30,7 +30,8 @@ import { withWorkerBindings, type WorkerBindings } from "~/server/worker-binding
 import "~/server/service/campaign-service";
 import "~/server/service/contact-queue-service";
 import "~/server/service/ses-hook-parser";
-import "~/server/service/webhook-service";
+// `webhook-service` is deliberately absent: on Workers webhook delivery is the
+// WEBHOOK_DISPATCHER Durable Object, not a queue, and it registers no consumer.
 
 /**
  * The `queue()` export: one handler for every consumer this Worker declares.

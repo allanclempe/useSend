@@ -4,7 +4,7 @@ import { logger } from "../logger/log";
 import { getWorkerBindings, type QueueProducer } from "../worker-bindings";
 import { isDeclaredCron } from "./cron-registry";
 import {
-  CRON_ONLY_QUEUES,
+  nonQueueDestination,
   MAX_BATCH_BYTES,
   MAX_BATCH_MESSAGES,
   MAX_DELAY_SECONDS,
@@ -89,8 +89,9 @@ function missingBinding(queue: QueueDefinition): Error {
 }
 
 function notAQueue(name: string): Error {
-  const hint = CRON_ONLY_QUEUES.includes(name)
-    ? ` "${name}" is a Cron Trigger on Cloudflare, not a queue; it carries a schedule, never a message.`
+  const destination = nonQueueDestination(name);
+  const hint = destination
+    ? ` "${name}" is ${destination}.`
     : ` Add it to server/queue/queue-registry.ts and to wrangler.jsonc.`;
 
   return new Error(`Queue "${name}" is not in the queue registry.${hint}`);

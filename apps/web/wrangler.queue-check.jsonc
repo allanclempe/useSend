@@ -34,6 +34,15 @@
     }
   ],
 
+  // Same class and binding name as the real Worker, so the fixture exercises
+  // the dispatcher the API will actually use.
+  "durable_objects": {
+    "bindings": [
+      { "name": "WEBHOOK_DISPATCHER", "class_name": "WebhookDispatcher" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WebhookDispatcher"] }],
+
   "queues": {
     "producers": [
       { "queue": "usesend-ses-webhook", "binding": "QUEUE_SES_WEBHOOK" },

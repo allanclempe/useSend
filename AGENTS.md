@@ -75,6 +75,18 @@ Things that behave differently inside the Worker, by design:
 - **`options.jobId` does nothing on Workers.** It is BullMQ's dedup key and
   Cloudflare has no equivalent, so a handler that must not run twice needs its
   own database-side guard (§4.4).
+- **Recurring work is a Cron Trigger**, declared in `wrangler.jsonc` and sourced
+  from `server/queue/cron-registry.ts`. A job module imports its expression from
+  there; it never writes one inline. Sub-minute ticks are not expressible —
+  Cron Triggers floor at one minute — so those are Durable Object alarms.
+- **Webhook delivery is a Durable Object**, one per `webhookId`. A DO is
+  single-threaded per object id, so ordering is a property of where the code
+  runs, not a lock to acquire. Two rules from the residency measurement in §4.2
+  apply to every DO here and are not optional: **no connection may outlive an
+  alarm** (build the database client inside it and `await close()` before
+  returning), and **nothing may be left pending across one** — no `setTimeout`,
+  no `setInterval`, no unawaited `fetch`. Each makes the object permanently
+  ineligible for hibernation, silently, with no error anywhere.
 - **No connection reuse across requests.** Workers ties an I/O object to the
   request that created it, so the Worker builds a database client per request
   and publishes it through `AsyncLocalStorage`. Do not cache a connection, a
