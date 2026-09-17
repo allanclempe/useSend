@@ -2,6 +2,7 @@ const defaultEnv: Record<string, string> = {
   NODE_ENV: "test",
   NEXTAUTH_URL: "http://localhost:3000",
   NEXTAUTH_SECRET: "test-secret",
+  BETTER_AUTH_SECRET: "test-better-auth-secret",
   DATABASE_URL: "postgresql://usesend:password@127.0.0.1:54329/usesend_test",
   REDIS_URL: "redis://127.0.0.1:6380/15",
   AWS_ACCESS_KEY_ID: "test-access-key",

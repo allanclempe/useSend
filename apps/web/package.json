@@ -54,6 +54,7 @@
     "@usesend/email-editor": "workspace:*",
     "@usesend/lib": "workspace:*",
     "@usesend/ui": "workspace:*",
+    "better-auth": "^1.7.5",
     "bullmq": "^5.51.1",
     "chrono-node": "^2.8.0",
     "date-fns": "^4.1.0",

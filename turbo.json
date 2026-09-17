@@ -27,6 +27,8 @@
         "AWS_SES_ENDPOINT",
         "AWS_SNS_ENDPOINT",
         "NEXTAUTH_SECRET",
+        "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_URL",
         "NODE_ENV",
         "LOG_LEVEL",
         "VERCEL_URL",
