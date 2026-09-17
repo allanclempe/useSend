@@ -123,6 +123,7 @@
       { "queue": "usesend-contact-bulk-add", "binding": "QUEUE_CONTACT_BULK_ADD" },
       { "queue": "usesend-campaign-batch", "binding": "QUEUE_CAMPAIGN_BATCH" },
       { "queue": "usesend-campaign-scheduler", "binding": "QUEUE_CAMPAIGN_SCHEDULER" },
+      { "queue": "usesend-domain-verification", "binding": "QUEUE_DOMAIN_VERIFICATION" },
       { "queue": "usesend-us-east-1-transaction", "binding": "QUEUE_US_EAST_1_TRANSACTION" },
       { "queue": "usesend-us-east-1-marketing", "binding": "QUEUE_US_EAST_1_MARKETING" },
       { "queue": "usesend-us-east-2-transaction", "binding": "QUEUE_US_EAST_2_TRANSACTION" },
@@ -177,6 +178,14 @@
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 0,
+        "max_concurrency": 1,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-domain-verification",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 1,
         "max_concurrency": 1,
         "dead_letter_queue": "usesend-dead-letter"
       },

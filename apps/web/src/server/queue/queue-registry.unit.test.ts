@@ -69,7 +69,7 @@ describe("queue registry", () => {
     // `webhook-dispatch` is still a name the code uses -- it is the BullMQ
     // queue under Node -- and on Workers it is a Durable Object, not a queue.
     expect(nonQueueDestination("webhook-dispatch")).toMatch(/Durable Object/);
-    expect(nonQueueDestination("domain-verification")).toMatch(/Cron Trigger/);
+    expect(nonQueueDestination("webhook-cleanup")).toMatch(/Cron Trigger/);
     expect(nonQueueDestination("ses-webhook")).toBeUndefined();
   });
 });
@@ -122,8 +122,10 @@ describe("wrangler.jsonc agrees with the registry", () => {
       }
     }
 
+    // The send queues, plus the two singletons that pace themselves: the
+    // scheduler tick and the domain-verification continuation.
     expect(QUEUES.filter((q) => q.maxConcurrency !== null).length).toBe(
-      SUPPORTED_SES_REGIONS.length * SEND_QUEUE_SUFFIXES.length + 1,
+      SUPPORTED_SES_REGIONS.length * SEND_QUEUE_SUFFIXES.length + 2,
     );
   });
 

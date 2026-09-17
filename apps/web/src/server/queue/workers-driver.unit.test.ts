@@ -95,7 +95,7 @@ describe("workers queue driver", () => {
   });
 
   it("says a cron-only job is a Cron Trigger rather than a missing binding", async () => {
-    const queue = workersDriver.createQueue("domain-verification");
+    const queue = workersDriver.createQueue("webhook-cleanup");
 
     await expect(withBindings(() => queue.enqueue("run", {}))).rejects.toThrow(
       /Cron Trigger/,

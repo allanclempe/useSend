@@ -8,7 +8,11 @@ import {
   isDeclaredCron,
   SCHEDULER_KEEPALIVE_CRON,
 } from "./cron-registry";
-import { CRON_ONLY_QUEUES, QUEUES } from "./queue-registry";
+import {
+  CRON_CONTINUED_QUEUES,
+  CRON_ONLY_QUEUES,
+  QUEUES,
+} from "./queue-registry";
 
 /**
  * A Cron Trigger that is declared in one place and not the other fails
@@ -36,12 +40,20 @@ describe("cron registry", () => {
     expect(cronJobFor(SCHEDULER_KEEPALIVE_CRON)).toBeUndefined();
   });
 
-  it("covers exactly the queues that carry a schedule and no messages", () => {
-    expect([...CRON_ONLY_QUEUES].sort()).toEqual(
+  it("separates schedule-only jobs from ones a queue continues", () => {
+    // Most cron jobs carry a schedule and never a message, so they have no
+    // queue at all. The exceptions are listed, not inferred: a cron starts the
+    // work and a queue carries the rest of its pages (§4.3).
+    expect([...CRON_ONLY_QUEUES, ...CRON_CONTINUED_QUEUES].sort()).toEqual(
       Object.keys(CRON_TRIGGERS).sort(),
     );
-    for (const name of Object.keys(CRON_TRIGGERS)) {
-      expect(QUEUES.map((queue) => queue.name)).not.toContain(name);
+
+    const queueNames = QUEUES.map((queue) => queue.name);
+    for (const name of CRON_ONLY_QUEUES) {
+      expect(queueNames).not.toContain(name);
+    }
+    for (const name of CRON_CONTINUED_QUEUES) {
+      expect(queueNames).toContain(name);
     }
   });
 

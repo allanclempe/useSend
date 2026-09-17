@@ -23,6 +23,7 @@ import {
   CAMPAIGN_BATCH_QUEUE,
   CAMPAIGN_SCHEDULER_QUEUE,
   CONTACT_BULK_ADD_QUEUE,
+  DOMAIN_VERIFICATION_QUEUE,
   SES_WEBHOOK_QUEUE,
   WEBHOOK_DISPATCH_QUEUE,
 } from "./queue-constants";
@@ -187,7 +188,34 @@ export const QUEUES: readonly QueueDefinition[] = [
     maxBatchTimeout: 1,
     maxConcurrency: 1,
   }),
+  /**
+   * Continuations for the hourly domain verification sweep.
+   *
+   * The Cron Trigger runs page one; every page after that is a message this
+   * queue carries, because `refreshDomainVerification` makes AWS calls per
+   * domain and a Worker invocation has 1000 subrequests to spend (§4.3). One
+   * page at a time, in order: `maxConcurrency` 1.
+   */
+  define(DOMAIN_VERIFICATION_QUEUE, {
+    maxAttempts: 2,
+    retry: { type: "fixed", delayMs: 60_000 },
+    maxBatchSize: 1,
+    maxBatchTimeout: 1,
+    maxConcurrency: 1,
+  }),
   ...SEND_QUEUES,
+];
+
+/**
+ * Names that are both a Cron Trigger and a queue.
+ *
+ * Normally the two are disjoint -- a cron job carries a schedule and never a
+ * message. These are the exception by design: the cron starts the work and the
+ * queue continues it, one bounded page per invocation, with the same handler
+ * serving both (§4.3).
+ */
+export const CRON_CONTINUED_QUEUES: readonly string[] = [
+  DOMAIN_VERIFICATION_QUEUE,
 ];
 
 const byName = new Map(QUEUES.map((queue) => [queue.name, queue]));
@@ -210,7 +238,9 @@ export function queueDefinitionByQueueName(
  * Triggers and have no queue, so asking for a producer binding for one is a
  * mistake worth naming rather than a missing-binding error to puzzle over.
  */
-export const CRON_ONLY_QUEUES: readonly string[] = Object.keys(CRON_TRIGGERS);
+export const CRON_ONLY_QUEUES: readonly string[] = Object.keys(
+  CRON_TRIGGERS,
+).filter((name) => !CRON_CONTINUED_QUEUES.includes(name));
 
 /** Where a name that is not a queue actually went, for the error message. */
 export function nonQueueDestination(name: string): string | undefined {

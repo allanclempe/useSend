@@ -154,15 +154,31 @@ Two constraints on the DO follow, and neither is optional:
 
 ### 4.3 Workers CPU and subrequest limits vs unbounded loops
 
-Three handlers iterate unbounded result sets in a single job:
-- `runDueDomainVerifications()` — iterates **every** domain sequentially (`domain-verification-job.ts:17-38`)
-- `contact-bulk-add` — bulk contact import
-- `campaign-batch` — campaign fan-out
+Three handlers were named as iterating unbounded result sets in a single job. Two of them do; the
+third turned out not to. Each real one must **fan out or self-continue**: process a bounded page,
+enqueue a continuation with a cursor. Two separate ceilings apply — CPU time *and* the
+per-invocation **subrequest limit** (1000 on paid).
 
-Each must **fan out or self-continue**: process a bounded page, enqueue a continuation with a cursor.
-Two separate ceilings apply — CPU time *and* the per-invocation **subrequest limit** (1000 on paid).
-`runDueDomainVerifications` makes AWS calls per domain, so it hits the subrequest cap well before CPU.
-This is the largest behavioural code change in the migration and is not optional.
+- **`runDueDomainVerifications()`** — iterated **every** domain sequentially, with AWS calls per
+  domain, so it hits the subrequest cap well before CPU. **Done**: 25 domains per invocation,
+  keyset-paged on `Domain.id` (unique, so a page boundary cannot repeat or skip a row — the old
+  `createdAt asc` ordering was not). The hourly Cron Trigger runs page one and the handler enqueues
+  its own continuations, which makes `domain-verification` both a cron name and a queue —
+  `CRON_CONTINUED_QUEUES`.
+- **`campaign-batch`** — already paged on `lastCursor`, but at `batchSize` per invocation, default
+  **500**, which is past the subrequest cap and deep into the CPU budget at 5.7ms a render.
+  **Done**, and the subtlety is that `batchSize` is not a page size: it is the user's pacing unit,
+  "send 500, then wait `batchWindowMinutes`". So the *window* keeps the user's number and the
+  *invocation* is capped at 100, with what is left carried on a continuation message. `lastSentAt`
+  — which is what gates the next window — is written only when the window is fully spent. Writing
+  it per invocation would quietly turn a 500-per-hour campaign into a 100-per-hour one.
+- **`contact-bulk-add`** — **not actually unbounded, and not on a Worker path at all.** The
+  consumer takes one contact per message at a batch of 25. The public API producer is capped at
+  1000 contacts per request (`bulk-add-contacts.ts`) and the driver already splits a bulk enqueue
+  into `sendBatch` calls of 100, so it costs 10 subrequests. The one path that could hurt is the
+  **tRPC** `contacts.addContacts`, capped at **50,000** — 500 `sendBatch` calls, half the
+  subrequest budget — and tRPC runs on Node today and is retired entirely in Phase 7 (§11,
+  decision 3). **That cap needs revisiting when the route becomes a server function**, not now.
 
 ### 4.4 At-least-once delivery
 
@@ -420,6 +436,14 @@ requires a Cloudflare account.
   - The `ses-webhook` cutover must **batch**: `sendBatch` from the SNS route, and one multi-row
     INSERT per consumer batch rather than 100 round trips (§12).
 - **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
+  - **`domain-service.ts` blocks domain verification on Workers, and Phase 8 cannot fix it.**
+    `getDomainVerificationState` (`domain-service.ts:130`) reads three keys from Redis on every
+    domain, and `server/redis.ts` caches the ioredis connection in a module-level `let`. Under
+    `wrangler dev` that works for exactly one invocation and then hangs: measured, the hourly cron's
+    first page ran and its continuation and the next cron both stalled, which is §8's "a cached
+    connection serves exactly one request" in the wild. Nothing in Phase 8 touches it — the queue
+    and the paging around it are correct — so **domain verification is not usable on Workers until
+    this moves to KV**. It is the only job in Phase 8 with that dependency.
 - **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
   from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
 
