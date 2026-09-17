@@ -221,6 +221,12 @@ own ticket, not a sub-task.
   `forcePathStyle` for MinIO. **Decided: native R2 binding**, not presigned URLs — drop
   `@aws-sdk/client-s3` and `@aws-sdk/s3-request-presigner` and proxy uploads/downloads through a
   Worker route. Removes request-signing overhead and two SDK dependencies from the bundle.
+  **Done in Phase 5.** An R2 binding has no URL to presign, so `getDocumentUploadUrl` now issues a
+  short-lived HMAC-signed URL pointing at `/storage/*` on the Worker, which is what the presigned
+  URL was doing. The route sits outside the Hono app deliberately — it is a dashboard concern, not
+  part of the API contract. Storage became a Worker capability: under Node there is no binding,
+  `isStorageConfigured()` is false, and both editors already hide the file picker on
+  `imageUploadSupported: false`. `S3_COMPATIBLE_*` is gone from `env.js` and `turbo.json`.
 
 ## 8. Runtime compatibility gotchas
 

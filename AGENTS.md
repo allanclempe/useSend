@@ -67,6 +67,9 @@ Things that behave differently inside the Worker, by design:
   request that created it, so the Worker builds a database client per request
   and publishes it through `AsyncLocalStorage`. Do not cache a connection, a
   socket or a stream in module scope.
+- **Storage is a Worker capability.** `storage-service.ts` runs on the R2
+  binding, so under Node `isStorageConfigured()` is false and the editors hide
+  the image picker. `/storage/*` on the Worker serves uploads and downloads.
 - **`wrangler dev` writes nothing to Cloudflare.** Never run `wrangler deploy` or
   `wrangler login` without being asked.
 

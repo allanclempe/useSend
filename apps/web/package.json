@@ -33,11 +33,9 @@
     "memory:baseline": "node --expose-gc scripts/baseline-test.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1048.0",
     "@aws-sdk/client-sesv2": "^3.1048.0",
     "@aws-sdk/client-sns": "^3.1048.0",
     "@aws-sdk/client-sts": "^3.1047.0",
-    "@aws-sdk/s3-request-presigner": "^3.1048.0",
     "@hono/swagger-ui": "^0.5.1",
     "@hono/zod-openapi": "^0.10.0",
     "@hookform/resolvers": "5.0.1",

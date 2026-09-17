@@ -6,7 +6,6 @@ import { withUpdatedAt } from "~/server/drizzle/touch";
 import { TRPCError } from "@trpc/server";
 import { EmailRenderer } from "@usesend/email-editor/src/renderer";
 import { z } from "zod";
-import { env } from "~/env";
 import {
   teamProcedure,
   createTRPCRouter,
@@ -20,6 +19,7 @@ import { toCampaign } from "~/server/service/campaign-service";
 import { validateDomainFromEmail } from "~/server/service/domain-service";
 import {
   getDocumentUploadUrl,
+  getDocumentUrl,
   isStorageConfigured,
 } from "~/server/service/storage-service";
 
@@ -361,12 +361,9 @@ export const campaignRouter = createTRPCRouter({
       const extension = input.name.split(".").pop();
       const randomName = `${nanoid()}.${extension}`;
 
-      const url = await getDocumentUploadUrl(
-        `${team.id}/${randomName}`,
-        input.type,
-      );
-
-      const imageUrl = `${env.S3_COMPATIBLE_PUBLIC_URL}/${team.id}/${randomName}`;
+      const key = `${team.id}/${randomName}`;
+      const url = await getDocumentUploadUrl(key, input.type);
+      const imageUrl = getDocumentUrl(key);
 
       return { uploadUrl: url, imageUrl };
     }),
