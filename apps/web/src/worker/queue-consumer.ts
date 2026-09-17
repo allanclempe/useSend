@@ -27,6 +27,7 @@ import { withWorkerBindings, type WorkerBindings } from "~/server/worker-binding
  * module is missing from this list fails loudly on its first message rather
  * than quietly dropping it.
  */
+import "~/server/jobs/campaign-scheduler-job";
 import "~/server/service/campaign-service";
 import "~/server/service/contact-queue-service";
 import "~/server/service/ses-hook-parser";

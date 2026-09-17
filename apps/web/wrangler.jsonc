@@ -65,6 +65,14 @@
       {
         "name": "WEBHOOK_DISPATCHER",
         "class_name": "WebhookDispatcher"
+      },
+      // A singleton, on one object id. The tick is a self-rescheduling alarm
+      // because Cron Triggers floor at one minute (§4.2). It enqueues and never
+      // touches the database: a held-open Postgres socket would make the object
+      // permanently ineligible for hibernation.
+      {
+        "name": "CAMPAIGN_SCHEDULER",
+        "class_name": "CampaignScheduler"
       }
     ]
   },
@@ -74,7 +82,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["WebhookDispatcher"]
+      "new_sqlite_classes": ["WebhookDispatcher", "CampaignScheduler"]
     }
   ],
 
@@ -92,7 +100,8 @@
       "0 3 * * *", // webhook-cleanup
       "0 */12 * * *", // usage-reporting (cloud only)
       "0 0 * * *", // cleanup-email-bodies (self-hosted, opt-in)
-      "30 0 * * *" // email-event-cleanup (opt-in)
+      "30 0 * * *", // email-event-cleanup (opt-in)
+      "*/10 * * * *" // arms the campaign scheduler's alarm; runs no job
     ]
   },
 
@@ -112,7 +121,8 @@
     "producers": [
       { "queue": "usesend-ses-webhook", "binding": "QUEUE_SES_WEBHOOK" },
       { "queue": "usesend-contact-bulk-add", "binding": "QUEUE_CONTACT_BULK_ADD" },
-      { "queue": "usesend-campaign-batch", "binding": "QUEUE_CAMPAIGN_BATCH" }
+      { "queue": "usesend-campaign-batch", "binding": "QUEUE_CAMPAIGN_BATCH" },
+      { "queue": "usesend-campaign-scheduler", "binding": "QUEUE_CAMPAIGN_SCHEDULER" }
     ],
     "consumers": [
       {
@@ -134,6 +144,14 @@
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         "max_retries": 2,
+        "dead_letter_queue": "usesend-dead-letter"
+      },
+      {
+        "queue": "usesend-campaign-scheduler",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 0,
+        "max_concurrency": 1,
         "dead_letter_queue": "usesend-dead-letter"
       },
       // The shared dead letter queue. No producer binding: Cloudflare routes to

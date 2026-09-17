@@ -3,7 +3,11 @@
 import { createDrizzleClient, withDrizzleClient } from "~/server/drizzle";
 import { logger } from "~/server/logger/log";
 import { startTrace, withTraceContext } from "~/server/logger/trace-context";
-import { cronJobFor } from "~/server/queue/cron-registry";
+import { CampaignSchedulerService } from "~/server/jobs/campaign-scheduler-job";
+import {
+  cronJobFor,
+  SCHEDULER_KEEPALIVE_CRON,
+} from "~/server/queue/cron-registry";
 import { registeredHandler } from "~/server/queue/workers-driver";
 import {
   withWorkerBindings,
@@ -31,6 +35,13 @@ export async function handleScheduled(
   env: WorkerBindings,
   ctx: { waitUntil: (promise: Promise<unknown>) => void },
 ): Promise<void> {
+  if (controller.cron === SCHEDULER_KEEPALIVE_CRON) {
+    // Not a job: arms the campaign scheduler's Durable Object alarm if it is
+    // not already armed. Needs no database client — the object only enqueues.
+    await withWorkerBindings(env, () => CampaignSchedulerService.start());
+    return;
+  }
+
   const job = cronJobFor(controller.cron);
 
   if (!job) {

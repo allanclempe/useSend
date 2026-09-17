@@ -33,9 +33,26 @@ export const CRON_TRIGGERS = {
 
 export type CronJobName = keyof typeof CRON_TRIGGERS;
 
+/**
+ * A trigger that runs no job: it makes sure the campaign scheduler's Durable
+ * Object alarm is armed.
+ *
+ * A Worker has no startup, so nothing sets the first alarm. An alarm once set
+ * is durable and survives eviction and deploys — but if an alarm handler ever
+ * failed permanently the chain would simply stop, with nothing to say so. A
+ * poke on a slow cron is what makes the tick self-healing, and the frequency is
+ * the recovery window: ten minutes of lost scheduling, against `batchWindowMinutes`
+ * measured in minutes, for 4,320 Durable Object requests a month.
+ *
+ * Worth noticing what this implies. With the tick at 30s (§4.2), the Durable
+ * Object buys 30 seconds of latency over what this cron could do by itself —
+ * and the design needs the cron regardless. See §4.2.
+ */
+export const SCHEDULER_KEEPALIVE_CRON = "*/10 * * * *";
+
 /** Every distinct expression, which is what `triggers.crons` has to contain. */
 export const CRON_EXPRESSIONS: readonly string[] = [
-  ...new Set(Object.values(CRON_TRIGGERS)),
+  ...new Set([...Object.values(CRON_TRIGGERS), SCHEDULER_KEEPALIVE_CRON]),
 ];
 
 /**

@@ -21,6 +21,7 @@
 import { CRON_TRIGGERS } from "./cron-registry";
 import {
   CAMPAIGN_BATCH_QUEUE,
+  CAMPAIGN_SCHEDULER_QUEUE,
   CONTACT_BULK_ADD_QUEUE,
   SES_WEBHOOK_QUEUE,
   WEBHOOK_DISPATCH_QUEUE,
@@ -135,6 +136,23 @@ export const QUEUES: readonly QueueDefinition[] = [
     maxBatchSize: 1,
     maxBatchTimeout: 1,
     maxConcurrency: null,
+  }),
+  /**
+   * The campaign scheduler's tick. The Durable Object alarm sends here and a
+   * consumer does the sweep, because the alarm must not hold a database
+   * connection (§4.2).
+   *
+   * One attempt, no retry: the next tick is 30 seconds away and is a better
+   * retry than redelivering a stale one. `maxConcurrency` is 1 for the same
+   * reason the BullMQ worker ran at concurrency 1 — two sweeps at once would
+   * queue every campaign batch twice.
+   */
+  define(CAMPAIGN_SCHEDULER_QUEUE, {
+    maxAttempts: 1,
+    retry: { type: "fixed", delayMs: 0 },
+    maxBatchSize: 1,
+    maxBatchTimeout: 1,
+    maxConcurrency: 1,
   }),
 ];
 

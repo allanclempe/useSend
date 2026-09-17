@@ -115,6 +115,22 @@ interval past 10s the object is evicted between every alarm, measured. The cost 
 scheduling jitter, which is invisible against `batchWindowMinutes` (minutes) and scheduled sends
 (minute precision) — and §4.5 already accepts one tick of jitter on the same path.
 
+**Done.** `src/worker/campaign-scheduler.ts`. Confirmed against the real scheduler under `wrangler
+dev`, not just the prototype: five consecutive 30s ticks each ran on a **fresh instance**
+(`alarmsHandledByThisInstance: 1`, five distinct `instanceId`s), so the object is evicted between
+every alarm with a real queue `send()` inside it. Sending to a queue binding does not pin the object
+the way a held socket does.
+
+Two things the plan did not anticipate:
+
+- **Something has to arm the first alarm.** A Worker has no startup hook, and an alarm chain that
+  fails permanently stops with nothing to say so. There is now a `*/10 * * * *` Cron Trigger whose
+  only job is to call `ensureRunning()` on the object, which arms the alarm if none is set.
+- **Which makes the Durable Object's margin thin.** With the tick at 30s, the DO buys **30 seconds
+  of latency over what that keepalive cron could do on its own** — and the design needs the cron
+  regardless. The alarm is still the right call while the tick is sub-minute, but if the tick ever
+  moves to 60s the object stops earning its place and the cron should simply do the sweep.
+
 Two constraints on the DO follow, and neither is optional:
 
 - **It must not hold a Postgres connection.** A held-open outbound socket makes a Durable Object

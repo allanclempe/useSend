@@ -6,6 +6,7 @@ import {
   CRON_TRIGGERS,
   cronJobFor,
   isDeclaredCron,
+  SCHEDULER_KEEPALIVE_CRON,
 } from "./cron-registry";
 import { CRON_ONLY_QUEUES, QUEUES } from "./queue-registry";
 
@@ -26,8 +27,13 @@ describe("cron registry", () => {
 
   it("gives every job a distinct expression", () => {
     // `scheduled()` is handed the expression and nothing else, so two jobs on
-    // the same cron would be indistinguishable.
-    expect(CRON_EXPRESSIONS.length).toBe(Object.keys(CRON_TRIGGERS).length);
+    // the same cron would be indistinguishable. The keepalive is the one
+    // trigger that runs no job, hence the +1.
+    expect(CRON_EXPRESSIONS.length).toBe(
+      Object.keys(CRON_TRIGGERS).length + 1,
+    );
+    expect(CRON_EXPRESSIONS).toContain(SCHEDULER_KEEPALIVE_CRON);
+    expect(cronJobFor(SCHEDULER_KEEPALIVE_CRON)).toBeUndefined();
   });
 
   it("covers exactly the queues that carry a schedule and no messages", () => {

@@ -14,6 +14,7 @@ import { handleStorageRequest, isStorageRequest } from "./storage-routes";
  * Durable Object classes have to be exported from the Worker's entry module for
  * `wrangler.jsonc` to bind them by class name.
  */
+export { CampaignScheduler } from "./campaign-scheduler";
 export { WebhookDispatcher } from "./webhook-dispatcher";
 
 /**
