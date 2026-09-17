@@ -1,5 +1,6 @@
 import { and, desc, eq, ilike, sql } from "drizzle-orm";
 import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import {
   DEFAULT_DOUBLE_OPT_IN_CONTENT,
   DEFAULT_DOUBLE_OPT_IN_SUBJECT,
@@ -281,7 +282,7 @@ export async function updateContactBook(
 
   const [updated] = await client
     .update(schema.contactBook)
-    .set(updateData)
+    .set(withUpdatedAt(updateData))
     .where(eq(schema.contactBook.id, contactBookId))
     .returning();
 

@@ -111,6 +111,20 @@ describeIntegration("contact-book-service", () => {
     expect(found.map((b) => b.name)).toEqual(["mine"]);
   });
 
+  it("bumps updatedAt on update", async () => {
+    // Prisma maintained @updatedAt client-side. Drizzle does not, the column has
+    // no database default and there is no trigger, so a missing stamp fails
+    // silently — the row updates and the timestamp just goes stale.
+    const book = await createContactBook(teamId, "stamped");
+    const before = book.updatedAt;
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const updated = await updateContactBook(book.id, { name: "renamed" });
+
+    expect(updated.name).toBe("renamed");
+    expect(updated.updatedAt.getTime()).toBeGreaterThan(before.getTime());
+  });
+
   it("throws when the contact book limit is reached", async () => {
     mockCheckContactBookLimit.mockResolvedValue({
       isLimitReached: true,
