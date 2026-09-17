@@ -1,5 +1,8 @@
 import { EmailContent } from "~/types";
-import { db } from "../db";
+import { and, eq } from "drizzle-orm";
+import { drizzleDb, schema } from "../drizzle";
+import { createId } from "../drizzle/id";
+import { withUpdatedAt } from "../drizzle/touch";
 import { UnsendApiError } from "~/server/public-api/api-error";
 import { EmailQueueService } from "./email-queue-service";
 import {
@@ -10,12 +13,13 @@ import { EmailRenderer } from "@usesend/email-editor/src/renderer";
 import { logger } from "../logger/log";
 import { SuppressionService } from "./suppression-service";
 import { sanitizeCustomHeaders } from "~/server/utils/email-headers";
-import { Prisma } from "@prisma/client";
 
 async function checkIfValidEmail(emailId: string) {
-  const email = await db.email.findUnique({
-    where: { id: emailId },
-  });
+  const [email] = await drizzleDb
+    .select()
+    .from(schema.email)
+    .where(eq(schema.email.id, emailId))
+    .limit(1);
 
   if (!email || !email.domainId) {
     throw new UnsendApiError({
@@ -24,9 +28,11 @@ async function checkIfValidEmail(emailId: string) {
     });
   }
 
-  const domain = await db.domain.findUnique({
-    where: { id: email.domainId },
-  });
+  const [domain] = await drizzleDb
+    .select()
+    .from(schema.domain)
+    .where(eq(schema.domain.id, email.domainId))
+    .limit(1);
 
   if (!domain) {
     throw new UnsendApiError({
@@ -80,10 +86,17 @@ export async function sendEmail(
 
   // If this is an API call with an API key, validate domain access
   if (apiKeyId) {
-    const apiKey = await db.apiKey.findUnique({
-      where: { id: apiKeyId },
-      include: { domain: true },
-    });
+    const [apiKeyRow] = await drizzleDb
+      .select({ apiKey: schema.apiKey, domain: schema.domain })
+      .from(schema.apiKey)
+      .leftJoin(schema.domain, eq(schema.domain.id, schema.apiKey.domainId))
+      .where(eq(schema.apiKey.id, apiKeyId))
+      .limit(1);
+
+    // Reshaped to Prisma's nested include for validateApiKeyDomainAccess.
+    const apiKey = apiKeyRow
+      ? { ...apiKeyRow.apiKey, domain: apiKeyRow.domain }
+      : null;
 
     if (!apiKey) {
       throw new UnsendApiError({
@@ -134,32 +147,44 @@ export async function sendEmail(
       "All TO recipients are suppressed. No emails to send."
     );
 
-    const email = await db.email.create({
-      data: {
-        to: toEmails,
-        from,
-        subject: subject as string,
-        teamId,
-        domainId: domain.id,
-        latestStatus: "SUPPRESSED",
-        apiId: apiKeyId,
-        text,
-        html,
-        cc: ccEmails.length > 0 ? ccEmails : undefined,
-        bcc: bccEmails.length > 0 ? bccEmails : undefined,
-        inReplyToId,
-      },
-    });
+    const [email] = await drizzleDb
+      .insert(schema.email)
+      .values(
+        withUpdatedAt({
+          id: createId(),
+          to: toEmails,
+          from,
+          subject: subject as string,
+          teamId,
+          domainId: domain.id,
+          latestStatus: "SUPPRESSED" as const,
+          apiId: apiKeyId,
+          text,
+          html,
+          // Prisma read `undefined` as "use the column default"; spread rather
+          // than writing an explicit undefined.
+          ...(ccEmails.length > 0 ? { cc: ccEmails } : {}),
+          ...(bccEmails.length > 0 ? { bcc: bccEmails } : {}),
+          inReplyToId,
+        }),
+      )
+      .returning();
 
-    await db.emailEvent.create({
+    if (!email) {
+      throw new UnsendApiError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to create email",
+      });
+    }
+
+    await drizzleDb.insert(schema.emailEvent).values({
+      id: createId(),
+      emailId: email.id,
+      status: "SUPPRESSED" as const,
       data: {
-        emailId: email.id,
-        status: "SUPPRESSED",
-        data: {
-          error: "All TO recipients are suppressed. No emails to send.",
-        },
-        teamId,
+        error: "All TO recipients are suppressed. No emails to send.",
       },
+      teamId,
     });
 
     return email;
@@ -189,9 +214,11 @@ export async function sendEmail(
   }
 
   if (templateId) {
-    const template = await db.template.findUnique({
-      where: { id: templateId },
-    });
+    const [template] = await drizzleDb
+      .select()
+      .from(schema.template)
+      .where(eq(schema.template.id, templateId))
+      .limit(1);
 
     if (template) {
       const jsonContent = JSON.parse(template.content || "{}");
@@ -219,12 +246,13 @@ export async function sendEmail(
   }
 
   if (inReplyToId) {
-    const email = await db.email.findUnique({
-      where: {
-        id: inReplyToId,
-        teamId,
-      },
-    });
+    const [email] = await drizzleDb
+      .select({ id: schema.email.id })
+      .from(schema.email)
+      .where(
+        and(eq(schema.email.id, inReplyToId), eq(schema.email.teamId, teamId)),
+      )
+      .limit(1);
 
     if (!email) {
       throw new UnsendApiError({
@@ -246,30 +274,39 @@ export async function sendEmail(
     ? Math.max(0, scheduledAtDate.getTime() - Date.now())
     : undefined;
 
-  const email = await db.email.create({
-    data: {
-      to: filteredToEmails,
-      from,
-      subject: subject as string,
-      replyTo: replyTo
-        ? Array.isArray(replyTo)
-          ? replyTo
-          : [replyTo]
-        : undefined,
-      cc: filteredCcEmails.length > 0 ? filteredCcEmails : undefined,
-      bcc: filteredBccEmails.length > 0 ? filteredBccEmails : undefined,
-      text,
-      html,
-      teamId,
-      domainId: domain.id,
-      attachments: attachments ? JSON.stringify(attachments) : undefined,
-      scheduledAt: scheduledAtDate,
-      latestStatus: scheduledAtDate ? "SCHEDULED" : "QUEUED",
-      apiId: apiKeyId,
-      inReplyToId,
-      headers: headers ? JSON.stringify(headers) : undefined,
-    },
-  });
+  const [email] = await drizzleDb
+    .insert(schema.email)
+    .values(
+      withUpdatedAt({
+        id: createId(),
+        to: filteredToEmails,
+        from,
+        subject: subject as string,
+        ...(replyTo
+          ? { replyTo: Array.isArray(replyTo) ? replyTo : [replyTo] }
+          : {}),
+        ...(filteredCcEmails.length > 0 ? { cc: filteredCcEmails } : {}),
+        ...(filteredBccEmails.length > 0 ? { bcc: filteredBccEmails } : {}),
+        text,
+        html,
+        teamId,
+        domainId: domain.id,
+        ...(attachments ? { attachments: JSON.stringify(attachments) } : {}),
+        scheduledAt: scheduledAtDate,
+        latestStatus: scheduledAtDate ? ("SCHEDULED" as const) : ("QUEUED" as const),
+        apiId: apiKeyId,
+        inReplyToId,
+        ...(headers ? { headers: JSON.stringify(headers) } : {}),
+      }),
+    )
+    .returning();
+
+  if (!email) {
+    throw new UnsendApiError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Failed to create email",
+    });
+  }
 
   try {
     await EmailQueueService.queueEmail(
@@ -281,20 +318,17 @@ export async function sendEmail(
       delay
     );
   } catch (error: any) {
-    await db.emailEvent.create({
-      data: {
-        emailId: email.id,
-        status: "FAILED",
-        data: {
-          error: error.toString(),
-        },
-        teamId,
-      },
+    await drizzleDb.insert(schema.emailEvent).values({
+      id: createId(),
+      emailId: email.id,
+      status: "FAILED" as const,
+      data: { error: error.toString() },
+      teamId,
     });
-    await db.email.update({
-      where: { id: email.id },
-      data: { latestStatus: "FAILED" },
-    });
+    await drizzleDb
+      .update(schema.email)
+      .set(withUpdatedAt({ latestStatus: "FAILED" as const }))
+      .where(eq(schema.email.id, email.id));
     throw error;
   }
 
@@ -323,12 +357,10 @@ export async function updateEmail(
     ? Math.max(0, scheduledAtDate.getTime() - Date.now())
     : undefined;
 
-  await db.email.update({
-    where: { id: emailId },
-    data: {
-      scheduledAt: scheduledAtDate,
-    },
-  });
+  await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ scheduledAt: scheduledAtDate }))
+    .where(eq(schema.email.id, emailId));
 
   await EmailQueueService.changeDelay(emailId, domain.region, true, delay ?? 0);
 }
@@ -345,19 +377,16 @@ export async function cancelEmail(emailId: string) {
 
   await EmailQueueService.chancelEmail(emailId, domain.region, true);
 
-  await db.email.update({
-    where: { id: emailId },
-    data: {
-      latestStatus: "CANCELLED",
-    },
-  });
+  await drizzleDb
+    .update(schema.email)
+    .set(withUpdatedAt({ latestStatus: "CANCELLED" as const }))
+    .where(eq(schema.email.id, emailId));
 
-  await db.emailEvent.create({
-    data: {
-      emailId,
-      status: "CANCELLED",
-      teamId: email.teamId,
-    },
+  await drizzleDb.insert(schema.emailEvent).values({
+    id: createId(),
+    emailId,
+    status: "CANCELLED" as const,
+    teamId: email.teamId,
   });
 }
 
@@ -499,9 +528,11 @@ export async function sendBulkEmails(
 
     // Process template if specified
     if (templateId) {
-      const template = await db.template.findUnique({
-        where: { id: templateId },
-      });
+      const [template] = await drizzleDb
+        .select()
+        .from(schema.template)
+        .where(eq(schema.template.id, templateId))
+        .limit(1);
 
       if (template) {
         const jsonContent = JSON.parse(template.content || "{}");
@@ -542,42 +573,50 @@ export async function sendBulkEmails(
         : [originalContent.bcc]
       : [];
 
-    const email = await db.email.create({
-      data: {
-        to: originalToEmails,
-        from,
-        subject: subject as string,
-        replyTo: replyTo
-          ? Array.isArray(replyTo)
-            ? replyTo
-            : [replyTo]
-          : undefined,
-        cc: originalCcEmails.length > 0 ? originalCcEmails : undefined,
-        bcc: originalBccEmails.length > 0 ? originalBccEmails : undefined,
-        text,
-        html,
-        teamId,
-        domainId: domain.id,
-        attachments: attachments ? JSON.stringify(attachments) : undefined,
-        scheduledAt: scheduledAt ? new Date(scheduledAt) : undefined,
-        latestStatus: "SUPPRESSED",
-        apiId: apiKeyId,
-        inReplyToId,
-        headers: originalContent.headers
-          ? JSON.stringify(originalContent.headers)
-          : undefined,
-      },
-    });
+    const [email] = await drizzleDb
+      .insert(schema.email)
+      .values(
+        withUpdatedAt({
+          id: createId(),
+          to: originalToEmails,
+          from,
+          subject: subject as string,
+          ...(replyTo
+            ? { replyTo: Array.isArray(replyTo) ? replyTo : [replyTo] }
+            : {}),
+          ...(originalCcEmails.length > 0 ? { cc: originalCcEmails } : {}),
+          ...(originalBccEmails.length > 0 ? { bcc: originalBccEmails } : {}),
+          text,
+          html,
+          teamId,
+          domainId: domain.id,
+          ...(attachments ? { attachments: JSON.stringify(attachments) } : {}),
+          ...(scheduledAt ? { scheduledAt: new Date(scheduledAt) } : {}),
+          latestStatus: "SUPPRESSED" as const,
+          apiId: apiKeyId,
+          inReplyToId,
+          ...(originalContent.headers
+            ? { headers: JSON.stringify(originalContent.headers) }
+            : {}),
+        }),
+      )
+      .returning();
 
-    await db.emailEvent.create({
+    if (!email) {
+      throw new UnsendApiError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to create email",
+      });
+    }
+
+    await drizzleDb.insert(schema.emailEvent).values({
+      id: createId(),
+      emailId: email.id,
+      status: "SUPPRESSED" as const,
       data: {
-        emailId: email.id,
-        status: "SUPPRESSED",
-        data: {
-          error: "All TO recipients are suppressed. No emails to send.",
-        },
-        teamId,
+        error: "All TO recipients are suppressed. No emails to send.",
       },
+      teamId,
     });
 
     suppressedEmails.push({
@@ -653,9 +692,11 @@ export async function sendBulkEmails(
       if (templateId) {
         let templateData = templateCache.get(Number(templateId));
         if (!templateData) {
-          const template = await db.template.findUnique({
-            where: { id: templateId },
-          });
+          const [template] = await drizzleDb
+            .select()
+            .from(schema.template)
+            .where(eq(schema.template.id, templateId))
+            .limit(1);
           if (template) {
             const jsonContent = JSON.parse(template.content || "{}");
             templateData = {
@@ -702,29 +743,39 @@ export async function sendBulkEmails(
         : undefined;
 
       try {
-        const email = await db.email.create({
-          data: {
-            to: Array.isArray(to) ? to : [to],
-            from,
-            subject: subject as string,
-            replyTo: replyTo
-              ? Array.isArray(replyTo)
-                ? replyTo
-                : [replyTo]
-              : undefined,
-            cc: cc && cc.length > 0 ? cc : undefined,
-            bcc: bcc && bcc.length > 0 ? bcc : undefined,
-            text,
-            html,
-            teamId,
-            domainId: domain.id,
-            attachments: attachments ? JSON.stringify(attachments) : undefined,
-            scheduledAt: scheduledAtDate,
-            latestStatus: scheduledAtDate ? "SCHEDULED" : "QUEUED",
-            apiId: apiKeyId,
-            headers: headers ? JSON.stringify(headers) : undefined,
-          },
-        });
+        const [email] = await drizzleDb
+          .insert(schema.email)
+          .values(
+            withUpdatedAt({
+              id: createId(),
+              to: Array.isArray(to) ? to : [to],
+              from,
+              subject: subject as string,
+              ...(replyTo
+                ? { replyTo: Array.isArray(replyTo) ? replyTo : [replyTo] }
+                : {}),
+              ...(cc && cc.length > 0 ? { cc } : {}),
+              ...(bcc && bcc.length > 0 ? { bcc } : {}),
+              text,
+              html,
+              teamId,
+              domainId: domain.id,
+              ...(attachments
+                ? { attachments: JSON.stringify(attachments) }
+                : {}),
+              scheduledAt: scheduledAtDate,
+              latestStatus: scheduledAtDate
+                ? ("SCHEDULED" as const)
+                : ("QUEUED" as const),
+              apiId: apiKeyId,
+              ...(headers ? { headers: JSON.stringify(headers) } : {}),
+            }),
+          )
+          .returning();
+
+        if (!email) {
+          throw new Error("Failed to create email record");
+        }
 
         createdEmails.push({ email, originalIndex });
 
@@ -761,20 +812,17 @@ export async function sendBulkEmails(
     // Mark all created emails as failed
     await Promise.all(
       createdEmails.map(async (email) => {
-        await db.emailEvent.create({
-          data: {
-            emailId: email.email.id,
-            status: "FAILED",
-            data: {
-              error: error.toString(),
-            },
-            teamId: email.email.teamId,
-          },
+        await drizzleDb.insert(schema.emailEvent).values({
+          id: createId(),
+          emailId: email.email.id,
+          status: "FAILED" as const,
+          data: { error: error.toString() },
+          teamId: email.email.teamId,
         });
-        await db.email.update({
-          where: { id: email.email.id },
-          data: { latestStatus: "FAILED" },
-        });
+        await drizzleDb
+          .update(schema.email)
+          .set(withUpdatedAt({ latestStatus: "FAILED" as const }))
+          .where(eq(schema.email.id, email.email.id));
       })
     );
     throw error;
