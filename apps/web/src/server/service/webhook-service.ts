@@ -1,5 +1,4 @@
 import { WebhookCallStatus, WebhookStatus } from "@prisma/client";
-import { Queue, Worker } from "bullmq";
 import { createHmac, randomUUID, randomBytes } from "crypto";
 import {
   WebhookEventData,
@@ -10,12 +9,14 @@ import {
   type WebhookEventType,
 } from "@usesend/lib/src/webhook/webhook-events";
 import { db } from "../db";
-import { getRedis, BULL_PREFIX, redisKey } from "../redis";
+import { getRedis, redisKey } from "../redis";
 import {
-  DEFAULT_QUEUE_OPTIONS,
+  createQueue,
+  createWorker,
+  createWorkerHandler,
   WEBHOOK_DISPATCH_QUEUE,
-} from "../queue/queue-constants";
-import { createWorkerHandler, TeamJob } from "../queue/bullmq-context";
+  type TeamJob,
+} from "../queue";
 import { logger } from "../logger/log";
 import { LimitService } from "./limit-service";
 import { UnsendApiError } from "../public-api/api-error";
@@ -40,41 +41,34 @@ type WebhookEventInput<TType extends WebhookEventType> =
   WebhookPayloadData<TType>;
 
 export class WebhookQueueService {
-  private static queue = new Queue<WebhookCallJobData>(WEBHOOK_DISPATCH_QUEUE, {
-    connection: getRedis(),
-    prefix: BULL_PREFIX,
-    skipVersionCheck: true,
-    defaultJobOptions: {
-      ...DEFAULT_QUEUE_OPTIONS,
+  private static queue = createQueue<WebhookCallJobData>(
+    WEBHOOK_DISPATCH_QUEUE,
+    {
       attempts: WEBHOOK_MAX_ATTEMPTS,
       backoff: {
         type: "exponential",
         delay: WEBHOOK_BASE_BACKOFF_MS,
       },
     },
-  });
+  );
 
-  private static worker = new Worker(
+  private static worker = createWorker(
     WEBHOOK_DISPATCH_QUEUE,
     createWorkerHandler(processWebhookCall),
     {
-      connection: getRedis(),
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
       concurrency: WEBHOOK_DISPATCH_CONCURRENCY,
+      onError: (error) => {
+        logger.error({ error }, "[WebhookQueueService]: Worker error");
+      },
     },
   );
 
   static {
-    this.worker.on("error", (error) => {
-      logger.error({ error }, "[WebhookQueueService]: Worker error");
-    });
-
     logger.info("[WebhookQueueService]: Initialized webhook queue service");
   }
 
   public static async enqueueCall(callId: string, teamId: number) {
-    await this.queue.add(
+    await this.queue.enqueue(
       callId,
       {
         callId,

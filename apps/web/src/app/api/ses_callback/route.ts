@@ -32,13 +32,11 @@ export async function POST(req: Request) {
 
   try {
     message = JSON.parse(data.Message || "{}");
-    const status = await SesHookParser.queue({
+    // Enqueue failures throw; the catch below turns them into an error response.
+    await SesHookParser.queue({
       event: message,
       messageId: data.MessageId,
     });
-    if (!status) {
-      return Response.json({ data: "Error in parsing hook" });
-    }
 
     return Response.json({ data: "Success" });
   } catch (e) {

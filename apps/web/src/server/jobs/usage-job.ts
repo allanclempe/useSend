@@ -1,21 +1,15 @@
-import { Queue, Worker } from "bullmq";
 import { db } from "~/server/db";
 import { env } from "~/env";
 import { getUsageDate, getUsageUnits } from "~/lib/usage";
 import { sendUsageToStripe } from "~/server/billing/usage";
-import { getRedis, BULL_PREFIX } from "~/server/redis";
-import { DEFAULT_QUEUE_OPTIONS } from "../queue/queue-constants";
+import { createQueue, createWorker } from "../queue";
 import { logger } from "../logger/log";
 
 const USAGE_QUEUE_NAME = "usage-reporting";
 
-const usageQueue = new Queue(USAGE_QUEUE_NAME, {
-  connection: getRedis(),
-  prefix: BULL_PREFIX,
-  skipVersionCheck: true,
-});
+const usageQueue = createQueue(USAGE_QUEUE_NAME);
 
-const worker = new Worker(
+createWorker(
   USAGE_QUEUE_NAME,
   async () => {
     // Get all teams with stripe customer IDs
@@ -70,30 +64,17 @@ const worker = new Worker(
     }
   },
   {
-    connection: getRedis(),
-    prefix: BULL_PREFIX,
-    skipVersionCheck: true,
-  },
-);
-
-// Schedule job to run daily
-await usageQueue.upsertJobScheduler(
-  "daily-usage-report",
-  {
-    pattern: "0 */12 * * *", // Run every 12 hours (at 00:00, 12:00 UTC)
-    tz: "UTC",
-  },
-  {
-    opts: {
-      ...DEFAULT_QUEUE_OPTIONS,
+    onCompleted: (job) => {
+      logger.info({ jobId: job.id }, `[Usage Reporting] Job completed`);
+    },
+    onFailed: (job, err) => {
+      logger.error({ err, jobId: job?.id }, `[Usage Reporting] Job failed`);
     },
   },
 );
 
-worker.on("completed", (job) => {
-  logger.info({ jobId: job.id }, `[Usage Reporting] Job completed`);
-});
-
-worker.on("failed", (job, err) => {
-  logger.error({ err, jobId: job?.id }, `[Usage Reporting] Job failed`);
+// Run every 12 hours (at 00:00, 12:00 UTC)
+await usageQueue.schedule("daily-usage-report", {
+  cron: "0 */12 * * *",
+  tz: "UTC",
 });

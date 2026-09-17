@@ -1,11 +1,10 @@
-import { Queue, Worker } from "bullmq";
 import { db } from "~/server/db";
 import { logger } from "~/server/logger/log";
-import { getRedis, BULL_PREFIX } from "~/server/redis";
 import {
+  createQueue,
+  createWorker,
   DOMAIN_VERIFICATION_QUEUE,
-  DEFAULT_QUEUE_OPTIONS,
-} from "~/server/queue/queue-constants";
+} from "~/server/queue";
 import {
   isDomainVerificationDue,
   refreshDomainVerification,
@@ -42,48 +41,30 @@ export async function initDomainVerificationJob() {
     return;
   }
 
-  const connection = getRedis();
-  const domainVerificationQueue = new Queue(DOMAIN_VERIFICATION_QUEUE, {
-    connection,
-    prefix: BULL_PREFIX,
-    skipVersionCheck: true,
-  });
+  const domainVerificationQueue = createQueue(DOMAIN_VERIFICATION_QUEUE);
 
-  const worker = new Worker(
+  createWorker(
     DOMAIN_VERIFICATION_QUEUE,
     async () => {
       await runDueDomainVerifications();
     },
     {
-      connection,
       concurrency: 1,
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
-    },
-  );
-
-  await domainVerificationQueue.upsertJobScheduler(
-    "domain-verification-hourly",
-    {
-      pattern: "0 * * * *",
-      tz: "UTC",
-    },
-    {
-      opts: {
-        ...DEFAULT_QUEUE_OPTIONS,
+      onCompleted: (job) => {
+        logger.info({ jobId: job.id }, "[DomainVerificationJob]: Job completed");
+      },
+      onFailed: (job, err) => {
+        logger.error(
+          { err, jobId: job?.id },
+          "[DomainVerificationJob]: Job failed",
+        );
       },
     },
   );
 
-  worker.on("completed", (job) => {
-    logger.info({ jobId: job.id }, "[DomainVerificationJob]: Job completed");
-  });
-
-  worker.on("failed", (job, err) => {
-    logger.error(
-      { err, jobId: job?.id },
-      "[DomainVerificationJob]: Job failed",
-    );
+  await domainVerificationQueue.schedule("domain-verification-hourly", {
+    cron: "0 * * * *",
+    tz: "UTC",
   });
 
   initialized = true;

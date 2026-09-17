@@ -50,12 +50,14 @@ const {
   mockTxWebhookUpdate: vi.fn(),
 }));
 
-vi.mock("bullmq", () => ({
-  Queue: class {
-    public add = mockQueueAdd;
-  },
-  Worker: class {
-    public on = vi.fn();
+// Mock the driver, not the queue module — the interface and constants stay real.
+vi.mock("~/server/queue/bullmq-driver", () => ({
+  bullmqDriver: {
+    createQueue: () => ({ enqueue: mockQueueAdd }),
+    createWorker: (_name: string, handler: any) => {
+      capturedProcessWebhookCall.handler = handler;
+      return { concurrency: 1 };
+    },
   },
 }));
 
@@ -65,17 +67,13 @@ vi.mock("~/server/db", () => ({
 
 vi.mock("~/server/logger/log", () => ({
   logger: mockLogger,
+  // createWorkerHandler is no longer stubbed, so the real one runs and needs these.
+  getChildLogger: () => mockLogger,
+  withLogger: (_child: unknown, fn: () => unknown) => fn(),
 }));
 
 vi.mock("~/server/service/limit-service", () => ({
   LimitService: mockLimitService,
-}));
-
-vi.mock("~/server/queue/bullmq-context", () => ({
-  createWorkerHandler: (handler: any) => {
-    capturedProcessWebhookCall.handler = handler;
-    return handler;
-  },
 }));
 
 vi.mock("~/server/redis", () => ({

@@ -1,11 +1,11 @@
-import { Queue, Worker } from "bullmq";
-import { getRedis, BULL_PREFIX } from "../redis";
 import {
-  DEFAULT_QUEUE_OPTIONS,
   CONTACT_BULK_ADD_QUEUE,
-} from "../queue/queue-constants";
+  createQueue,
+  createWorker,
+  createWorkerHandler,
+  type TeamJob,
+} from "../queue";
 import { logger } from "../logger/log";
-import { createWorkerHandler, TeamJob } from "../queue/bullmq-context";
 import { addOrUpdateContact, ContactInput } from "./contact-service";
 
 type ContactJobData = {
@@ -17,29 +17,20 @@ type ContactJobData = {
 type ContactJob = TeamJob<ContactJobData>;
 
 class ContactQueueService {
-  public static queue = new Queue<ContactJobData>(CONTACT_BULK_ADD_QUEUE, {
-    connection: getRedis(),
-    prefix: BULL_PREFIX,
-    skipVersionCheck: true,
-    defaultJobOptions: DEFAULT_QUEUE_OPTIONS,
-  });
+  public static queue = createQueue<ContactJobData>(CONTACT_BULK_ADD_QUEUE);
 
-  public static worker = new Worker(
+  public static worker = createWorker(
     CONTACT_BULK_ADD_QUEUE,
     createWorkerHandler(processContactJob),
     {
-      connection: getRedis(),
-      prefix: BULL_PREFIX,
-      skipVersionCheck: true,
       concurrency: 20,
+      onError: (err) => {
+        logger.error({ err }, "[ContactQueueService]: Worker error");
+      },
     },
   );
 
   static {
-    this.worker.on("error", (err) => {
-      logger.error({ err }, "[ContactQueueService]: Worker error");
-    });
-
     logger.info("[ContactQueueService]: Initialized contact queue service");
   }
 
@@ -49,17 +40,14 @@ class ContactQueueService {
     teamId?: number,
     delay?: number,
   ) {
-    await this.queue.add(
+    await this.queue.enqueue(
       `add-contact-${contact.email}`,
       {
         contactBookId,
         contact,
         teamId,
       },
-      {
-        delay,
-        ...DEFAULT_QUEUE_OPTIONS,
-      },
+      { delay },
     );
   }
 
@@ -75,10 +63,9 @@ class ContactQueueService {
         contact,
         teamId,
       },
-      opts: DEFAULT_QUEUE_OPTIONS,
     }));
 
-    await this.queue.addBulk(jobs);
+    await this.queue.enqueueBulk(jobs);
     logger.info(
       { count: contacts.length, contactBookId },
       "[ContactQueueService]: Added bulk contact jobs to queue",
@@ -86,17 +73,7 @@ class ContactQueueService {
   }
 
   public static async getQueueStats() {
-    const waiting = await this.queue.getWaiting();
-    const active = await this.queue.getActive();
-    const completed = await this.queue.getCompleted();
-    const failed = await this.queue.getFailed();
-
-    return {
-      waiting: waiting.length,
-      active: active.length,
-      completed: completed.length,
-      failed: failed.length,
-    };
+    return await this.queue.getStats();
   }
 }
 

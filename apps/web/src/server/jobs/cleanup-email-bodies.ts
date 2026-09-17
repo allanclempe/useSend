@@ -1,8 +1,6 @@
-import {Queue, Worker} from "bullmq";
 import {db} from "~/server/db";
-import {getRedis, BULL_PREFIX} from "~/server/redis";
 import {logger} from "../logger/log";
-import {DEFAULT_QUEUE_OPTIONS} from "../queue/queue-constants";
+import {createQueue, createWorker} from "../queue";
 import {env} from "~/env";
 import {isSelfHosted, isEmailCleanupEnabled} from "~/utils/common";
 
@@ -17,13 +15,9 @@ if (isSelfHosted() && isEmailCleanupEnabled()) {
     /**
      * Initialize Queue
      */
-    const cleanupQueue = new Queue(CLEANUP_QUEUE_NAME, {
-        connection: getRedis(),
-        prefix: BULL_PREFIX,
-        skipVersionCheck: true,
-    });
+    const cleanupQueue = createQueue(CLEANUP_QUEUE_NAME);
 
-    const worker = new Worker(
+    createWorker(
         CLEANUP_QUEUE_NAME,
         async () => {
             logger.info(`[Cleanup] Starting cleanup for emails older than ${CLEANUP_DAYS} days...`);
@@ -52,30 +46,17 @@ if (isSelfHosted() && isEmailCleanupEnabled()) {
             logger.info(`[Cleanup] Emails cleaned: ${result.count}`);
         },
         {
-            connection: getRedis(),
-            prefix: BULL_PREFIX,
-            skipVersionCheck: true,
-        }
-    );
-
-    await cleanupQueue.upsertJobScheduler(
-        "scheduled-email-cleanup",
-        {
-            pattern: CLEANUP_CRON,
-            tz: "UTC",
-        },
-        {
-            opts: {
-                ...DEFAULT_QUEUE_OPTIONS,
+            onCompleted: (job) => {
+                logger.info({jobId: job.id}, ` Email Body cleanup job completed`);
+            },
+            onFailed: (job, err) => {
+                logger.error({err, jobId: job?.id}, `Email Body cleanup job failed`);
             },
         }
     );
 
-    worker.on("completed", (job) => {
-        logger.info({jobId: job.id}, ` Email Body cleanup job completed`);
-    });
-
-    worker.on("failed", (job, err) => {
-        logger.error({err, jobId: job?.id}, `Email Body cleanup job failed`);
+    await cleanupQueue.schedule("scheduled-email-cleanup", {
+        cron: CLEANUP_CRON,
+        tz: "UTC",
     });
 }
