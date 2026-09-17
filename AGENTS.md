@@ -104,8 +104,16 @@ Run it after changing anything in the Worker's dependency tree.
 `pnpm --filter=web queue:check` runs the queue seam inside a real isolate the
 same way (`src/worker/queue-check.ts`, port 8791): enqueue through the real
 driver, consume through the real `queue()` export, and observe `delaySeconds`,
-the retry backoff and the dead letter hop. Both are fixture Workers with their
-own `wrangler.*.jsonc` and are never deployed.
+the retry backoff, the dead letter hop and webhook ordering through the Durable
+Object. Both are fixture Workers with their own `wrangler.*.jsonc` and are never
+deployed.
+
+To exercise a Cron Trigger locally, POST the expression to the dev server —
+`wrangler dev` does not fire them on schedule:
+
+```sh
+curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
+```
 
 ## Coding Style & Naming Conventions
 
