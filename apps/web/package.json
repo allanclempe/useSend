@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit --pretty false",
     "db:post-install": "prisma generate",
     "db:generate": "prisma generate",
+    "db:drizzle-pull": "node scripts/drizzle-pull.js",
     "db:push": "prisma db push --skip-generate",
     "db:migrate-dev": "prisma migrate dev",
     "db:migrate-deploy": "prisma migrate deploy",
@@ -56,6 +57,7 @@
     "bullmq": "^5.51.1",
     "chrono-node": "^2.8.0",
     "date-fns": "^4.1.0",
+    "drizzle-orm": "^0.45.2",
     "emoji-picker-react": "^4.12.2",
     "framer-motion": "^12.9.2",
     "hono": "^4.12.19",
@@ -69,6 +71,7 @@
     "next-auth": "^4.24.14",
     "nodemailer": "^8.0.5",
     "pnpm": "^11.11.0",
+    "postgres": "^3.4.9",
     "prisma": "^6.6.0",
     "query-string": "^9.1.1",
     "react": "19.1.0",
@@ -101,6 +104,8 @@
     "@typescript-eslint/parser": "^8.31.0",
     "@usesend/eslint-config": "workspace:*",
     "@usesend/typescript-config": "workspace:*",
+    "@vitest/coverage-v8": "^3.2.4",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^8.57.1",
     "eslint-config-next": "^15.5.18",
     "postcss": "^8.5.14",
@@ -109,8 +114,7 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.3",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.4",
-    "@vitest/coverage-v8": "^3.2.4"
+    "vitest": "^3.2.4"
   },
   "overrides": {
     "react-is": "^19.0.0-rc-69d4b800-20241021"
