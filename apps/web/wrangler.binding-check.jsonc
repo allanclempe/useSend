@@ -2,9 +2,10 @@
  * A fixture Worker, never deployed.
  *
  * `src/worker/binding-check.ts` exercises the Phase 9 seams inside a real
- * `workerd` isolate: the KV cache binding, and a rate limit counted in a
- * Durable Object under twenty concurrent callers. Both are simulated locally by
- * `wrangler dev`, on disk under `.wrangler`, with no Cloudflare account.
+ * `workerd` isolate: the KV cache binding, a rate limit counted in a Durable
+ * Object under twenty concurrent callers, and ten concurrent duplicate requests
+ * under one `Idempotency-Key`. All of it is simulated locally by `wrangler dev`,
+ * on disk under `.wrangler`, with no Cloudflare account.
  *
  * Separate config from `wrangler.jsonc` so the fixture can never end up in the
  * API's bundle. The binding names and class names are deliberately the same as
@@ -31,7 +32,15 @@
   ],
 
   "durable_objects": {
-    "bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }]
+    "bindings": [
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter" },
+      { "name": "IDEMPOTENCY_KEEPER", "class_name": "IdempotencyKeeper" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RateLimiter"] }]
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RateLimiter", "IdempotencyKeeper"]
+    }
+  ]
 }

@@ -33,7 +33,7 @@ Redis carries five unrelated responsibilities. Only the first is a queue.
 |---|---|---|---|
 | 1 | Job queues | BullMQ, 8 queues | **Cloudflare Queues** + **Cron Triggers** |
 | 2 | Per-webhook ordering lock | `SET NX PX` + Lua release (`webhook-service.ts:681-703`) | **Durable Object per `webhookId`** — the lock is deleted, not ported |
-| 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** (needs strong consistency) |
+| 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** — `server/idempotency/`, **done** |
 | 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Durable Object**, one per bucket — `server/rate-limit/`, **done** |
 | 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` (`team-service.ts:398`) | **Workers KV** with TTL — `server/cache/`, **done** |
 
@@ -498,6 +498,21 @@ requires a Cloudflare account.
   small row behind forever. Reclaiming it would cost a Durable Object request per window per
   bucket, and the busiest bucket has a one-second window — roughly doubling requests on the hottest
   path in the API to recover tens of bytes.
+
+  **Idempotency is a Durable Object per `teamId` + key** (`server/idempotency/`). The lock is
+  deleted rather than ported, for the reason §3 gives about the webhook lock: a Durable Object is
+  single-threaded per object id, so "only one caller may be deciding this" is a property of where
+  the code runs. What was `GET` → `SET NX` → a second `GET` to cover the winner finishing in
+  between — three round trips and a race the second `GET` only narrows — is one `begin` that
+  returns one of four answers: `acquired`, `hit`, `conflict`, `in-progress`. The Redis driver
+  answers the same four, which is why the lock now holds the body hash instead of `"1"`.
+
+  This object *does* get an alarm, unlike the rate limiter: keys are client-supplied and unbounded,
+  and the alarm is one request per key per day rather than per second.
+
+  Verified in a real isolate: ten concurrent `withIdempotency` calls on one key run the operation
+  **once**, one caller gets the result and nine are refused, and a later duplicate replays rather
+  than runs (`pnpm --filter=web bindings:check`).
 - **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
   from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
 

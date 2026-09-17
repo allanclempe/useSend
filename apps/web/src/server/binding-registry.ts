@@ -44,6 +44,11 @@ export const DURABLE_OBJECT_BINDINGS = {
    * is not Cloudflare's Rate Limiting binding — see `server/rate-limit/types.ts`.
    */
   RATE_LIMITER: "RateLimiter",
+  /**
+   * One object per `teamId` + `Idempotency-Key`. A dedup guard needs
+   * read-after-write and KV has none — see `server/idempotency/types.ts`.
+   */
+  IDEMPOTENCY_KEEPER: "IdempotencyKeeper",
 } as const satisfies Record<string, string>;
 
 export type DurableObjectBindingName = keyof typeof DURABLE_OBJECT_BINDINGS;

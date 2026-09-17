@@ -1,10 +1,13 @@
 import { cacheAdd, cacheDelete, cacheGet, cachePut } from "~/server/cache";
+import { idempotencyStore } from "~/server/idempotency";
 import { consumeRateLimit } from "~/server/rate-limit";
+import { IdempotencyService } from "~/server/service/idempotency-service";
 import {
   withWorkerBindings,
   type WorkerBindings,
 } from "~/server/worker-bindings";
 
+export { IdempotencyKeeper } from "./idempotency-keeper";
 export { RateLimiter } from "./rate-limiter";
 
 /**
@@ -18,7 +21,10 @@ export { RateLimiter } from "./rate-limiter";
  * - the cache seam reaches a real KV binding, and `add` behaves;
  * - **a rate limit counted in a Durable Object is exact under concurrency** —
  *   which is the entire reason it is not Cloudflare's per-colo Rate Limiting
- *   binding, and not something a unit test with a fake can demonstrate.
+ *   binding, and not something a unit test with a fake can demonstrate;
+ * - **concurrent duplicate requests carrying one `Idempotency-Key` run the
+ *   operation once** — the acceptance criterion on #11, and the thing KV's
+ *   eventual consistency would quietly break.
  *
  *   pnpm --filter=web bindings:check
  *   curl -s http://localhost:8792/ | jq
@@ -147,10 +153,119 @@ async function rateLimitChecks(): Promise<Check[]> {
   return checks;
 }
 
+async function idempotencyChecks(): Promise<Check[]> {
+  const checks: Check[] = [];
+  const teamId = 4242;
+
+  /**
+   * The headline check, and the acceptance criterion on #11.
+   *
+   * Ten concurrent `withIdempotency` calls with one key and one payload. The
+   * operation must run exactly once; the other nine must either replay its
+   * result or be told it is in progress, and none of them may run it.
+   *
+   * The operation yields before returning, which is what makes this a real
+   * test: without it the whole thing could complete inside one microtask and
+   * never overlap.
+   */
+  const key = `concurrent-${crypto.randomUUID()}`;
+  let ran = 0;
+
+  const outcomes = await Promise.allSettled(
+    Array.from({ length: 10 }, () =>
+      IdempotencyService.withIdempotency({
+        teamId,
+        idemKey: key,
+        payload: { to: "a@b.com", subject: "hello" },
+        operation: async () => {
+          ran += 1;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return { emailIds: ["em_1"] };
+        },
+        extractEmailIds: (result: { emailIds: string[] }) => result.emailIds,
+        formatCachedResponse: (emailIds: string[]) => ({ emailIds }),
+        logContext: "binding-check",
+      }),
+    ),
+  );
+
+  const fulfilled = outcomes.filter(
+    (outcome) => outcome.status === "fulfilled",
+  ).length;
+
+  checks.push({
+    name: "idempotency: 10 concurrent duplicates run the operation once",
+    passed: ran === 1,
+    detail: `ran=${ran} fulfilled=${fulfilled}/10`,
+  });
+
+  // Every caller that did not get the result was refused, not silently given a
+  // different one.
+  checks.push({
+    name: "idempotency: no concurrent duplicate produced a second result",
+    passed: outcomes.every(
+      (outcome) =>
+        outcome.status === "rejected" ||
+        JSON.stringify(outcome.value) ===
+          JSON.stringify({ emailIds: ["em_1"] }),
+    ),
+    detail: outcomes
+      .map((outcome) => (outcome.status === "fulfilled" ? "hit" : "refused"))
+      .join(","),
+  });
+
+  // And once it has settled, a later identical request replays rather than runs.
+  const replay = await IdempotencyService.withIdempotency({
+    teamId,
+    idemKey: key,
+    payload: { to: "a@b.com", subject: "hello" },
+    operation: async () => {
+      ran += 1;
+      return { emailIds: ["em_2"] };
+    },
+    extractEmailIds: (result: { emailIds: string[] }) => result.emailIds,
+    formatCachedResponse: (emailIds: string[]) => ({ emailIds }),
+    logContext: "binding-check",
+  });
+
+  checks.push({
+    name: "idempotency: a later duplicate replays the stored result",
+    passed: ran === 1 && replay.emailIds[0] === "em_1",
+    detail: `ran=${ran} emailIds=${replay.emailIds.join(",")}`,
+  });
+
+  // A different payload under the same key is a conflict, not a second send.
+  const conflictKey = `conflict-${crypto.randomUUID()}`;
+  await idempotencyStore.begin(teamId, conflictKey, "hash-a");
+  const conflict = await idempotencyStore.begin(teamId, conflictKey, "hash-b");
+  checks.push({
+    name: "idempotency: a different payload under the same key conflicts",
+    passed: conflict.status === "conflict",
+    detail: conflict.status,
+  });
+
+  // An abandoned claim frees the key immediately rather than for the lock TTL.
+  const retryKey = `retry-${crypto.randomUUID()}`;
+  await idempotencyStore.begin(teamId, retryKey, "hash-a");
+  await idempotencyStore.abandon(teamId, retryKey);
+  const afterAbandon = await idempotencyStore.begin(teamId, retryKey, "hash-a");
+  checks.push({
+    name: "idempotency: abandoning a claim frees the key",
+    passed: afterAbandon.status === "acquired",
+    detail: afterAbandon.status,
+  });
+
+  return checks;
+}
+
 export default {
   async fetch(_request: Request, env: WorkerBindings): Promise<Response> {
     return await withWorkerBindings(env, async () => {
-      const checks = [...(await cacheChecks()), ...(await rateLimitChecks())];
+      const checks = [
+        ...(await cacheChecks()),
+        ...(await rateLimitChecks()),
+        ...(await idempotencyChecks()),
+      ];
 
       return Response.json(
         {

@@ -82,6 +82,14 @@
       {
         "name": "RATE_LIMITER",
         "class_name": "RateLimiter"
+      },
+      // One object per `teamId:Idempotency-Key` (§1, item 3). KV would let two
+      // identical sends inside its propagation window both read "no record"
+      // and both send — the header that exists to prevent a duplicate would
+      // have caused one.
+      {
+        "name": "IDEMPOTENCY_KEEPER",
+        "class_name": "IdempotencyKeeper"
       }
     ]
   },
@@ -96,6 +104,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["RateLimiter"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["IdempotencyKeeper"]
     }
   ],
 

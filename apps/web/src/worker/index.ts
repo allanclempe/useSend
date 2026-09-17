@@ -19,6 +19,7 @@ import { handleStorageRequest, isStorageRequest } from "./storage-routes";
  * `wrangler.jsonc` to bind them by class name.
  */
 export { CampaignScheduler } from "./campaign-scheduler";
+export { IdempotencyKeeper } from "./idempotency-keeper";
 export { RateLimiter } from "./rate-limiter";
 export { WebhookDispatcher } from "./webhook-dispatcher";
 
