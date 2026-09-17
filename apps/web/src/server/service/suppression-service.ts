@@ -193,8 +193,18 @@ export class SuppressionService {
         )
         .returning();
 
+      // No row matched: it's already not suppressed, which is what the caller
+      // wanted. Removing twice, or removing an address that is in SES's
+      // suppression list but not ours, must not be an error.
       if (!deleted) {
-        throw new Error("Suppression not found");
+        logger.debug(
+          {
+            email: normalizedEmail,
+            teamId,
+          },
+          "Attempted to remove non-existent suppression - already not suppressed"
+        );
+        return;
       }
 
       logger.info(
@@ -206,21 +216,6 @@ export class SuppressionService {
         "Email removed from suppression list"
       );
     } catch (error) {
-      // If the record doesn't exist, that's fine - it's already not suppressed
-      if (
-        error instanceof Error &&
-        error.message.includes("Record to delete does not exist")
-      ) {
-        logger.debug(
-          {
-            email: normalizedEmail,
-            teamId,
-          },
-          "Attempted to remove non-existent suppression - already not suppressed"
-        );
-        return;
-      }
-
       logger.error(
         {
           email: normalizedEmail,

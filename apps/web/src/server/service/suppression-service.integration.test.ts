@@ -118,6 +118,31 @@ describeIntegration("suppression-service", () => {
     expect(await drizzleDb.$count(schema.suppressionList)).toBe(0);
   });
 
+  it("removing an address that is not suppressed is a no-op", async () => {
+    // Double-clicking Remove, or removing an address SES suppressed but we
+    // never recorded, lands here. It used to 500.
+    await expect(
+      SuppressionService.removeSuppression("never@example.com", teamId),
+    ).resolves.toBeUndefined();
+
+    expect(await drizzleDb.$count(schema.suppressionList)).toBe(0);
+  });
+
+  it("removing twice succeeds the second time", async () => {
+    await SuppressionService.addSuppression({
+      email: "twice@example.com",
+      teamId,
+      reason: "MANUAL",
+    });
+
+    await SuppressionService.removeSuppression("twice@example.com", teamId);
+    await expect(
+      SuppressionService.removeSuppression("twice@example.com", teamId),
+    ).resolves.toBeUndefined();
+
+    expect(await drizzleDb.$count(schema.suppressionList)).toBe(0);
+  });
+
   it("counts by reason, as numbers not bigint strings", async () => {
     await SuppressionService.addSuppression({
       email: "h1@example.com",
