@@ -145,7 +145,7 @@ model Subscription {
   teamId             Int
   status             String
   priceId            String
-  priceIds           String[]
+  priceIds           String[]  @default([])
   currentPeriodEnd   DateTime?
   currentPeriodStart DateTime?
   cancelAtPeriodEnd  DateTime?
@@ -244,10 +244,10 @@ model Email {
   id           String       @id @default(cuid())
   sesEmailId   String?      @unique
   from         String
-  to           String[]
-  replyTo      String[]
-  cc           String[]
-  bcc          String[]
+  to           String[]     @default([])
+  replyTo      String[]     @default([])
+  cc           String[]     @default([])
+  bcc          String[]     @default([])
   subject      String
   text         String?
   html         String?
@@ -355,9 +355,9 @@ model Campaign {
   name               String
   teamId             Int
   from               String
-  cc                 String[]
-  bcc                String[]
-  replyTo            String[]
+  cc                 String[]       @default([])
+  bcc                String[]       @default([])
+  replyTo            String[]       @default([])
   domainId           Int
   subject            String
   previewText        String?
@@ -475,7 +475,7 @@ model Webhook {
   description         String?
   secret              String
   status              WebhookStatus @default(ACTIVE)
-  eventTypes          String[]
+  eventTypes          String[]      @default([])
   apiVersion          String?
   consecutiveFailures Int           @default(0)
   lastFailureAt       DateTime?

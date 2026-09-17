@@ -100,11 +100,7 @@ function send(app: PublicAPIApp) {
       });
     }
 
-    return c.json({
-      ...email,
-      // Column is nullable in the DB but the API contract says non-null.
-      to: email.to ?? [],
-    });
+    return c.json(email);
   });
 }
 

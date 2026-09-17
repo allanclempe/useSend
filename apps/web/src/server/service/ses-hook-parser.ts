@@ -382,20 +382,9 @@ export async function parseSesHook(data: SesEvent) {
 type EmailBounceSubType =
   EmailEventPayloadMap["email.bounced"]["bounce"]["subType"];
 
-/**
- * Email.to, cc, bcc and replyTo are nullable in the database while Prisma typed
- * them as plain arrays. The webhook payload shape depends on the Prisma
- * reading, so coerce here — same as toWebhook in webhook-service and
- * toCampaign in campaign-service.
- */
+/** Pins the Drizzle email row to the `Email` shape the webhook payload expects. */
 function toEmail(row: typeof schema.email.$inferSelect): Email {
-  return {
-    ...row,
-    to: row.to ?? [],
-    cc: row.cc ?? [],
-    bcc: row.bcc ?? [],
-    replyTo: row.replyTo ?? [],
-  } as Email;
+  return row;
 }
 
 function buildEmailWebhookPayload(params: {

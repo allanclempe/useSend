@@ -13,26 +13,14 @@ import {
   UnsubscribeReason,
 } from "@prisma/client";
 
-/**
- * Normalises a campaign row for callers.
- *
- * `replyTo`, `cc` and `bcc` are nullable in the database, but Prisma typed them
- * as plain arrays and the dashboard, public API and send path all assume that.
- * Coerce here rather than widening the type and pushing `| null` through every
- * consumer. Same situation as Webhook.eventTypes in #31.
- */
 function toContact(row: typeof schema.contact.$inferSelect): Contact {
   // jsonb reads as `unknown` in Drizzle; Prisma typed it JsonValue.
   return { ...row, properties: (row.properties ?? {}) as Contact["properties"] };
 }
 
+/** Pins the Drizzle campaign row to the `Campaign` shape callers expect. */
 export function toCampaign(row: typeof schema.campaign.$inferSelect): Campaign {
-  return {
-    ...row,
-    replyTo: row.replyTo ?? [],
-    cc: row.cc ?? [],
-    bcc: row.bcc ?? [],
-  } as Campaign;
+  return row;
 }
 import { EmailQueueService } from "./email-queue-service";
 import {
@@ -338,18 +326,6 @@ export async function createCampaignFromApi({
   return toCampaign(campaign);
 }
 
-/** The projected shape getCampaignForTeam returns, with arrays normalised. */
-function toCampaignSummary<
-  T extends { replyTo: string[] | null; cc: string[] | null; bcc: string[] | null },
->(row: T) {
-  return {
-    ...row,
-    replyTo: row.replyTo ?? [],
-    cc: row.cc ?? [],
-    bcc: row.bcc ?? [],
-  };
-}
-
 export async function getCampaignForTeam({
   campaignId,
   teamId,
@@ -402,7 +378,7 @@ export async function getCampaignForTeam({
     });
   }
 
-  return toCampaignSummary(campaign);
+  return campaign;
 }
 
 export async function sendCampaign(id: string) {

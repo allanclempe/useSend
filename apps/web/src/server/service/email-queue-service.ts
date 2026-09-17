@@ -449,14 +449,12 @@ async function executeEmail(job: QueueEmailJob) {
     const customHeaders = email.headers ? JSON.parse(email.headers) : undefined;
 
     const messageId = await sendRawEmail({
-      // These columns are nullable in the database while Prisma typed them as
-      // arrays, which is the shape sendRawEmail expects.
-      to: email.to ?? [],
+      to: email.to,
       from: email.from,
       subject,
-      replyTo: email.replyTo ?? undefined,
-      bcc: email.bcc ?? [],
-      cc: email.cc ?? [],
+      replyTo: email.replyTo,
+      bcc: email.bcc,
+      cc: email.cc,
       text,
       html: email.html ?? undefined,
       region: domain?.region ?? env.AWS_DEFAULT_REGION,

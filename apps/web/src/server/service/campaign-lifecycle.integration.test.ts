@@ -339,8 +339,6 @@ describeIntegration("campaign lifecycle", () => {
         teamId,
       });
       expect(found.id).toBe(campaign.id);
-      // Nullable in the database, but Prisma typed them as arrays and callers
-      // rely on that.
       expect(found.cc).toEqual([]);
       expect(found.bcc).toEqual([]);
       expect(found.replyTo).toEqual([]);

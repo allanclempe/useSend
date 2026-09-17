@@ -109,21 +109,17 @@ describeIntegration("email-service", () => {
       expect(mockQueueEmail).toHaveBeenCalledTimes(1);
     });
 
-    it("leaves cc and bcc NULL when not supplied", async () => {
+    it("stores cc, bcc and replyTo as empty arrays when not supplied", async () => {
       const email = await sendEmail({ ...base, teamId });
 
-      // `String[]` columns have no NOT NULL and no DEFAULT, so an omitted
-      // value lands as NULL. Prisma hid that by reading NULL back as `[]`;
-      // Drizzle reports what is actually stored. The pending
-      // `NOT NULL DEFAULT '{}'` migration is what would make these `[]` for
-      // real -- and would let the `?? []` coercions around the codebase go.
       const [stored] = await drizzleDb
         .select()
         .from(schema.email)
         .where(eq(schema.email.id, email.id))
         .limit(1);
-      expect(stored?.cc).toBeNull();
-      expect(stored?.bcc).toBeNull();
+      expect(stored?.cc).toEqual([]);
+      expect(stored?.bcc).toEqual([]);
+      expect(stored?.replyTo).toEqual([]);
     });
 
     it("stores cc, bcc and replyTo when supplied", async () => {
@@ -325,13 +321,12 @@ describeIntegration("email-service", () => {
         { ...base, to: "c@example.com", teamId },
       ]);
 
-      // Email.to is a nullable array column, so Drizzle types it `string[] | null`.
-      expect(emails.map((e) => e.to?.[0])).toEqual([
+      expect(emails.map((e) => e.to[0])).toEqual([
         "a@example.com",
         "b@example.com",
         "c@example.com",
       ]);
-      const suppressed = emails.find((e) => e.to?.[0] === "b@example.com");
+      const suppressed = emails.find((e) => e.to[0] === "b@example.com");
       expect(suppressed?.latestStatus).toBe("SUPPRESSED");
     });
 

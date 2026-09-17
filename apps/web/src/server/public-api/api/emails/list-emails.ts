@@ -155,13 +155,6 @@ function listEmails(app: PublicAPIApp) {
     return c.json({
       data: emails.map((email) => ({
         ...email,
-        // These columns are nullable in the DB but Prisma typed them
-        // `String[]` and read NULL back as `[]`; the API contract says
-        // non-null, so keep coercing at the boundary.
-        to: email.to ?? [],
-        replyTo: email.replyTo ?? [],
-        cc: email.cc ?? [],
-        bcc: email.bcc ?? [],
         createdAt: email.createdAt.toISOString(),
         updatedAt: email.updatedAt.toISOString(),
         scheduledAt: email.scheduledAt ? email.scheduledAt.toISOString() : null,
