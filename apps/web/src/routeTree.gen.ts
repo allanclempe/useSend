@@ -18,6 +18,8 @@ import { Route as DashboardDashboardRouteImport } from './routes/_dashboard/dash
 import { Route as DashboardPaymentsRouteImport } from './routes/_dashboard/payments'
 import { Route as DashboardSuppressionsRouteImport } from './routes/_dashboard/suppressions'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
+import { Route as ApiToHtmlRouteImport } from './routes/api.to-html'
+import { Route as ApiUnsubscribeOneclickRouteImport } from './routes/api.unsubscribe-oneclick'
 import { Route as LoginIndexRouteImport } from './routes/login/index'
 import { Route as LoginVerifyRouteImport } from './routes/login/verify'
 import { Route as DashboardAdminIndexRouteImport } from './routes/_dashboard/admin/index'
@@ -39,6 +41,8 @@ import { Route as DashboardTemplatesIndexRouteImport } from './routes/_dashboard
 import { Route as DashboardWebhooksIndexRouteImport } from './routes/_dashboard/webhooks/index'
 import { Route as DashboardWebhooksWebhookIdRouteImport } from './routes/_dashboard/webhooks/$webhookId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as ApiDevEmailPreviewRouteImport } from './routes/api.dev.email-preview'
+import { Route as ApiWebhookStripeRouteImport } from './routes/api.webhook.stripe'
 import { Route as DashboardCampaignsCampaignIdIndexRouteImport } from './routes/_dashboard/campaigns/$campaignId/index'
 import { Route as DashboardCampaignsCampaignIdEditRouteImport } from './routes/_dashboard/campaigns/$campaignId/edit'
 import { Route as DashboardContactsContactBookIdIndexRouteImport } from './routes/_dashboard/contacts/$contactBookId/index'
@@ -87,6 +91,16 @@ const DashboardSuppressionsRoute = DashboardSuppressionsRouteImport.update({
 const ApiHealthRoute = ApiHealthRouteImport.update({
   id: '/api/health',
   path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiToHtmlRoute = ApiToHtmlRouteImport.update({
+  id: '/api/to-html',
+  path: '/api/to-html',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUnsubscribeOneclickRoute = ApiUnsubscribeOneclickRouteImport.update({
+  id: '/api/unsubscribe-oneclick',
+  path: '/api/unsubscribe-oneclick',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginIndexRoute = LoginIndexRouteImport.update({
@@ -201,6 +215,16 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDevEmailPreviewRoute = ApiDevEmailPreviewRouteImport.update({
+  id: '/api/dev/email-preview',
+  path: '/api/dev/email-preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWebhookStripeRoute = ApiWebhookStripeRouteImport.update({
+  id: '/api/webhook/stripe',
+  path: '/api/webhook/stripe',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardCampaignsCampaignIdIndexRoute =
   DashboardCampaignsCampaignIdIndexRouteImport.update({
     id: '/campaigns/$campaignId/',
@@ -241,6 +265,8 @@ export interface FileRoutesByFullPath {
   '/payments': typeof DashboardPaymentsRoute
   '/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/to-html': typeof ApiToHtmlRoute
+  '/api/unsubscribe-oneclick': typeof ApiUnsubscribeOneclickRoute
   '/login/verify': typeof LoginVerifyRoute
   '/login/': typeof LoginIndexRoute
   '/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
@@ -253,6 +279,8 @@ export interface FileRoutesByFullPath {
   '/settings/team': typeof DashboardSettingsTeamRoute
   '/webhooks/$webhookId': typeof DashboardWebhooksWebhookIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/email-preview': typeof ApiDevEmailPreviewRoute
+  '/api/webhook/stripe': typeof ApiWebhookStripeRoute
   '/admin/': typeof DashboardAdminIndexRoute
   '/campaigns/': typeof DashboardCampaignsIndexRoute
   '/contacts/': typeof DashboardContactsIndexRoute
@@ -277,6 +305,8 @@ export interface FileRoutesByTo {
   '/payments': typeof DashboardPaymentsRoute
   '/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/to-html': typeof ApiToHtmlRoute
+  '/api/unsubscribe-oneclick': typeof ApiUnsubscribeOneclickRoute
   '/login/verify': typeof LoginVerifyRoute
   '/login': typeof LoginIndexRoute
   '/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
@@ -289,6 +319,8 @@ export interface FileRoutesByTo {
   '/settings/team': typeof DashboardSettingsTeamRoute
   '/webhooks/$webhookId': typeof DashboardWebhooksWebhookIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/email-preview': typeof ApiDevEmailPreviewRoute
+  '/api/webhook/stripe': typeof ApiWebhookStripeRoute
   '/admin': typeof DashboardAdminIndexRoute
   '/campaigns': typeof DashboardCampaignsIndexRoute
   '/contacts': typeof DashboardContactsIndexRoute
@@ -315,6 +347,8 @@ export interface FileRoutesById {
   '/_dashboard/payments': typeof DashboardPaymentsRoute
   '/_dashboard/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
+  '/api/to-html': typeof ApiToHtmlRoute
+  '/api/unsubscribe-oneclick': typeof ApiUnsubscribeOneclickRoute
   '/login/verify': typeof LoginVerifyRoute
   '/login/': typeof LoginIndexRoute
   '/_dashboard/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
@@ -327,6 +361,8 @@ export interface FileRoutesById {
   '/_dashboard/settings/team': typeof DashboardSettingsTeamRoute
   '/_dashboard/webhooks/$webhookId': typeof DashboardWebhooksWebhookIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/dev/email-preview': typeof ApiDevEmailPreviewRoute
+  '/api/webhook/stripe': typeof ApiWebhookStripeRoute
   '/_dashboard/admin/': typeof DashboardAdminIndexRoute
   '/_dashboard/campaigns/': typeof DashboardCampaignsIndexRoute
   '/_dashboard/contacts/': typeof DashboardContactsIndexRoute
@@ -353,6 +389,8 @@ export interface FileRouteTypes {
     | '/payments'
     | '/suppressions'
     | '/api/health'
+    | '/api/to-html'
+    | '/api/unsubscribe-oneclick'
     | '/login/verify'
     | '/login/'
     | '/admin/email-analytics'
@@ -365,6 +403,8 @@ export interface FileRouteTypes {
     | '/settings/team'
     | '/webhooks/$webhookId'
     | '/api/auth/$'
+    | '/api/dev/email-preview'
+    | '/api/webhook/stripe'
     | '/admin/'
     | '/campaigns/'
     | '/contacts/'
@@ -389,6 +429,8 @@ export interface FileRouteTypes {
     | '/payments'
     | '/suppressions'
     | '/api/health'
+    | '/api/to-html'
+    | '/api/unsubscribe-oneclick'
     | '/login/verify'
     | '/login'
     | '/admin/email-analytics'
@@ -401,6 +443,8 @@ export interface FileRouteTypes {
     | '/settings/team'
     | '/webhooks/$webhookId'
     | '/api/auth/$'
+    | '/api/dev/email-preview'
+    | '/api/webhook/stripe'
     | '/admin'
     | '/campaigns'
     | '/contacts'
@@ -426,6 +470,8 @@ export interface FileRouteTypes {
     | '/_dashboard/payments'
     | '/_dashboard/suppressions'
     | '/api/health'
+    | '/api/to-html'
+    | '/api/unsubscribe-oneclick'
     | '/login/verify'
     | '/login/'
     | '/_dashboard/admin/email-analytics'
@@ -438,6 +484,8 @@ export interface FileRouteTypes {
     | '/_dashboard/settings/team'
     | '/_dashboard/webhooks/$webhookId'
     | '/api/auth/$'
+    | '/api/dev/email-preview'
+    | '/api/webhook/stripe'
     | '/_dashboard/admin/'
     | '/_dashboard/campaigns/'
     | '/_dashboard/contacts/'
@@ -461,9 +509,13 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   WaitListRoute: typeof WaitListRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiToHtmlRoute: typeof ApiToHtmlRoute
+  ApiUnsubscribeOneclickRoute: typeof ApiUnsubscribeOneclickRoute
   LoginVerifyRoute: typeof LoginVerifyRoute
   LoginIndexRoute: typeof LoginIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiDevEmailPreviewRoute: typeof ApiDevEmailPreviewRoute
+  ApiWebhookStripeRoute: typeof ApiWebhookStripeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -529,6 +581,20 @@ declare module '@tanstack/react-router' {
       path: '/api/health'
       fullPath: '/api/health'
       preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/to-html': {
+      id: '/api/to-html'
+      path: '/api/to-html'
+      fullPath: '/api/to-html'
+      preLoaderRoute: typeof ApiToHtmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/unsubscribe-oneclick': {
+      id: '/api/unsubscribe-oneclick'
+      path: '/api/unsubscribe-oneclick'
+      fullPath: '/api/unsubscribe-oneclick'
+      preLoaderRoute: typeof ApiUnsubscribeOneclickRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login/': {
@@ -678,6 +744,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/dev/email-preview': {
+      id: '/api/dev/email-preview'
+      path: '/api/dev/email-preview'
+      fullPath: '/api/dev/email-preview'
+      preLoaderRoute: typeof ApiDevEmailPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/webhook/stripe': {
+      id: '/api/webhook/stripe'
+      path: '/api/webhook/stripe'
+      fullPath: '/api/webhook/stripe'
+      preLoaderRoute: typeof ApiWebhookStripeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_dashboard/campaigns/$campaignId/': {
       id: '/_dashboard/campaigns/$campaignId/'
       path: '/campaigns/$campaignId'
@@ -788,9 +868,13 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   WaitListRoute: WaitListRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiToHtmlRoute: ApiToHtmlRoute,
+  ApiUnsubscribeOneclickRoute: ApiUnsubscribeOneclickRoute,
   LoginVerifyRoute: LoginVerifyRoute,
   LoginIndexRoute: LoginIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiDevEmailPreviewRoute: ApiDevEmailPreviewRoute,
+  ApiWebhookStripeRoute: ApiWebhookStripeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
