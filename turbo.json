@@ -31,6 +31,8 @@
         "API_KEY_HMAC_SECRET",
         "NODE_ENV",
         "LOG_LEVEL",
+        "OTEL_SERVICE_NAME",
+        "OTEL_SERVICE_VERSION",
         "VERCEL_URL",
         "VERCEL",
         "SKIP_ENV_VALIDATION",

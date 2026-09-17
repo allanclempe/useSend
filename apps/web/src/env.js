@@ -113,6 +113,14 @@ export const env = createEnv({
         .string()
         .default("30")
         .transform((str) => parseInt(str, 10)),
+    /**
+     * OpenTelemetry resource attributes stamped on every log record. Declared
+     * here so they are validated and documented; `server/logger/log.ts` reads
+     * them from `process.env` directly, because the logger has to be importable
+     * from modules that run before env validation.
+     */
+    OTEL_SERVICE_NAME: z.string().optional(),
+    OTEL_SERVICE_VERSION: z.string().optional(),
   },
 
   /**
@@ -180,6 +188,8 @@ export const env = createEnv({
     EMAIL_CLEANUP_DAYS: process.env.EMAIL_CLEANUP_DAYS,
     EMAIL_EVENT_RETENTION_DAYS: process.env.EMAIL_EVENT_RETENTION_DAYS,
     WEBHOOK_CALL_RETENTION_DAYS: process.env.WEBHOOK_CALL_RETENTION_DAYS,
+    OTEL_SERVICE_NAME: process.env.OTEL_SERVICE_NAME,
+    OTEL_SERVICE_VERSION: process.env.OTEL_SERVICE_VERSION,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
