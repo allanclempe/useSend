@@ -433,9 +433,34 @@ requires a Cloudflare account.
   retired** in favour of TanStack Start server functions; `@trpc/*` leaves the dependency tree.
   The Hono public API (`server/public-api/`) is untouched and remains the external contract.
 
-  **In progress.** It ships as a stack of small PRs that leave Next.js serving `src/app` until
-  the last one, so no intermediate state has neither framework working. What the plan did not
-  anticipate, and what makes it smaller than 126 files suggests:
+  **Done.** It shipped as a stack of small PRs that left Next.js serving `src/app` until the
+  last one, so no intermediate state had neither framework working. The teardown is the three
+  PRs at the end of the stack: `src/app`, then `src/trpc` + `src/server/api`, then `next`
+  itself. `NotPortedYet` is gone, `next` and `@trpc/*` are out of `apps/web/package.json`, and
+  `pnpm --filter=web dev` is `vite dev`.
+
+  **Four things the teardown found that nothing typechecked.** Worth reading before the next
+  bulk deletion, because none of them failed a build:
+
+  1. **`app/globals.css` was the Tailwind entry**, imported by `src/styles.css`. Deleting the
+     directory would have taken every `@source` glob and the theme import with it, silently.
+     It now lives in `src/styles.css`.
+  2. **`team-service.ts` imported `TRPCError`** — a service, not a router, so it survived every
+     grep for `~/trpc` and `~/server/api`. It throws `AppError` now.
+  3. **A plain export on a `server/functions` module reaches the browser.** Start strips
+     `createServerFn` handler bodies from the client build; it does not strip an ordinary
+     exported function beside them. Exporting two helpers from `functions/campaign.ts` pulled
+     Drizzle and the `postgres` driver into the client bundle, which died on `Buffer is not
+     defined` — so React never hydrated and every form fell back to a native submit. Helpers
+     worth testing go on a service. **This is the one to remember:** it is invisible to `tsc`
+     and to every test, and only shows up when a page is actually loaded in a browser.
+  4. **Duplicate `vite` instances are order-sensitive.** `lightningcss` is an optional peer of
+     `vite`, so two resolutions of it produce two nominally distinct copies of vite's `Plugin`
+     type. The vitest configs mix them, and which copy `tsc` anchors on depends on the order
+     files enter the program — so deleting enough files turned a latent mismatch into six
+     errors in untouched files. `lightningcss` is pinned in `pnpm-workspace.yaml`.
+
+  What the plan did not anticipate, and what made it smaller than 126 files suggests:
 
   - **There is no server-component data flow to port.** The dashboard is already a
     client-rendered SPA — `app/(dashboard)/layout.tsx` is `force-static`, the gate is
@@ -546,6 +571,32 @@ requires a Cloudflare account.
   than runs (`pnpm --filter=web bindings:check`).
 - **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
   from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
+
+  Phase 7's teardown hands it three more, none of which are Redis:
+
+  1. **`docker/Dockerfile` no longer builds, and is left that way deliberately.** It builds
+     `apps/web` expecting `.next/standalone` and runs `node apps/web/server.js` via
+     `docker/start.sh`. That is the self-hosted Node deployment this migration replaces with
+     `wrangler deploy`, so the question is not how to repoint it but **whether useSend still
+     ships a container at all** — a product decision, not a teardown one. Nothing on `main`
+     builds it: `.github/workflows/publish.yml` is tag-triggered. Either rewrite both files
+     around `wrangler deploy` or delete them with `docker/prod/compose.yml` and `nixpacks.toml`.
+     `docker/dev/compose.yml` and `docker/testing/compose.yml` stay — they are local infra.
+  2. **The `NEXT_PUBLIC_` prefix is now free to go.** It survived Phase 7 only because renaming
+     it mid-stack would have broken whichever framework was still running; nothing depends on
+     the name any more. It is a wide but mechanical rename — `env.public.ts`, the `envPrefix` in
+     `vite.config.ts`, `turbo.json`, `.dev.vars.example`, `.github/workflows/test-web.yml`,
+     `docker/`, and every `publicEnv.NEXT_PUBLIC_*` read — and it changes operator-facing
+     configuration, so it wants its own PR rather than a corner of someone else's.
+  3. **`apps/web/.eslintrc.cjs` still extends `@usesend/eslint-config/next.js`.** The preset's
+     Next rules are inert in a Vite app but the name now lies, and one
+     `eslint-disable-next-line @next/next/no-img-element` in
+     `routes/_dashboard/contacts/$contactBookId/-contact-list.tsx` depends on the plugin still
+     being loaded. `apps/marketing` is a real Next.js app and keeps the preset, so this is a
+     new non-Next config for `apps/web`, not a change to the shared one.
+
+  Note that `pnpm --filter=web lint` already fails `--max-warnings 0` on `main` — 138 warnings
+  before the teardown, 52 after it. That backlog predates #9 and belongs to #87, not here.
 
 ## 10. Test impact
 

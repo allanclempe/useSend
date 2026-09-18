@@ -2,11 +2,10 @@
 
 ## Project Structure & Module Organization
 
-- apps/web: the product. Mid-migration (#9): TanStack Start on Cloudflare Workers is being
-  stood up beside the Next.js App Router, one dashboard area at a time, and Next.js still
-  serves `src/app` until the last PR of that stack deletes it. New pages are TanStack routes
-  under `src/routes`; new server-side calls are TanStack Start server functions under
-  `src/server/functions`, not tRPC routers. Uses Drizzle and Tailwind.
+- apps/web: the product. TanStack Start on Cloudflare Workers (#9). Pages are routes under
+  `src/routes`; server-side calls are TanStack Start server functions under
+  `src/server/functions`. Next.js and tRPC are gone — there is no `src/app`, no
+  `src/server/api`, and `next` and `@trpc/*` are not dependencies. Uses Drizzle and Tailwind.
 - apps/marketing: Public marketing site (Next.js, static export).
 - apps/docs: Mintlify docs content.
 - apps/smtp-server: SMTP proxy/server (TypeScript → tsup build).
@@ -18,8 +17,9 @@
 ## Build, Test, and Development Commands
 
 - `pnpm i`: Install workspace deps (Node >= 20).
-- `pnpm dev`: Turbo dev for all relevant apps (loads `.env`).
-- `pnpm start:web:local`: Run only `apps/web` locally on port 3000.
+- `pnpm dev`: Turbo dev for all relevant apps (loads `.env`). For `apps/web` this is the same
+  `vite dev` that `pnpm dev:worker` runs — a Worker has no separate `start`, so there is no
+  `start:web:local` any more.
 - `pnpm build`: Turbo build across the monorepo.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
 - `pnpm dev:worker`: Run the whole Worker — dashboard and public API — on a local `workerd`
@@ -217,11 +217,16 @@ Rules that are not style:
   belongs — not in a component that renders a login form at someone else's URL.
 - Errors are `AppError` from `~/server/app-error`. Only the message crosses the wire.
 
-**Every dashboard area has moved.** `NotPortedYet` -- the placeholder an unported area
-rendered, and the count of files importing it that tracked how much of #9 was left -- is gone
-with the last of them. What remains of #9 is the teardown: deleting `src/app`, `src/trpc` and
-`src/server/api`, and dropping `next` and `@trpc/*`. Until that lands both frameworks still
-build, and `pnpm dev` still serves the Next.js copy of every page.
+**Every dashboard area has moved, and the old one is deleted.** `src/app`, `src/trpc` and
+`src/server/api` are gone, along with `next`, `@trpc/*`, `superjson`, `next.config.js` and the
+`*.trpc.test.ts` tier. `pnpm --filter=web dev` and `pnpm dev:worker` both run `vite dev`;
+there is no other way to run this app.
+
+**A helper worth testing goes on a service, never beside a server function.** Start strips
+`createServerFn` handler bodies from the client build, but a plain exported function next to
+them is an ordinary export the client bundle keeps — so it drags Drizzle and the `postgres`
+driver into the browser, the client entry dies on `Buffer is not defined`, and React silently
+never hydrates. `tsc` and every test still pass. The only way to catch it is to load a page.
 
 ## Coding Style & Naming Conventions
 
@@ -275,9 +280,8 @@ build, and `pnpm dev` still serves the Next.js copy of every page.
 
 ## Rules
 
-- **tRPC is being retired (#9).** The 17 routers under `src/server/api/routers` are the old
-  world and are deleted area by area. Do not add a procedure to one — see "The dashboard
-  (TanStack Start)" above for where a new server-side call goes.
+- **tRPC is gone (#9).** There are no routers and no `@trpc/*` packages. A new server-side
+  call is a server function — see "The dashboard (TanStack Start)" above.
 - **Do not add work to the SES event pipeline to learn something we already
   know.** Every subscribed SES event costs an SNS POST, a queue message and a
   consumer invocation per email, and the pipeline is the single largest line in
@@ -315,16 +319,15 @@ build, and `pnpm dev` still serves the Next.js copy of every page.
   reads `process.env` once per declared variable at module load, and `process`
   does not exist in a Vite client bundle, so one client import of it is a
   `ReferenceError` on first paint. `~/env.public` holds the handful a browser
-  may read. Both frameworks **bake those in at build time** — Vite inlines
-  `import.meta.env.NEXT_PUBLIC_*` exactly as Next.js inlines
-  `process.env.NEXT_PUBLIC_*` — so changing one on a deployed Worker without
+  may read. Vite **bakes those in at build time** — it inlines
+  `import.meta.env.NEXT_PUBLIC_*` — so changing one on a deployed Worker without
   rebuilding changes nothing in the browser, and nothing secret can go there.
   A module imported from a component reads `~/env.public`; that is why
   `~/utils/common` holds only `isCloud`/`isSelfHosted` and the retention flags
   it used to sit next to now live in `~/server/retention`.
-  The `NEXT_PUBLIC_` prefix survives only until `src/app` goes: Next.js inlines
-  nothing without it, so renaming while both frameworks are in the tree would
-  break the half still running.
+  The `NEXT_PUBLIC_` prefix outlived Next.js. It is now only a name — nothing
+  reads it that is not ours — and dropping it is Phase 10's (#12), because it
+  changes operator-facing configuration and wants its own PR.
 - **`APP_URL` is the one name for the application's public base URL**, and
   `APP_SECRET` is the one name for the application-wide signing key. Neither is
   an auth setting despite having been called `NEXTAUTH_*` until issue #59. Do not
