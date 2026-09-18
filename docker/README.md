@@ -1,69 +1,36 @@
-# Docker Setup for useSend
+# Docker in this repository
 
-The following guide will walk you through setting up useSend using Docker. You can choose between a production setup using Docker Compose or a standalone container.
+**useSend's web app is not a container.** It is a Cloudflare Worker, deployed
+with `wrangler deploy`, and the `usesend/usesend` image — a Next.js standalone
+server started by `docker/start.sh` — is gone along with the Next.js app it ran
+(#12). Self-hosting instructions live at
+[docs.usesend.com/self-hosting/overview](https://docs.usesend.com/self-hosting/overview).
 
-## Prerequisites
+What is left here is local infrastructure and one shipped image.
 
-Before you begin, ensure that you have the following installed:
+## Local development infrastructure
 
-- Docker
-- Docker Compose (if using the Docker Compose setup)
-- Node.js 20.19 or newer (required by the build image)
+`docker/dev/compose.yml` — started by `pnpm dx:up`, stopped by `pnpm dx:down`.
+It runs Neon Local (a proxy to a real Neon branch, not a local Postgres), the
+local SES/SNS simulator and MinIO. It reads `NEON_PROJECT_ID`, `NEON_API_KEY`
+and `NEON_BRANCH_ID` from the repo-root `.env`; the `dx` scripts pass
+`--project-directory .` so compose finds it.
 
-## Option 1: Production Docker Compose Setup
+`docker/testing/compose.yml` — started by `pnpm test:infra:up`, stopped by
+`pnpm test:infra:down`. One throwaway `postgres:16` on port 54329 holding the
+`usesend_test` database that the integration suite and `pnpm dev:worker`
+(through the local Hyperdrive binding) run against.
 
-This setup includes PostgreSQL, Redis and the useSend application.
+Neither is a shipped artifact. Neither is published anywhere.
 
-1. Download the Docker Compose file from the useSend repository: [compose.yml](https://github.com/usesend/usesend/blob/main/docker/prod/compose.yml)
-2. Navigate to the directory containing the `compose.yml` file.
-3. Create a `.env` file in the same directory. Copy the contents of `.env.selfhost.example`
-4. Run the following command to start the containers:
+## The SMTP proxy image
 
-```
-docker-compose --env-file ./.env up -d
-```
+`apps/smtp-server` keeps its own `Dockerfile` and is the only image this
+repository publishes (`usesend/smtp-proxy`, built by
+`.github/workflows/publish.yml` on a tag). It is a raw TCP SMTP listener on
+:465/:587 and cannot run on Workers, so it stays a container — see
+`references/serverless-migration.md` §7. It talks to useSend over the public
+HTTP API only, so it can be pointed at any instance, self-hosted or cloud.
 
-This will start the PostgreSQL database, Redis and the useSend application containers.
-
-5. Access the useSend application by visiting `http://localhost:3000` in your web browser.
-
-## Option 2: Standalone Docker Container
-
-If you prefer to host the useSend application on your container provider of choice, you can use the pre-built Docker image from DockerHub or GitHub's Package Registry. Note that you will need to provide your own database and SMTP host.
-
-1. Pull the useSend Docker image:
-
-```
-docker pull usesend/usesend
-```
-
-Or, if using GitHub's Package Registry:
-
-```
-docker pull ghcr.io/usesend/usesend
-```
-
-2. Run the Docker container, providing the necessary environment variables for your database and SMTP host:
-
-```
-docker run -d \
-  -p 3000:3000 \
-  -e APP_URL="<your-public-app-url>" \
-  -e APP_SECRET="<your-app-secret>" \
-  -e DATABASE_URL="<your-database-url>" \
-  -e REDIS_URL="<your-redis-url>" \
-  -e AWS_ACCESS_KEY_ID="<your-aws-access-key-id>" \
-  -e AWS_SECRET_ACCESS_KEY="<your-aws-secret-access-key>" \
-  -e AWS_DEFAULT_REGION="<your-aws-region>" \
-  -e GITHUB_ID="<your-github-client-id>" \
-  -e GITHUB_SECRET="<your-github-client-secret>" \
-  usesend/usesend
-```
-
-Replace the placeholders with your actual database and AWS details.
-
-1. Access the useSend application by visiting the URL you provided in the `APP_URL` environment variable in your web browser.
-
-## Success
-
-You have now successfully set up useSend using Docker. You can start sending emails efficiently. If you encounter any issues or have further questions, please refer to the official useSend documentation or seek assistance from the community.
+Setup is documented under "SMTP Proxy Server" in
+[docs.usesend.com/self-hosting/overview](https://docs.usesend.com/self-hosting/overview).

@@ -255,9 +255,9 @@ never hydrates. `tsc` and every test still pass. The only way to catch it is to 
 - **`pnpm-workspace.yaml` is the only place pnpm reads settings from** — `overrides`,
   `packageExtensions`, `allowBuilds`, `minimumReleaseAgeExclude`. There is no second copy: the
   `"pnpm"` field in root `package.json` was a duplicate pnpm 11 ignores outright, and it is gone
-  (issue #55). Do not add one back "for older pnpm" — both deployment paths resolve pnpm from
-  `packageManager` via corepack (`docker/Dockerfile`, `nixpacks.toml`), and a settings file that is
-  edited but not read is the worst place for a security override to live.
+  (issue #55). Do not add one back "for older pnpm" — there is no deployment path that resolves pnpm
+  from anywhere else now that the Docker and nixpacks builds are gone (#12), and a settings file that
+  is edited but not read is the worst place for a security override to live.
 - **Check `pnpm-lock.yaml`, not the settings file, to confirm a pnpm setting took effect.** The
   lockfile header records the effective `overrides:` and a `packageExtensionsChecksum:`, and the
   package entries record the resolved versions — that is the only evidence that the setting was read
@@ -315,13 +315,21 @@ never hydrates. `tsc` and every test still pass. The only way to catch it is to 
   keep the KDF for secrets a human chose.
 - **Every new secret has to be declared in four places** or something breaks
   quietly: `apps/web/src/env.js` (schema *and* `runtimeEnv`), `turbo.json`'s
-  `env` list, `.env.example`, and `.env.selfhost.example` — the last two with the
-  command that generates it. Add a placeholder to
-  `apps/web/src/test/setup/setup-env.ts` if it is required rather than optional.
-  Never commit a real value. Docker and self-host paths carry their own copies —
-  `docker/prod/compose.yml`, `docker/README.md`, `apps/web/.dev.vars.example`,
-  `apps/web/.env.test.example`, `.github/workflows/test-web.yml`, `CONTRIBUTION.md`
-  and `apps/docs/**` — so renaming one is wider than the four places above.
+  `env` list, `.env.example` — with the command that generates it — and
+  `apps/web/.dev.vars.example`, which is what a local Worker reads. Add a
+  placeholder to `apps/web/src/test/setup/setup-env.ts` if it is required rather
+  than optional. Never commit a real value. On a deployed Worker a secret is
+  `wrangler secret put`, not a file, so `apps/docs/self-hosting/overview.mdx`
+  lists them too; `apps/web/.env.test.example`, `.github/workflows/test-web.yml`
+  and `CONTRIBUTION.md` carry their own copies. Renaming one is wider than the
+  four places above.
+- **There is no web container.** Self-hosting useSend is `wrangler deploy`
+  (#12). `docker/Dockerfile`, `docker/start.sh`, `docker/build.sh`,
+  `docker/prod/compose.yml`, `.env.selfhost.example` and `nixpacks.toml` are
+  deleted, and `.github/workflows/publish.yml` publishes exactly one image:
+  `apps/smtp-server`, which is a raw TCP listener that cannot run on Workers.
+  `docker/dev/compose.yml` and `docker/testing/compose.yml` stay — they are
+  local infrastructure, not shipped artifacts.
 - **There are two env modules, and which one a variable goes in is a security
   boundary, not a style choice.** `~/env` is server-only: its `runtimeEnv`
   reads `process.env` once per declared variable at module load, and `process`

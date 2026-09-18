@@ -30,9 +30,10 @@ minimumReleaseAgeExclude:
 # This file is the only place pnpm reads settings from. The `"pnpm"` field in
 # root package.json used to carry a second copy "for deployment environments
 # still on pnpm 9"; pnpm 11 ignores that field outright, so the copy was inert
-# and a security override lived somewhere edits had no effect (issue #55). Both
-# deployment paths resolve pnpm from `packageManager` via corepack —
-# `docker/Dockerfile` and `nixpacks.toml` — so neither was ever on pnpm 9.
+# and a security override lived somewhere edits had no effect (issue #55).
+# Nothing resolves pnpm from anywhere else either: the Docker and nixpacks
+# builds that did are gone with the web image (#12), and `wrangler deploy` runs
+# from a checkout that already has this file.
 #
 # `linkify-it@<=5.0.0` is a security floor. It matches nothing today (the tree
 # resolves 5.0.2, already above the vulnerable range); it is here so a future

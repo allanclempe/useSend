@@ -35,7 +35,6 @@
         "VERCEL_URL",
         "VERCEL",
         "SKIP_ENV_VALIDATION",
-        "DOCKER_OUTPUT",
         "PORT",
         "UNSEND_API_KEY",
         "USESEND_API_KEY",
