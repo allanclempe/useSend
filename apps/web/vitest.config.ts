@@ -1,8 +1,11 @@
 import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+import { workspaceAliases } from "./workspace-aliases";
+
 export default defineConfig({
   plugins: [tsconfigPaths()],
+  resolve: { alias: workspaceAliases },
   test: {
     environment: "node",
     globals: true,

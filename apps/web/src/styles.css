@@ -1,0 +1,19 @@
+/**
+ * The application stylesheet, as TanStack Start loads it (#9).
+ *
+ * The Tailwind entry itself is still `src/app/globals.css` — imported rather
+ * than copied, so there is one list of `@source` globs and one theme import
+ * while both frameworks are in the tree. When `src/app` goes, that file moves
+ * here and this import goes with it.
+ *
+ * Inter and JetBrains Mono come from `@fontsource-variable/*` rather than
+ * `next/font`, which does not exist outside Next.js. Both self-host the files;
+ * a `<link>` to fonts.googleapis.com would have been fewer lines and would
+ * have leaked a visitor's IP to a third party on every page load for a font we
+ * can serve ourselves. The family names are already what `@usesend/ui`'s theme
+ * asks for, so nothing downstream changes.
+ */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@import "./app/globals.css";

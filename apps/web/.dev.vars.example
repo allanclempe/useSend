@@ -22,3 +22,18 @@ AWS_DEFAULT_REGION="us-east-1"
 # time. Generate a throwaway one for local dev with:
 #   openssl rand -hex 32
 API_KEY_HMAC_SECRET=""
+
+# Signs the session cookie and keys the hash that sign-in codes are stored
+# under. `src/env.js` only requires it in production, and better-auth falls
+# back to a well-known constant without it -- which is fine for a throwaway
+# local database and wrong everywhere else. Set it here so local behaviour
+# matches a deploy. Generate one with:
+#   openssl rand -base64 32
+BETTER_AUTH_SECRET=""
+
+# Turns on email sign-in. `getEnabledAuthProviders()` reads it as a boolean --
+# with no value, and no GitHub or Google credentials either, the login page
+# renders with no way to sign in at all, which is a confusing first five
+# minutes. In development `sendSignUpEmail` logs the code instead of sending
+# it, so any address will do.
+FROM_EMAIL="hello@localhost.test"

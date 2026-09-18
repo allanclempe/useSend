@@ -266,7 +266,7 @@ async function runChecks(): Promise<CheckResult[]> {
   results.push(
     await check(
       "stripe.webhooks.constructEvent (sync, current code)",
-      "app/api/webhook/stripe/route.ts:45",
+      "server/billing/stripe-webhook.ts",
       () => {
         const stripe = new Stripe(STRIPE_TEST_SECRET, {
           httpClient: Stripe.createFetchHttpClient(),
@@ -284,7 +284,7 @@ async function runChecks(): Promise<CheckResult[]> {
   results.push(
     await check(
       "constructEventAsync + createSubtleCryptoProvider",
-      "app/api/webhook/stripe/route.ts:45",
+      "server/billing/stripe-webhook.ts",
       async () => {
         const stripe = new Stripe(STRIPE_TEST_SECRET, {
           httpClient: Stripe.createFetchHttpClient(),
@@ -305,7 +305,7 @@ async function runChecks(): Promise<CheckResult[]> {
   results.push(
     await check(
       "constructEventAsync rejects a forged signature",
-      "app/api/webhook/stripe/route.ts:45",
+      "server/billing/stripe-webhook.ts",
       async () => {
         const stripe = new Stripe(STRIPE_TEST_SECRET, {
           httpClient: Stripe.createFetchHttpClient(),

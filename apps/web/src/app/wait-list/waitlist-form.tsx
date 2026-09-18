@@ -21,7 +21,7 @@ import {
   WAITLIST_EMAIL_TYPES,
   waitlistSubmissionSchema,
   type WaitlistSubmissionInput,
-} from "./schema";
+} from "~/lib/zod/waitlist-schema";
 import { api } from "~/trpc/react";
 import { signOut } from "~/lib/auth-client";
 

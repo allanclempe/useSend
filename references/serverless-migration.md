@@ -1,6 +1,6 @@
 # Cloudflare migration plan
 
-Status: **in progress — Phases 0–3, 5, 8 and 9 landed; 4, 6, 7 and 10 outstanding.**
+Status: **in progress — Phases 0–3, 5, 8 and 9 landed; 7 under way; 4, 6 and 10 outstanding.**
 Sections marked **Done** record what was actually built and where it differed from the plan; the
 rest is still a plan. Nothing here has run on a Cloudflare account — every measurement is local
 `workerd` under `wrangler dev`.
@@ -432,6 +432,34 @@ requires a Cloudflare account.
 - **Phase 7 — TanStack Start.** Rip Next.js: 126 files under `src/app`. **All 17 tRPC routers are
   retired** in favour of TanStack Start server functions; `@trpc/*` leaves the dependency tree.
   The Hono public API (`server/public-api/`) is untouched and remains the external contract.
+
+  **In progress.** It ships as a stack of small PRs that leave Next.js serving `src/app` until
+  the last one, so no intermediate state has neither framework working. What the plan did not
+  anticipate, and what makes it smaller than 126 files suggests:
+
+  - **There is no server-component data flow to port.** The dashboard is already a
+    client-rendered SPA — `app/(dashboard)/layout.tsx` is `force-static`, the gate is
+    better-auth's client `useSession()` in `providers/auth.tsx`, and nothing in the app imports
+    `~/trpc/server`. The page files move across with their imports swapped.
+  - **`next/*` appears outside `src/app` in six files.** `next/link`, `next/image`,
+    `next/navigation` in four components, and `next/headers` in `server/auth.ts` and
+    `trpc/server.ts`.
+  - The real volume is **124 `use{Query,Mutation}` call sites across 78 files** plus **49
+    `api.useUtils()`** invalidations, which is what the per-area `queryOptions` factories exist
+    to absorb.
+
+  **The dev server is the proof.** `@cloudflare/vite-plugin` runs the server half of the app in
+  a real `workerd` isolate with every binding from `wrangler.jsonc`, so `vite dev` is the same
+  runtime `wrangler dev` gave the API and there is no separate step. Plain `wrangler dev` can no
+  longer build `src/server.ts`, because the Start handler is assembled from virtual modules only
+  the Vite plugin provides.
+
+  **One Worker, one entry.** `src/server.ts` is both `main` in `wrangler.jsonc` and Start's
+  `server.entry`: it holds the `fetch`/`queue`/`scheduled` exports and the four Durable Object
+  classes, and delegates routing to `src/worker/routing.ts` —` /storage/*`, the SES callback,
+  `/api/v1/*` to Hono, then Start. The Hono mount narrowed from `/api` to `/api/v1`, which is
+  the only behaviour change to it: it used to answer a JSON 404 for any unmatched `/api/…`, and
+  that space now belongs to the route handlers that were Next.js files.
 - **Phase 8 — Jobs to Queues + DOs**, easiest first:
   `domain-verification` → `webhook-cleanup` → `usage-reporting` → `cleanup-email-bodies`
   (pure cron) → `ses-webhook` → `webhook-dispatch` (DO, deletes the lock) → `contact-bulk-add`

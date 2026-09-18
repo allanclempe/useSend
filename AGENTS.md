@@ -2,7 +2,11 @@
 
 ## Project Structure & Module Organization
 
-- apps/web: Next.js app (primary product). Uses Drizzle, TRPC, Tailwind.
+- apps/web: the product. Mid-migration (#9): TanStack Start on Cloudflare Workers is being
+  stood up beside the Next.js App Router, one dashboard area at a time, and Next.js still
+  serves `src/app` until the last PR of that stack deletes it. New pages are TanStack routes
+  under `src/routes`; new server-side calls are TanStack Start server functions under
+  `src/server/functions`, not tRPC routers. Uses Drizzle and Tailwind.
 - apps/marketing: Public marketing site (Next.js, static export).
 - apps/docs: Mintlify docs content.
 - apps/smtp-server: SMTP proxy/server (TypeScript → tsup build).
@@ -18,7 +22,8 @@
 - `pnpm start:web:local`: Run only `apps/web` locally on port 3000.
 - `pnpm build`: Turbo build across the monorepo.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
-- `pnpm dev:worker`: Run the public API on Cloudflare Workers locally (see below).
+- `pnpm dev:worker`: Run the whole Worker — dashboard and public API — on a local `workerd`
+  via `vite dev` (see below).
 - Database (apps/web filter): `db:generate` | `db:migrate` | `db:push` | `db:studio`.
 - Migrations are drizzle-kit's, in `apps/web/src/server/drizzle/migrations`. The workflow is: edit
   `src/server/drizzle/schema.ts` (the hand-authored source of truth), run `pnpm --filter=web
@@ -36,11 +41,20 @@
 
 ## Running the Worker locally
 
-`apps/web/wrangler.jsonc` serves the Hono public API (`src/worker/index.ts`) on
-Cloudflare Workers. **No Cloudflare account and no `wrangler login` are needed**:
-`wrangler dev` runs the real `workerd` binary locally and simulates KV, R2,
-Queues and Durable Objects on disk under `apps/web/.wrangler`. Only
-`wrangler deploy` needs an account.
+`apps/web/wrangler.jsonc` describes one Worker — `src/server.ts` — carrying the
+dashboard, the Hono public API, the queue consumer, the cron handler and the
+four Durable Object classes. **No Cloudflare account and no `wrangler login`
+are needed**: the dev server runs the real `workerd` binary locally and
+simulates KV, R2, Queues and Durable Objects on disk under `apps/web/.wrangler`.
+Only `wrangler deploy` needs an account.
+
+**The dev server is Vite, and Vite is `workerd`.** `@cloudflare/vite-plugin`
+runs the server half of the app inside a real isolate with every binding in
+`wrangler.jsonc`, so there is no second "now try it on Workers" step. Plain
+`wrangler dev` cannot build `src/server.ts` — the TanStack Start handler is
+assembled from virtual modules only the Vite plugin provides — so
+`pnpm dev:worker` is `vite dev`. The three fixture Workers below keep their own
+configs and are still plain `wrangler dev`.
 
 1. `pnpm test:infra:up`, then `pnpm --filter=web test:integration:prepare:local`
    once to migrate the throwaway `usesend_test` container. That is the database
@@ -52,8 +66,16 @@ Queues and Durable Objects on disk under `apps/web/.wrangler`. Only
    `src/env.js` validates inside the Worker exactly as it does under Node — an
    env var missing from `.dev.vars` fails the isolate at startup, not at request
    time.
-3. `pnpm dev:worker`. The API is on `http://localhost:8788/api`; `GET /api/v1/doc`
-   serves the OpenAPI document and needs no auth.
+3. `pnpm dev:worker`. Everything is on `http://localhost:8788` — the dashboard
+   at `/`, the public API under `/api/v1`, `GET /api/v1/doc` for the OpenAPI
+   document (no auth), `/storage/*` for R2 and `/api/health` for a liveness
+   check that touches nothing.
+
+The Worker's request routing is written down once, in the order it is
+evaluated, in `src/worker/routing.ts`: `/storage/*`, then the SES callback,
+then `/api/v1/*` to Hono, then TanStack Start for everything else. `src/server.ts`
+is the entry that gives it the Start handler and holds the exports Cloudflare
+looks up by name.
 
 Things that behave differently inside the Worker, by design:
 
@@ -119,7 +141,7 @@ Things that behave differently inside the Worker, by design:
 - **KV namespaces and Durable Object bindings live in `server/binding-registry.ts`**,
   and `binding-registry.unit.test.ts` fails if `wrangler.jsonc` disagrees. Same
   rule as queues: **adding one means editing both**, plus a `migrations` entry
-  for a new Durable Object class and an `export` from `src/worker/index.ts`.
+  for a new Durable Object class and an `export` from `src/server.ts`.
 - **`wrangler dev` writes nothing to Cloudflare.** Never run `wrangler deploy` or
   `wrangler login` without being asked.
 
@@ -149,6 +171,57 @@ To exercise a Cron Trigger locally, POST the expression to the dev server —
 ```sh
 curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
 ```
+
+## The dashboard (TanStack Start)
+
+Four directories, and which one a file belongs in follows from who is allowed to call it.
+
+- **`src/routes/`** — the URL tree. File-based; `src/routeTree.gen.ts` is generated and
+  committed so `tsc` works without running Vite. A file whose name starts with `-` is *not*
+  a route, which is how a page's own components sit next to it
+  (`routes/login/-login-page.tsx`). `_dashboard.tsx` is a pathless layout: it holds the
+  sign-in gate and the chrome, and its children keep the URLs they had.
+- **`src/server/functions/<area>.ts`** — one module per former tRPC router. Every function is
+  `createServerFn(...)` behind middleware from `functions/middleware.ts`.
+- **`src/queries/<area>.ts`** — `queryOptions` factories and a key namespace.
+  `<area>Keys.all` is the prefix of every other key in the area, because that is what
+  `api.useUtils().<router>.invalidate()` used to be. A key written inline at a call site is a
+  key that will eventually disagree with the one that wrote the cache entry.
+- **`src/server/authorization.ts`** — the rules the middleware enforces, with no framework in
+  them, so they can be read and tested without building a request.
+
+Rules that are not style:
+
+- **Take `teamId` from `context`, never from input.** The middleware ladder is the
+  authorisation boundary; a handler that reads a team id the caller sent has walked around it.
+- **A resource middleware contributes its own validator field.** `domainMiddleware` means the
+  function takes `{ id: number }`; do not redeclare it in the function's own `.validator()`.
+- **Start chains validators, so a middleware's `z.object()` strips the function's own input.**
+  Each validator is fed the *previous* one's output. A resource loader that parsed strictly
+  would delete the fields the server function declared for itself before that function's
+  validator ever ran — silently, with no error. All six loaders are `.passthrough()` for that
+  reason and `middleware.unit.test.ts` fails if one stops being. The mirror image cannot be
+  fixed and is the rule at the call site: the function's own validator strips the *loader's*
+  field, so **read the resource from `context`** (`context.domain.id`), never from `data`, even
+  though the inferred type of `data` claims the field is there.
+- **A server function's return type is checked for serialisability.** Drizzle types a `jsonb`
+  column as `unknown`, which Start rejects; coerce it at the seam (`contacts.ts`'s
+  `withStringProperties`) rather than in the component. superjson left with tRPC, so `Date`
+  travels natively but a `Map`, a `Set` or a `BigInt` does not.
+- **`.validator()`, not `.inputValidator()`** — the latter is deprecated in this version.
+- **Queries get a `queryOptions` factory; mutations are called directly** by the component
+  through `useMutation({ mutationFn })`, invalidating with a key from the area's `queries/`
+  module.
+- **`beforeLoad` runs on the server during SSR**, so a `redirect()` thrown there is a real
+  HTTP redirect on the first request and a client navigation afterwards. That is where a gate
+  belongs — not in a component that renders a login form at someone else's URL.
+- Errors are `AppError` from `~/server/app-error`. Only the message crosses the wire.
+
+**Every dashboard area has moved.** `NotPortedYet` -- the placeholder an unported area
+rendered, and the count of files importing it that tracked how much of #9 was left -- is gone
+with the last of them. What remains of #9 is the teardown: deleting `src/app`, `src/trpc` and
+`src/server/api`, and dropping `next` and `@trpc/*`. Until that lands both frameworks still
+build, and `pnpm dev` still serves the Next.js copy of every page.
 
 ## Coding Style & Naming Conventions
 
@@ -194,7 +267,9 @@ curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
 
 ## Rules
 
-- Prefer to use trpc alway unless asked otherwise
+- **tRPC is being retired (#9).** The 17 routers under `src/server/api/routers` are the old
+  world and are deleted area by area. Do not add a procedure to one — see "The dashboard
+  (TanStack Start)" above for where a new server-side call goes.
 - **Do not add work to the SES event pipeline to learn something we already
   know.** Every subscribed SES event costs an SNS POST, a queue message and a
   consumer invocation per email, and the pipeline is the single largest line in
@@ -227,6 +302,21 @@ curl "http://localhost:8788/cdn-cgi/handler/scheduled?cron=0+3+*+*+*"
   `docker/prod/compose.yml`, `docker/README.md`, `apps/web/.dev.vars.example`,
   `apps/web/.env.test.example`, `.github/workflows/test-web.yml`, `CONTRIBUTION.md`
   and `apps/docs/**` — so renaming one is wider than the four places above.
+- **There are two env modules, and which one a variable goes in is a security
+  boundary, not a style choice.** `~/env` is server-only: its `runtimeEnv`
+  reads `process.env` once per declared variable at module load, and `process`
+  does not exist in a Vite client bundle, so one client import of it is a
+  `ReferenceError` on first paint. `~/env.public` holds the handful a browser
+  may read. Both frameworks **bake those in at build time** — Vite inlines
+  `import.meta.env.NEXT_PUBLIC_*` exactly as Next.js inlines
+  `process.env.NEXT_PUBLIC_*` — so changing one on a deployed Worker without
+  rebuilding changes nothing in the browser, and nothing secret can go there.
+  A module imported from a component reads `~/env.public`; that is why
+  `~/utils/common` holds only `isCloud`/`isSelfHosted` and the retention flags
+  it used to sit next to now live in `~/server/retention`.
+  The `NEXT_PUBLIC_` prefix survives only until `src/app` goes: Next.js inlines
+  nothing without it, so renaming while both frameworks are in the tree would
+  break the half still running.
 - **`APP_URL` is the one name for the application's public base URL**, and
   `APP_SECRET` is the one name for the application-wide signing key. Neither is
   an auth setting despite having been called `NEXTAUTH_*` until issue #59. Do not

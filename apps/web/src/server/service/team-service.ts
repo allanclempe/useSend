@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { env } from "~/env";
+import { publicEnv } from "~/env.public";
 import { and, eq } from "drizzle-orm";
 import { drizzleDb, schema } from "~/server/drizzle";
 import { createId } from "~/server/drizzle/id";
@@ -96,7 +97,7 @@ export class TeamService {
       return;
     }
 
-    if (!env.NEXT_PUBLIC_IS_CLOUD) {
+    if (!publicEnv.NEXT_PUBLIC_IS_CLOUD) {
       const [_team] = await drizzleDb.select().from(schema.team).limit(1);
       if (_team) {
         throw new TRPCError({

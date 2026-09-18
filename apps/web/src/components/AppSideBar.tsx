@@ -51,7 +51,7 @@ import {
   DropdownMenuTrigger,
 } from "@usesend/ui/src/dropdown-menu";
 import { FeedbackDialog } from "./FeedbackDialog";
-import { env } from "~/env";
+import { publicEnv } from "~/env.public";
 
 // General items
 const generalItems = [
@@ -390,8 +390,8 @@ export function NavUser({
 }
 
 function VersionInfo() {
-  const appVersion = env.NEXT_PUBLIC_APP_VERSION;
-  const gitSha = env.NEXT_PUBLIC_GIT_SHA;
+  const appVersion = publicEnv.NEXT_PUBLIC_APP_VERSION;
+  const gitSha = publicEnv.NEXT_PUBLIC_GIT_SHA;
 
   // If no version info available, don't render anything
   if (!appVersion && !gitSha) {

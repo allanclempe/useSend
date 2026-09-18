@@ -1,0 +1,435 @@
+/**
+ * The dashboard's navigation, on TanStack Router (#9).
+ *
+ * Two differences from the Next.js copy in `src/components/AppSideBar.tsx`,
+ * which stays until `src/app` goes:
+ *
+ * - `to` is typed against the generated route tree, so a link to a route that
+ *   does not exist is a compile error rather than a 404 a user finds. That is
+ *   also why the whole route tree lands before the pages do.
+ * - The Feedback item is cloud only, as it was: a self-hosted install has no
+ *   founder to mail, and `functions/feedback.ts` refuses there too.
+ */
+import {
+  BookUser,
+  Code,
+  Cog,
+  Globe,
+  LayoutTemplate,
+  Mail,
+  Server,
+  Volume2,
+  BookOpenText,
+  MessageSquare,
+  BarChart3,
+  LogOutIcon,
+  MoreVerticalIcon,
+  UsersIcon,
+  GaugeIcon,
+  UserRoundX,
+  Webhook,
+} from "lucide-react";
+
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@usesend/ui/src/sidebar";
+import { Link, useLocation } from "@tanstack/react-router";
+import { ThemeSwitcher } from "~/components/theme/ThemeSwitcher";
+import { FeedbackDialog } from "./-feedback-dialog";
+import { signOut, useSession } from "~/lib/auth-client";
+import { isCloud, isSelfHosted } from "~/utils/common";
+import { Badge } from "@usesend/ui/src/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@usesend/ui/src/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@usesend/ui/src/dropdown-menu";
+import { publicEnv } from "~/env.public";
+
+// General items
+const generalItems = [
+  {
+    title: "Analytics",
+    to: "/dashboard",
+    icon: BarChart3,
+  },
+  {
+    title: "Emails",
+    to: "/emails",
+    icon: Mail,
+  },
+  {
+    title: "Templates",
+    to: "/templates",
+    icon: LayoutTemplate,
+  },
+  {
+    title: "Suppressions",
+    to: "/suppressions",
+    icon: UserRoundX,
+  },
+];
+
+// Marketing items
+const marketingItems = [
+  {
+    title: "Contacts",
+    to: "/contacts",
+    icon: BookUser,
+  },
+  {
+    title: "Campaigns",
+    to: "/campaigns",
+    icon: Volume2,
+  },
+];
+
+// Settings items
+const settingsItems = [
+  {
+    title: "Domains",
+    to: "/domains",
+    icon: Globe,
+  },
+  {
+    title: "Webhooks",
+    to: "/webhooks",
+    icon: Webhook,
+  },
+  {
+    title: "Developer settings",
+    to: "/dev-settings",
+    icon: Code,
+  },
+  {
+    title: "Settings",
+    to: "/settings",
+    icon: Cog,
+  },
+  // Admin item shows if user is admin OR if it's self-hosted
+  {
+    title: "Admin",
+    to: "/admin",
+    icon: Server,
+    isAdmin: true,
+    isSelfHosted: true,
+  },
+];
+
+export function AppSidebar() {
+  const { data: session } = useSession();
+  const showFeedback = isCloud();
+
+  const pathname = useLocation({ select: (l) => l.pathname });
+
+  return (
+    <Sidebar collapsible="icon" variant="sidebar">
+      <SidebarHeader>
+        <SidebarGroupLabel>
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-semibold text-foreground font-mono">
+              useSend
+            </span>
+            <Badge variant="outline">Beta</Badge>
+          </div>
+        </SidebarGroupLabel>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>
+            <span>General</span>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {generalItems.map((item) => {
+                const isActive = pathname.startsWith(item.to);
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={item.title}
+                      isActive={isActive}
+                    >
+                      <Link to={item.to}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>
+            <span>Marketing</span>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {marketingItems.map((item) => {
+                const isActive = pathname.startsWith(item.to);
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={item.title}
+                      isActive={isActive}
+                      className="text-sidebar-foreground"
+                    >
+                      <Link to={item.to}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>
+            <span>Settings</span>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {settingsItems.map((item) => {
+                const isActive = pathname.startsWith(item.to);
+
+                // Special case for Admin item: show if user is admin OR if it's self-hosted
+                if (item.isAdmin && item.isSelfHosted) {
+                  if (!session?.user.isAdmin && !isSelfHosted()) {
+                    return null;
+                  }
+                } else {
+                  // Regular admin-only items
+                  if (item.isAdmin && !session?.user.isAdmin) {
+                    return null;
+                  }
+                  // Regular self-hosted-only items
+                  if (item.isSelfHosted && !isSelfHosted()) {
+                    return null;
+                  }
+                }
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={item.title}
+                      isActive={isActive}
+                    >
+                      <Link to={item.to}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {showFeedback ? (
+              <SidebarMenuItem>
+                <FeedbackDialog
+                  trigger={
+                    <SidebarMenuButton tooltip="Feedback">
+                      <MessageSquare />
+                      <span>Feedback</span>
+                    </SidebarMenuButton>
+                  }
+                />
+              </SidebarMenuItem>
+            ) : null}
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild tooltip="Docs">
+                {/* An `<a>`, not a `Link`: the router's `to` is typed against
+                    this application's own route tree and docs.usesend.com is
+                    not in it. */}
+                <a
+                  href="https://docs.usesend.com"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <BookOpenText />
+                  <span>Docs</span>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroupContent>
+        {isSelfHosted() && <VersionInfo />}
+        <NavUser
+          user={{
+            name:
+              session?.user.name ||
+              session?.user.email?.split("@")[0] ||
+              "User",
+            email: session?.user.email || "",
+            avatar: session?.user.image || "",
+          }}
+        />
+      </SidebarFooter>
+    </Sidebar>
+  );
+}
+
+export function NavUser({
+  user,
+}: {
+  user: {
+    name?: string | null;
+    email?: string | null;
+    avatar?: string | null;
+  };
+}) {
+  const { isMobile } = useSidebar();
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton
+              size="lg"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            >
+              <Avatar className="h-8 w-8 rounded-lg">
+                {user.avatar ? (
+                  <AvatarImage
+                    src={user.avatar}
+                    alt={user.name ?? user.email ?? ""}
+                  />
+                ) : null}
+                <AvatarFallback className="rounded-lg capitalize">
+                  {user.name?.charAt(0) ?? user.email?.charAt(0) ?? "U"}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-medium">
+                  {user.name ?? user.email ?? "User"}
+                </span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {user.name ? user.email : ""}
+                </span>
+              </div>
+              <MoreVerticalIcon className="ml-auto size-4" />
+            </SidebarMenuButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-56 rounded-xl"
+            side={isMobile ? "bottom" : "top"}
+            sideOffset={4}
+          >
+            <DropdownMenuLabel className="p-0 font-normal">
+              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                <Avatar className="h-8 w-8 rounded-lg">
+                  {user.avatar ? (
+                    <AvatarImage
+                      src={user.avatar}
+                      alt={user.name ?? user.email ?? ""}
+                    />
+                  ) : null}
+                  <AvatarFallback className="rounded-lg capitalize">
+                    {user.name?.charAt(0) ?? user.email?.charAt(0) ?? "U"}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-medium">
+                    {user.name ?? user.email ?? "User"}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {user.name ? user.email : ""}
+                  </span>
+                </div>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem asChild>
+                <Link to="/settings/team">
+                  <UsersIcon />
+                  Team
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/settings">
+                  <GaugeIcon />
+                  Usage
+                </Link>
+              </DropdownMenuItem>
+              <div className="px-2 py-0.5">
+                <ThemeSwitcher />
+              </div>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() =>
+                signOut({
+                  fetchOptions: {
+                    onSuccess: () => {
+                      window.location.href = "/login";
+                    },
+                  },
+                })
+              }
+            >
+              <LogOutIcon />
+              Log out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
+
+function VersionInfo() {
+  const appVersion = publicEnv.NEXT_PUBLIC_APP_VERSION;
+  const gitSha = publicEnv.NEXT_PUBLIC_GIT_SHA;
+
+  // If no version info available, don't render anything
+  if (!appVersion && !gitSha) {
+    return null;
+  }
+
+  const displayVersion =
+    appVersion && appVersion !== "unknown"
+      ? appVersion
+      : gitSha && gitSha !== "unknown"
+        ? gitSha.substring(0, 7)
+        : null;
+
+  if (!displayVersion) {
+    return null;
+  }
+
+  return (
+    <div className="px-2 py-2 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between">
+        <span>Version</span>
+        <span className="font-mono">{displayVersion}</span>
+      </div>
+    </div>
+  );
+}

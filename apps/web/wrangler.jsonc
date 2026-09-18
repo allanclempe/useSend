@@ -1,5 +1,5 @@
 /**
- * Cloudflare Workers configuration for the useSend public API.
+ * Cloudflare Workers configuration for useSend.
  *
  * JSONC rather than TOML on purpose: §4.1 of references/serverless-migration.md
  * pre-declares a queue and a consumer per supported SES region, so this file is
@@ -11,8 +11,15 @@
  */
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "usesend-api",
-  "main": "src/worker/index.ts",
+  "name": "usesend",
+
+  // The single Worker: the dashboard, the Hono public API, the queue consumer,
+  // the cron handler and the four Durable Object classes (#9). Vite compiles
+  // it — `vite dev` runs this file in a real `workerd` isolate with every
+  // binding below, which is why there is no separate `wrangler dev` step.
+  // Plain `wrangler dev` cannot build it: the Start handler is assembled from
+  // virtual modules only the Vite plugin provides.
+  "main": "src/server.ts",
   "compatibility_date": "2026-01-01",
 
   // `nodejs_compat` covers node:crypto (scryptSync, generateKeyPairSync),

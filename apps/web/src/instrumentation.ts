@@ -1,7 +1,8 @@
 import { initDomainVerificationJob } from "~/server/jobs/domain-verification-job";
 import { initEmailEventCleanupJob } from "~/server/jobs/email-event-cleanup-job";
 import { initWebhookCleanupJob } from "~/server/jobs/webhook-cleanup-job";
-import { isCloud, isEmailCleanupEnabled } from "~/utils/common";
+import { isCloud } from "~/utils/common";
+import { isEmailCleanupEnabled } from "~/server/retention";
 
 let initialized = false;
 

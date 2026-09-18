@@ -17,8 +17,15 @@ allowBuilds:
   workerd: true
 
 minimumReleaseAgeExclude:
-  - miniflare@5.20260916.0-alpha
-  - wrangler@4.133.0
+  - miniflare@5.20260916.0-alpha || 5.20260917.0-alpha
+  - wrangler@4.133.0 || 4.134.0
+  - '@cloudflare/vite-plugin@1.55.0'
+  - '@cloudflare/workerd-darwin-64@1.20260917.1'
+  - '@cloudflare/workerd-darwin-arm64@1.20260917.1'
+  - '@cloudflare/workerd-linux-64@1.20260917.1'
+  - '@cloudflare/workerd-linux-arm64@1.20260917.1'
+  - '@cloudflare/workerd-windows-64@1.20260917.1'
+  - workerd@1.20260917.1
 
 # This file is the only place pnpm reads settings from. The `"pnpm"` field in
 # root package.json used to carry a second copy "for deployment environments
