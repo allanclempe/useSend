@@ -1,10 +1,15 @@
 /**
  * The application stylesheet, as TanStack Start loads it (#9).
  *
- * The Tailwind entry itself is still `src/app/globals.css` — imported rather
- * than copied, so there is one list of `@source` globs and one theme import
- * while both frameworks are in the tree. When `src/app` goes, that file moves
- * here and this import goes with it.
+ * This is the Tailwind entry: the `@source` globs below are the only list of
+ * files Tailwind scans for class names, and `@usesend/ui`'s theme is imported
+ * last so its custom properties win. It used to live in `src/app/globals.css`
+ * and be imported from here, so that one list served both frameworks while
+ * Next.js was still in the tree; Phase 7 deleted `src/app`, so it moved here
+ * and the indirection went with it.
+ *
+ * The globs are relative to this file (`apps/web/src`), which is why the
+ * workspace packages are three levels up rather than four.
  *
  * Inter and JetBrains Mono come from `@fontsource-variable/*` rather than
  * `next/font`, which does not exist outside Next.js. Both self-host the files;
@@ -16,4 +21,11 @@
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
 
-@import "./app/globals.css";
+@import "tailwindcss";
+
+@source "./**/*.{js,jsx,ts,tsx,mdx}";
+@source "../../../packages/ui/src/**/*.{js,jsx,ts,tsx,mdx}";
+@source "../../../packages/email-editor/src/**/*.{js,jsx,ts,tsx,mdx}";
+@source "../../../packages/lib/src/**/*.{js,jsx,ts,tsx,mdx}";
+
+@import "@usesend/ui/styles/globals.css";
