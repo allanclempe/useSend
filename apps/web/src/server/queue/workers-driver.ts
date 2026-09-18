@@ -25,21 +25,23 @@ import type {
 } from "./types";
 
 /**
- * The queue driver used inside a Cloudflare Worker.
- *
- * BullMQ cannot run here: its queues open a Redis socket in their constructor
- * and its workers hold a blocking connection open for the lifetime of the
- * process. Several service modules build both in `static` class fields, so
- * merely importing `campaign-service.ts` inside a Worker is enough to crash the
- * isolate at load time with "Disallowed operation called within global scope".
+ * The queue driver. The only one, since #12 deleted the BullMQ half.
  *
  * Producing goes to a real Cloudflare Queue binding, resolved by name through
  * `queue-registry.ts`. Consuming does not happen here at all: a Cloudflare
  * consumer is a `queue()` export on the Worker, so `createWorker` *registers* a
  * handler that `src/worker/queue-consumer.ts` dispatches to, rather than
- * starting anything. Both halves of a BullMQ call site therefore keep working
- * unchanged — `createQueue(...).enqueue(...)` sends, `createWorker(name, fn)`
- * declares what runs.
+ * starting anything. Both halves of a call site therefore read the same as they
+ * did on BullMQ — `createQueue(...).enqueue(...)` sends, `createWorker(name,
+ * fn)` declares what runs — which is what made the swap a one-file change.
+ *
+ * Why nothing here opens anything at module scope: BullMQ's queue constructor
+ * opened a Redis socket, and its workers held a blocking connection for the
+ * life of the process. Several service modules build queues and workers in
+ * `static` class fields, so merely importing `campaign-service.ts` inside a
+ * Worker crashed the isolate at load time with "Disallowed operation called
+ * within global scope". A `WorkersQueue` is an object with a name until
+ * something sends.
  *
  * See references/serverless-migration.md §2 and §4.
  */

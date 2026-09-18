@@ -7,7 +7,7 @@ import {
   closeIntegrationConnections,
   integrationEnabled,
   resetDatabase,
-  resetRedis,
+  resetWorkerBindings,
 } from "~/test/integration/helpers";
 
 const describeIntegration = integrationEnabled ? describe : describe.skip;
@@ -15,7 +15,7 @@ const describeIntegration = integrationEnabled ? describe : describe.skip;
 describeIntegration("Hono public API integration", () => {
   beforeEach(async () => {
     await resetDatabase();
-    await resetRedis();
+    await resetWorkerBindings();
   });
 
   afterAll(async () => {
@@ -64,7 +64,7 @@ describeIntegration("Hono public API integration", () => {
     });
   });
 
-  it("enforces Redis rate limits when cloud mode is enabled", async () => {
+  it("enforces rate limits when cloud mode is enabled", async () => {
     const team = await createTeam({
       name: "Rate Team",
       apiRateLimit: 1,

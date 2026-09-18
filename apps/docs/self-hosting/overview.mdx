@@ -7,12 +7,25 @@ description: "An end-to-end guide on how to self-host useSend. An open-source se
 
 - A [GitHub](https://github.com) account
 - An [AWS](https://aws.amazon.com) account
+- A [Cloudflare](https://cloudflare.com) account — useSend is a Worker
+- A Postgres database. [Neon](https://neon.tech) is what we run; anything Hyperdrive can reach works.
 
 If you have any questions join [#self-host](https://discord.gg/gbsvjb9MqV) on discord.
 
+<Warning>
+  useSend no longer ships a `usesend/usesend` Docker image. The web app is a
+  Cloudflare Worker and is deployed with `wrangler deploy`; the queues, the
+  scheduler, the rate limits and the idempotency store are Cloudflare Queues,
+  Cron Triggers and Durable Objects, so there is no Node server and no Redis to
+  run any more. The SMTP proxy below is still a container.
+</Warning>
+
 ## Step 1: Environment variables
 
-useSend depends on AWS SES to send emails and SNS to receive email status. Along with that it also depends on Postgres as a database and Redis for queue. Copy the `.env.selfhost.example` file to `.env` and fill in the values.
+useSend depends on AWS SES to send emails and SNS to receive email status, and on
+Postgres for storage. Secrets are set on the Worker with `wrangler secret put
+<NAME>`; for a local run, copy `apps/web/.dev.vars.example` to
+`apps/web/.dev.vars` and fill in the same values there.
 
 <Steps>
   <Step title="AWS credentials">
@@ -53,17 +66,22 @@ GITHUB_SECRET="<your-github-client-secret>"
 
   <Info>If you want email/password login, please help us out with the [code](https://github.com/usesend/usesend) </Info>  
   </Step>
-  <Step title="Database & Redis">
-  useSend uses Postgres as a database and Redis as a queue. You need to create a new database and add the following environment variables.
+  <Step title="Database">
+  useSend uses Postgres, reached through a [Hyperdrive](https://developers.cloudflare.com/hyperdrive/) binding so the Worker gets a pooled connection instead of opening one per request.
 
-If you're using docker-compose, it's all automatically done for you.
+Create the database, then create the Hyperdrive configuration over it and put the id it returns into `apps/web/wrangler.jsonc`:
+
+```sh
+npx wrangler hyperdrive create usesend --connection-string="postgres://<username>:<password>@<host>:<port>/<database-name>"
+```
 
 ```env
 DATABASE_URL="postgres://<username>:<password>@<host>:<port>/<database-name>"
-REDIS_URL="redis://<username>:<password>@<host>:<port>"
 ```
 
-If you're sharing a Redis instance across multiple apps and using Redis ACL for isolation, set `REDIS_KEY_PREFIX` to namespace all keys (e.g. `REDIS_KEY_PREFIX="usesend"` prefixes all keys with `usesend:`).
+`DATABASE_URL` is still required — `src/env.js` validates it at startup and the
+migration step below reads it — but at request time the Worker uses the
+Hyperdrive connection string.
 
   </Step>
   <Step title="App url and secret">
@@ -108,15 +126,63 @@ Set the event window in days rather than weeks-to-months if you can: deleting an
   </Step>
 </Steps>
 
-## Step 2: Setting up the app
+## Step 2: Deploying the Worker
 
-You can use any platform that supports Docker to host useSend. If you have any questions drop in the [discord channel](https://discord.gg/gbsvjb9MqV) and we'll try to help you out.
+useSend is one Cloudflare Worker: the dashboard, the public API, the queue
+consumers, the cron handler and four Durable Objects. `apps/web/wrangler.jsonc`
+describes all of it and is the file you edit.
 
-### Docker
+<Steps>
+  <Step title="Create the resources it binds to">
 
-Follow this guide to setup your docker instance: [Set up docker](/get-started/set-up-docker)
+```sh
+npx wrangler kv namespace create CACHE
+npx wrangler r2 bucket create usesend
+```
 
-[![Docker image](https://img.shields.io/badge/dockerhub-images-important.svg?logo=Docker)](https://hub.docker.com/r/usesend/usesend)
+Queues are declared in `wrangler.jsonc` — one send queue pair per supported SES
+region, plus the shared ones — and `wrangler deploy` creates any that do not
+exist yet.
+
+  </Step>
+  <Step title="Fill in the ids">
+  Replace `REPLACE_WITH_HYPERDRIVE_ID` and `REPLACE_WITH_KV_NAMESPACE_ID` in
+  `apps/web/wrangler.jsonc` with the ids the two commands above printed.
+  </Step>
+  <Step title="Set the secrets">
+
+```sh
+cd apps/web
+for name in DATABASE_URL APP_SECRET BETTER_AUTH_SECRET API_KEY_HMAC_SECRET \
+            AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY GITHUB_ID GITHUB_SECRET; do
+  npx wrangler secret put "$name"
+done
+```
+
+`APP_URL`, `AWS_DEFAULT_REGION` and the optional retention windows are plain
+`vars` in `wrangler.jsonc` rather than secrets.
+
+  </Step>
+  <Step title="Migrate the database">
+
+```sh
+pnpm --filter=web db:migrate
+```
+
+Migrations run from your machine against `DATABASE_URL`, not from the Worker.
+
+  </Step>
+  <Step title="Deploy">
+
+```sh
+pnpm --filter=web exec wrangler deploy
+```
+
+  </Step>
+</Steps>
+
+Durable Object storage, KV, R2 and Queues all have free tiers that a small
+instance stays inside; Durable Objects require a paid Workers plan.
 
 ## Step 3: Setting up a region
 

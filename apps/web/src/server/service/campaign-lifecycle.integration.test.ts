@@ -29,8 +29,8 @@ vi.mock("~/server/mailer", () => ({
   sendSignUpEmail: vi.fn(),
 }));
 
-vi.mock("~/server/queue/bullmq-driver", () => ({
-  bullmqDriver: {
+vi.mock("~/server/queue/workers-driver", () => ({
+  workersDriver: {
     createQueue: () => ({ enqueue: mockQueueBatch, schedule: vi.fn() }),
     createWorker: () => ({ concurrency: 1 }),
   },

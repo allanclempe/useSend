@@ -21,7 +21,6 @@
    <a href="https://discord.gg/BU8n8pJv8S"><img src="https://img.shields.io/badge/Discord-usesend-%235865F2" alt="Join useSend on Discord"></a>
    <a href="https://github.com/usesend/usesend/stargazers"><img src="https://img.shields.io/github/stars/usesend%2Fusesend" alt="GitHub Stars"></a>
    <a href="https://github.com/usesend/usesend/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-purple" alt="License"></a>
-   <a href="https://hub.docker.com/r/usesend/usesend"><img alt="Docker Automated build" src="https://img.shields.io/docker/pulls/usesend/usesend"></a>
 </p>
 
 ## About this project
@@ -58,14 +57,14 @@ We're currently working on opening useSend for public beta.
 
 ## Tech Stack
 
-- [Next.js](https://nextjs.org/) - Framework
+- [TanStack Start](https://tanstack.com/start) on [Cloudflare Workers](https://workers.cloudflare.com/) - Framework and runtime
 - [Drizzle](https://orm.drizzle.team/) - ORM
 - [Tailwind](https://tailwindcss.com/) - CSS
 - [shadcn/ui](https://ui.shadcn.com/) - Component Library
 - [better-auth](https://better-auth.com/) - Authentication
-- [tRPC](https://trpc.io/) - API
 - [hono](https://hono.dev/) - Public API
-- [Redis](https://redis.io/) - Queue
+- [Cloudflare Queues](https://developers.cloudflare.com/queues/) - Queue
+- [Durable Objects](https://developers.cloudflare.com/durable-objects/) - Ordering, rate limits and idempotency
 
 ### Email editor
 
@@ -81,29 +80,11 @@ Follow our detailed guide to run useSend locally
 
 [https://docs.usesend.com/get-started/local](https://docs.usesend.com/get-started/local)
 
-## Docker
-
-We provide a Docker container for useSend, which is published on both DockerHub and GitHub Container Registry.
-
-DockerHub: [https://hub.docker.com/r/usesend/usesend](https://hub.docker.com/r/usesend/usesend)
-
-GitHub Container Registry: [https://ghcr.io/usesend/usesend](https://ghcr.io/usesend/usesend)
-
-You can pull the Docker image from either of these registries and run it with your preferred container hosting provider.
-
-Please note that you will need to provide environment variables for connecting to the database, redis, aws and so forth.
-
-For detailed instructions on how to configure and run the Docker container, please refer to the Docker [Docker README](./docker/README.md) in the docker directory.
-
 ## Self Hosting
 
-Checkout the [self-hosting guide](https://docs.usesend.com/self-hosting/overview) to learn how to run useSend on your own infrastructure.
+useSend is a Cloudflare Worker and is deployed with `wrangler deploy`. Checkout the [self-hosting guide](https://docs.usesend.com/self-hosting/overview) to learn how to run it on your own Cloudflare account.
 
-## Self Hosting with Railway
-
-Railway provides the quickest way to spin up useSend. Read the [Railway self-hosting guide](https://docs.usesend.com/self-hosting/railway) or deploy directly:
-
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.com/deploy/usesend?utm_medium=integration&utm_source=docs&utm_campaign=usesend)
+There is no `usesend/usesend` Docker image any more — it packaged a Next.js server that no longer exists. The only image we publish is the optional [SMTP proxy](https://hub.docker.com/r/usesend/smtp-proxy), which is a raw TCP listener and cannot run on Workers; see [docker/README.md](./docker/README.md).
 
 ## Star History
 

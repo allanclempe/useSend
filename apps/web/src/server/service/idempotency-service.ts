@@ -26,8 +26,8 @@ export const IdempotencyService = {
    * Runs `operation` at most once per `Idempotency-Key`, and replays its result
    * for anyone who asks again with the same payload.
    *
-   * The store underneath is a Durable Object on Workers and Redis under Node
-   * (`server/idempotency`). What used to be four calls and a re-check here —
+   * The store underneath is a Durable Object (`server/idempotency`). What used
+   * to be four calls and a re-check here —
    * read the result, take a lock, read the result again because the lock might
    * have been released in between, release the lock in a `finally` — is now one
    * `begin` that returns the decision, because on a Durable Object there is no

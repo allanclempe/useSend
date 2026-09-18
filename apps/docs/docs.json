@@ -35,7 +35,7 @@
           },
           {
             "group": "Self Hosting",
-            "pages": ["self-hosting/overview", "self-hosting/railway"]
+            "pages": ["self-hosting/overview"]
           },
           {
             "group": "Guides",

@@ -13,7 +13,6 @@ import {
   createWorkerHandler,
   type Queue,
   type TeamJob,
-  type Worker,
 } from "../queue";
 import {
   SEND_QUEUE_MAX_ATTEMPTS,
@@ -21,7 +20,6 @@ import {
   sendQueueName,
   SUPPORTED_SES_REGIONS,
 } from "../queue/ses-regions";
-import { isWorkersRuntime } from "../runtime";
 import { logger } from "../logger/log";
 import { LimitService } from "./limit-service";
 import { recordAcceptedSends, reverseAcceptedSend } from "./usage-service";
@@ -54,28 +52,11 @@ type QueueEmailJob = TeamJob<{
  * be sent from until someone adds it to the list and deploys (§4.1).
  */
 function unknownRegion(region: string): string {
-  if (!isWorkersRuntime()) {
-    return `Queue for region ${region} not found`;
-  }
-
   return (
     `No send queue for SES region "${region}". Cloudflare Queues are declared at deploy time, ` +
     `so a region has to be in SUPPORTED_SES_REGIONS (server/queue/ses-regions.ts) and deployed ` +
     `before it can send. Supported: ${SUPPORTED_SES_REGIONS.join(", ")}.`
   );
-}
-
-function createQueueAndWorker(region: string, quota: number, suffix: string) {
-  const queueName = `${region}-${suffix}`;
-
-  const queue = createQueue<QueueEmailJob["data"]>(queueName);
-
-  // TODO: Add team context to job data when queueing
-  const worker = createWorker(queueName, createWorkerHandler(executeEmail), {
-    concurrency: quota,
-  });
-
-  return { queue, worker };
 }
 
 export class EmailQueueService {
@@ -84,86 +65,30 @@ export class EmailQueueService {
     string,
     Queue<QueueEmailJob["data"]>
   >();
-  private static transactionalWorker = new Map<string, Worker>();
   public static marketingQueue = new Map<string, Queue<QueueEmailJob["data"]>>();
-  private static marketingWorker = new Map<string, Worker>();
 
+  /**
+   * Records a quota change, and deliberately does nothing else.
+   *
+   * `max_concurrency` on a Queues consumer is deploy-time configuration, so a
+   * quota edited in the admin UI is stored in the database and takes effect at
+   * the next deploy (§11, decision 1). `updateSesSetting` and its UI say so.
+   *
+   * This used to create a queue and a BullMQ worker per region on demand, and
+   * retune their concurrency in place. Neither the creation nor the retuning
+   * survives: the queues, their consumers and their bindings are declared in
+   * `wrangler.jsonc` for every region in `SUPPORTED_SES_REGIONS` (§4.1), and
+   * `registerSupportedRegions()` below binds handles to them at module load.
+   */
   public static initializeQueue(
     region: string,
     quota: number,
     transactionalQuotaPercentage: number
   ) {
-    if (isWorkersRuntime()) {
-      // Deliberately does nothing. `max_concurrency` on a Queues consumer is
-      // deploy-time configuration, so a quota change made in the admin UI is
-      // recorded in the database and takes effect at the next deploy (§11,
-      // decision 1). `updateSesSetting` and its UI say so; this logs it in case
-      // anyone reaches the method another way.
-      logger.info(
-        { region, quota, transactionalQuotaPercentage },
-        `[EmailQueueService]: Quota recorded; consumer concurrency changes at the next deploy`
-      );
-      return;
-    }
-
     logger.info(
-      { region },
-      `[EmailQueueService]: Initializing queue for region`
+      { region, quota, transactionalQuotaPercentage },
+      `[EmailQueueService]: Quota recorded; consumer concurrency changes at the next deploy`
     );
-
-    const transactionalQuota = Math.floor(
-      (quota * transactionalQuotaPercentage) / 100
-    );
-    const marketingQuota = quota - transactionalQuota;
-
-    if (this.transactionalQueue.has(region)) {
-      logger.info(
-        { region, transactionalQuota },
-        `[EmailQueueService]: Updating transactional quota for region`
-      );
-      const transactionalWorker = this.transactionalWorker.get(region);
-      if (transactionalWorker) {
-        transactionalWorker.concurrency =
-          transactionalQuota !== 0 ? transactionalQuota : 1;
-      }
-    } else {
-      logger.info(
-        { region, transactionalQuota },
-        `[EmailQueueService]: Creating transactional queue for region`
-      );
-      const { queue: transactionalQueue, worker: transactionalWorker } =
-        createQueueAndWorker(
-          region,
-          transactionalQuota !== 0 ? transactionalQuota : 1,
-          "transaction"
-        );
-      this.transactionalQueue.set(region, transactionalQueue);
-      this.transactionalWorker.set(region, transactionalWorker);
-    }
-
-    if (this.marketingQueue.has(region)) {
-      logger.info(
-        { region, marketingQuota },
-        `[EmailQueueService]: Updating marketing quota for region`
-      );
-      const marketingWorker = this.marketingWorker.get(region);
-      if (marketingWorker) {
-        marketingWorker.concurrency = marketingQuota !== 0 ? marketingQuota : 1;
-      }
-    } else {
-      logger.info(
-        { region, marketingQuota },
-        `[EmailQueueService]: Creating marketing queue for region`
-      );
-      const { queue: marketingQueue, worker: marketingWorker } =
-        createQueueAndWorker(
-          region,
-          marketingQuota !== 0 ? marketingQuota : 1,
-          "marketing"
-        );
-      this.marketingQueue.set(region, marketingQueue);
-      this.marketingWorker.set(region, marketingWorker);
-    }
   }
 
   public static async queueEmail(
@@ -331,22 +256,16 @@ export class EmailQueueService {
    * authoritative. See §4.5.
    */
 
+  /**
+   * Nothing to do, and nothing to read.
+   *
+   * It used to query `SesSetting` to learn which queues to create. The set of
+   * queues is deploy-time config rather than a query result now (§4.1), so
+   * `registerSupportedRegions()` has already done the work at module load —
+   * which it has to, because a consumer must be registered before the first
+   * message arrives, and that is earlier than the first send.
+   */
   public static async init() {
-    if (isWorkersRuntime()) {
-      // Already done at module load, and it cannot depend on the database: the
-      // set of queues is deploy-time config, not a query result (§4.1).
-      this.initialized = true;
-      return;
-    }
-
-    const sesSettings = await drizzleDb.select().from(schema.sesSetting);
-    for (const sesSetting of sesSettings) {
-      this.initializeQueue(
-        sesSetting.region,
-        sesSetting.sesEmailRateLimit,
-        sesSetting.transactionalQuota
-      );
-    }
     this.initialized = true;
   }
 
@@ -354,7 +273,7 @@ export class EmailQueueService {
    * Builds a queue handle and registers a consumer for every supported region,
    * without reading a row.
    *
-   * On BullMQ the set of send queues came from `SesSetting`: whatever region a
+   * The set of send queues used to come from `SesSetting`: whatever region a
    * user added in the admin UI got a queue, created on demand. Cloudflare
    * cannot do that — the queue, its consumer and its binding are all declared
    * in `wrangler.jsonc` — so the set is `SUPPORTED_SES_REGIONS` and it is known
@@ -371,7 +290,7 @@ export class EmailQueueService {
 
         // Concurrency is `max_concurrency` on the consumer, which is
         // deploy-time (§11, decision 1). Passing a number here would only be
-        // read by the inert setter on the Workers driver.
+        // read by the driver's inert setter.
         createWorker(queueName, createWorkerHandler(executeEmail));
 
         if (suffix === "transaction") {
@@ -384,9 +303,7 @@ export class EmailQueueService {
   }
 }
 
-if (isWorkersRuntime()) {
-  EmailQueueService.registerSupportedRegions();
-}
+EmailQueueService.registerSupportedRegions();
 
 /**
  * Takes an email out of SCHEDULED, or reports that it could not.

@@ -7,7 +7,7 @@ import {
   closeIntegrationConnections,
   integrationEnabled,
   resetDatabase,
-  resetRedis,
+  resetWorkerBindings,
 } from "~/test/integration/helpers";
 
 const { mockSendTeamInviteEmail, mockCheckTeamMemberLimit } = vi.hoisted(() => ({
@@ -35,7 +35,7 @@ async function makeUser(email: string) {
 describeIntegration("team-service", () => {
   beforeEach(async () => {
     await resetDatabase();
-    await resetRedis();
+    await resetWorkerBindings();
     vi.clearAllMocks();
     mockCheckTeamMemberLimit.mockResolvedValue({ isLimitReached: false });
     mockSendTeamInviteEmail.mockResolvedValue(undefined);

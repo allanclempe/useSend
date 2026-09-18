@@ -43,29 +43,23 @@ This document explains the webhook system architecture, including how events are
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                               Redis + BullMQ                                         │
+│               WebhookDispatcher Durable Object — one per webhookId                   │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐    │
-│  │  WEBHOOK_DISPATCH_QUEUE                                                      │    │
-│  │  ├── Job: { callId: "call_abc", teamId: 123 }                                │    │
-│  │  ├── Job: { callId: "call_def", teamId: 123 }                                │    │
-│  │  └── Job: { callId: "call_ghi", teamId: 456 }                                │    │
+│  │  DO(webhook_A).pending  ├── { callId: "call_abc", attemptsMade: 0 }          │    │
+│  │                         └── { callId: "call_def", attemptsMade: 0 }          │    │
+│  │  DO(webhook_C).pending  └── { callId: "call_ghi", attemptsMade: 0 }          │    │
 │  └─────────────────────────────────────────────────────────────────────────────┘    │
+│  Single-threaded per object id: one delivery at a time, in order, no lock.           │
 └─────────────────────────────────────────────────────────────────────────────────────┘
                                 │
-                                │  BullMQ Worker (concurrency: 25)
+                                │  alarm() takes the head of its own list
                                 ▼
                     ┌───────────────────────┐
                     │  processWebhookCall   │
                     └───────────┬───────────┘
                                 │
-                    ┌───────────▼───────────┐
-                    │  Acquire Redis Lock   │──────┐
-                    │  (per webhook ID)     │      │ Lock failed
-                    └───────────┬───────────┘      │
-                                │ Lock acquired    ▼
-                                │           ┌─────────────┐
-                    ┌───────────▼──────┐    │ Retry later │
-                    │ Check webhook    │    └─────────────┘
+                    ┌───────────▼──────┐
+                    │ Check webhook    │
                     │ status = ACTIVE? │
                     └───────────┬──────┘
                            Yes  │  No
@@ -134,7 +128,7 @@ This document explains the webhook system architecture, including how events are
                               ┌──────────────────────────────────────┐
                               │                                      │
                               ▼                                      │
-┌─────────┐  enqueue   ┌───────────┐  worker picks up  ┌─────────────────┐
+┌─────────┐  deliver() ┌───────────┐   alarm() fires   ┌─────────────────┐
 │ (start) │ ──────────►│  PENDING  │ ─────────────────►│  IN_PROGRESS    │
 └─────────┘            └───────────┘                   └────────┬────────┘
                               ▲                                 │
@@ -158,11 +152,33 @@ This document explains the webhook system architecture, including how events are
 
 The webhook system allows users to receive real-time HTTP notifications when events occur (emails sent, contacts created, domains verified, etc.). The system is built with reliability in mind, featuring:
 
-- Asynchronous delivery via BullMQ
-- Exponential backoff with jitter for retries
+- Asynchronous delivery through a `WebhookDispatcher` Durable Object per webhook
+- Ordered delivery per webhook, by construction rather than by lock
+- Exponential backoff with jitter for retries, driven by the object's alarm
 - Automatic webhook disabling after consecutive failures
-- Per-webhook locking to ensure ordered delivery
 - HMAC signature verification for security
+
+### Why a Durable Object and not a queue
+
+A webhook endpoint is told about events in the order they happened. That used to
+be enforced with a Redis `SET NX PX` lock per `webhookId`, a Lua release script
+and a retry path for whichever caller lost the race, on top of a BullMQ queue.
+
+A Durable Object is single-threaded per object id, so the property the lock
+existed to create is a property of where the code runs. The lock, the Lua, the
+TTL, the retry-on-lock-failure path and the queue are all deleted (#10, #12).
+
+Two consequences worth knowing, both deliberate:
+
+- **Retry is an alarm, not a redelivery.** A queue would put a failed message
+  back at an arbitrary position relative to the messages behind it, which is the
+  ordering the lock existed to protect. The object keeps the failed call at the
+  head of its list and re-arms its alarm.
+- **That means head-of-line blocking**, which the Redis lock did not have: a
+  dead endpoint stalls its own backlog for the full retry ladder (~2.5 minutes
+  over six attempts) instead of letting later events past. It is bounded by
+  auto-disable at 30 consecutive failures, and it is per webhook — one bad
+  endpoint cannot affect another, because it is a different object.
 
 ## Core Components
 
@@ -202,7 +218,11 @@ WebhookCall
 Located in `apps/web/src/server/service/webhook-service.ts`:
 
 - **WebhookService**: CRUD operations for webhooks and webhook calls
-- **WebhookQueueService**: BullMQ queue management for async delivery
+- **WebhookQueueService**: hands a call to the `WEBHOOK_DISPATCHER` Durable
+  Object named after its `webhookId`
+- **WebhookDispatcher** (`apps/web/src/worker/webhook-dispatcher.ts`): the
+  object itself — a pending list in DO storage, an alarm that delivers the head
+  of it, and the retry ladder
 
 ### 3. Event Types
 
@@ -258,7 +278,8 @@ await WebhookService.emit(teamId, "email.delivered", {
 
 1. Finds all ACTIVE webhooks for the team that subscribe to the event type
 2. Creates a `WebhookCall` record for each matching webhook (stores event data as `payload`)
-3. Enqueues the call ID to BullMQ for async processing
+3. Calls `WEBHOOK_DISPATCHER.get(idFromName(webhookId)).deliver(callId, …)`,
+   which appends the call to that object's pending list and arms its alarm
 
 ```typescript
 // Webhook matching logic
@@ -274,15 +295,23 @@ const activeWebhooks = await db.webhook.findMany({
 });
 ```
 
-### Step 3: Queue Processing
+### Step 3: Dispatch
 
-The BullMQ worker (`processWebhookCall`) handles delivery:
+The Durable Object's `alarm()` takes the head of its pending list and calls
+`processWebhookCall`, which handles delivery:
 
-1. **Lock Acquisition**: Acquires a Redis lock per webhook to ensure ordered delivery
-2. **Status Check**: Skips if webhook is no longer ACTIVE (marks call as DISCARDED)
-3. **Payload Building**: Wraps the stored event data in the full payload structure
-4. **HTTP POST**: Sends signed request to the webhook URL
-5. **Result Handling**: Updates call status and webhook metrics
+1. **Status Check**: Skips if webhook is no longer ACTIVE (marks call as DISCARDED)
+2. **Payload Building**: Wraps the stored event data in the full payload structure
+3. **HTTP POST**: Sends signed request to the webhook URL
+4. **Result Handling**: Updates call status and webhook metrics
+
+There is no lock and no acquisition step: the object is single-threaded, so a
+second delivery for the same webhook cannot start while this one is running. On
+failure the object re-arms its alarm with the backoff below and leaves the call
+at the head of the list; on success or exhaustion it drops the call and arms the
+alarm for the next one. The Drizzle client is built inside the alarm and awaited
+closed before it returns — a socket that outlives an alarm makes the object
+permanently ineligible for hibernation.
 
 ### Step 4: Payload Structure
 
@@ -394,33 +423,35 @@ if (event.type === "email.delivered") {
 
 ## UI Payload Display
 
-The webhook call details UI (`apps/web/src/app/(dashboard)/webhooks/[webhookId]/webhook-call-details.tsx`) reconstructs the full payload for display, matching what was actually sent to the endpoint. This uses the same structure as `buildPayload()` in the service layer.
+The webhook call details UI (`apps/web/src/routes/_dashboard/webhooks/-webhook-call-details.tsx`) reconstructs the full payload for display, matching what was actually sent to the endpoint. This uses the same structure as `buildPayload()` in the service layer.
 
 ## Important Files
 
 | File                                             | Purpose                     |
 | ------------------------------------------------ | --------------------------- |
 | `apps/web/src/server/drizzle/schema.ts`          | Database models             |
-| `apps/web/src/server/service/webhook-service.ts` | Core service & queue worker |
-| `apps/web/src/server/api/routers/webhook.ts`     | TRPC API routes             |
+| `apps/web/src/server/service/webhook-service.ts` | Core service & delivery     |
+| `apps/web/src/worker/webhook-dispatcher.ts`      | The Durable Object          |
+| `apps/web/src/server/functions/webhook.ts`       | Server functions for the UI |
 | `apps/web/src/lib/constants/plans.ts`            | Webhook limits per plan     |
 | `packages/lib/src/webhook/webhook-events.ts`     | Event type definitions      |
 | `packages/sdk/src/webhooks.ts`                   | SDK verification utilities  |
-| `apps/web/src/app/(dashboard)/webhooks/`         | UI components               |
+| `apps/web/src/routes/_dashboard/webhooks/`       | UI components               |
 
 ## Configuration Constants
 
 ```typescript
 // apps/web/src/server/service/webhook-service.ts
-const WEBHOOK_DISPATCH_CONCURRENCY = 25; // Parallel workers
 const WEBHOOK_MAX_ATTEMPTS = 6; // Max delivery attempts
 const WEBHOOK_BASE_BACKOFF_MS = 5_000; // Initial retry delay
-const WEBHOOK_LOCK_TTL_MS = 15_000; // Redis lock TTL
-const WEBHOOK_LOCK_RETRY_DELAY_MS = 2_000; // Lock retry delay
 const WEBHOOK_AUTO_DISABLE_THRESHOLD = 30; // Failures before disable
 const WEBHOOK_REQUEST_TIMEOUT_MS = 10_000; // HTTP timeout
 const WEBHOOK_RESPONSE_TEXT_LIMIT = 4_096; // Max response body stored
 const WEBHOOK_EVENT_VERSION = "2026-01-18"; // Default API version
+
+// Concurrency is not a constant any more. It is one delivery per webhook,
+// because that is what one Durable Object per webhookId means, and any number
+// of webhooks at once, because those are different objects.
 ```
 
 ## Plan Limits

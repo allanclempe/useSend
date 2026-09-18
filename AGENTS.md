@@ -2,11 +2,10 @@
 
 ## Project Structure & Module Organization
 
-- apps/web: the product. Mid-migration (#9): TanStack Start on Cloudflare Workers is being
-  stood up beside the Next.js App Router, one dashboard area at a time, and Next.js still
-  serves `src/app` until the last PR of that stack deletes it. New pages are TanStack routes
-  under `src/routes`; new server-side calls are TanStack Start server functions under
-  `src/server/functions`, not tRPC routers. Uses Drizzle and Tailwind.
+- apps/web: the product. TanStack Start on Cloudflare Workers (#9). Pages are routes under
+  `src/routes`; server-side calls are TanStack Start server functions under
+  `src/server/functions`. Next.js and tRPC are gone — there is no `src/app`, no
+  `src/server/api`, and `next` and `@trpc/*` are not dependencies. Uses Drizzle and Tailwind.
 - apps/marketing: Public marketing site (Next.js, static export).
 - apps/docs: Mintlify docs content.
 - apps/smtp-server: SMTP proxy/server (TypeScript → tsup build).
@@ -18,8 +17,9 @@
 ## Build, Test, and Development Commands
 
 - `pnpm i`: Install workspace deps (Node >= 20).
-- `pnpm dev`: Turbo dev for all relevant apps (loads `.env`).
-- `pnpm start:web:local`: Run only `apps/web` locally on port 3000.
+- `pnpm dev`: Turbo dev for all relevant apps (loads `.env`). For `apps/web` this is the same
+  `vite dev` that `pnpm dev:worker` runs — a Worker has no separate `start`, so there is no
+  `start:web:local` any more.
 - `pnpm build`: Turbo build across the monorepo.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
 - `pnpm dev:worker`: Run the whole Worker — dashboard and public API — on a local `workerd`
@@ -90,9 +90,10 @@ Things that behave differently inside the Worker, by design:
 - **No global-scope I/O.** Workers reject sockets, timers and `randomUUID()`
   during module evaluation. Clients must therefore be built on first use, not in
   a module-level `const` or a `static` class field — this is why `drizzleDb` is a
-  lazy proxy and why the BullMQ driver defers its queue.
-- **No BullMQ.** `server/queue/index.ts` picks a driver by runtime. Inside a
-  Worker, `enqueue` goes to a Cloudflare Queue producer binding and
+  lazy proxy and why a `WorkersQueue` resolves its binding at send time rather
+  than at construction.
+- **Queues are Cloudflare Queues.** `server/queue/index.ts` has one driver
+  (#12). `enqueue` goes to a Cloudflare Queue producer binding and
   `createWorker` registers a handler rather than starting one — a Cloudflare
   consumer is the `queue()` export on the Worker (`src/worker/queue-consumer.ts`),
   declared in `wrangler.jsonc`. `server/queue/queue-registry.ts` is the source of
@@ -102,9 +103,9 @@ Things that behave differently inside the Worker, by design:
   config is simply absent from `env` at runtime.
 - **Queue payloads are ID references.** A message caps at 128 KB and the driver
   refuses anything larger. Never a body, never an attachment.
-- **`options.jobId` does nothing on Workers.** It is BullMQ's dedup key and
-  Cloudflare has no equivalent, so a handler that must not run twice needs its
-  own database-side guard (§4.4).
+- **`options.jobId` does nothing.** It was BullMQ's dedup key and Cloudflare
+  has no equivalent, so a handler that must not run twice needs its own
+  database-side guard (§4.4).
 - **Recurring work is a Cron Trigger**, declared in `wrangler.jsonc` and sourced
   from `server/queue/cron-registry.ts`. A job module imports its expression from
   there; it never writes one inline. Sub-minute ticks are not expressible —
@@ -124,17 +125,17 @@ Things that behave differently inside the Worker, by design:
 - **Storage is a Worker capability.** `storage-service.ts` runs on the R2
   binding, so under Node `isStorageConfigured()` is false and the editors hide
   the image picker. `/storage/*` on the Worker serves uploads and downloads.
-- **Never import `server/redis.ts` outside a driver.** It caches its connection
-  in a module-level `let`, and Workers ties an I/O object to the request that
-  opened it — so inside a Worker that connection serves one invocation and then
-  hangs, silently. Cache goes through `server/cache` (Workers KV / Redis).
-  Anything needing read-after-write — a counter, a dedup guard — cannot use KV
-  and belongs on a Durable Object.
+- **There is no Redis, and no second runtime.** `bullmq`, `ioredis`,
+  `server/redis.ts`, `server/runtime.ts` and the four Redis drivers are deleted
+  (#12). Each seam — `server/queue`, `server/cache`, `server/rate-limit`,
+  `server/idempotency` — has exactly one driver, and the seam is still the line
+  nothing above it may reach across. Cache goes through `server/cache` (Workers
+  KV). Anything needing read-after-write — a counter, a dedup guard — cannot use
+  KV and belongs on a Durable Object.
 - **KV cannot express a TTL under 60 seconds**, and its reads, writes, deletes
   and negative lookups are all eventually consistent within roughly that window.
-  `CacheStore.add` is therefore exact on Redis and best-effort on KV; the only
-  callers are notification cooldowns, where losing the race costs a duplicate
-  email.
+  `CacheStore.add` is therefore best-effort; the only callers are notification
+  cooldowns, where losing the race costs a duplicate email.
 - **Rate limits are a Durable Object**, one object per bucket, through
   `server/rate-limit`. Not Cloudflare's Rate Limiting binding: that one is
   per-colo and approximate, and the public API's default is two requests per
@@ -225,11 +226,16 @@ Rules that are not style:
   belongs — not in a component that renders a login form at someone else's URL.
 - Errors are `AppError` from `~/server/app-error`. Only the message crosses the wire.
 
-**Every dashboard area has moved.** `NotPortedYet` -- the placeholder an unported area
-rendered, and the count of files importing it that tracked how much of #9 was left -- is gone
-with the last of them. What remains of #9 is the teardown: deleting `src/app`, `src/trpc` and
-`src/server/api`, and dropping `next` and `@trpc/*`. Until that lands both frameworks still
-build, and `pnpm dev` still serves the Next.js copy of every page.
+**Every dashboard area has moved, and the old one is deleted.** `src/app`, `src/trpc` and
+`src/server/api` are gone, along with `next`, `@trpc/*`, `superjson`, `next.config.js` and the
+`*.trpc.test.ts` tier. `pnpm --filter=web dev` and `pnpm dev:worker` both run `vite dev`;
+there is no other way to run this app.
+
+**A helper worth testing goes on a service, never beside a server function.** Start strips
+`createServerFn` handler bodies from the client build, but a plain exported function next to
+them is an ordinary export the client bundle keeps — so it drags Drizzle and the `postgres`
+driver into the browser, the client entry dies on `Buffer is not defined`, and React silently
+never hydrates. `tsc` and every test still pass. The only way to catch it is to load a page.
 
 ## Coding Style & Naming Conventions
 
@@ -250,9 +256,9 @@ build, and `pnpm dev` still serves the Next.js copy of every page.
 - **`pnpm-workspace.yaml` is the only place pnpm reads settings from** — `overrides`,
   `packageExtensions`, `allowBuilds`, `minimumReleaseAgeExclude`. There is no second copy: the
   `"pnpm"` field in root `package.json` was a duplicate pnpm 11 ignores outright, and it is gone
-  (issue #55). Do not add one back "for older pnpm" — both deployment paths resolve pnpm from
-  `packageManager` via corepack (`docker/Dockerfile`, `nixpacks.toml`), and a settings file that is
-  edited but not read is the worst place for a security override to live.
+  (issue #55). Do not add one back "for older pnpm" — there is no deployment path that resolves pnpm
+  from anywhere else now that the Docker and nixpacks builds are gone (#12), and a settings file that
+  is edited but not read is the worst place for a security override to live.
 - **Check `pnpm-lock.yaml`, not the settings file, to confirm a pnpm setting took effect.** The
   lockfile header records the effective `overrides:` and a `packageExtensionsChecksum:`, and the
   package entries record the resolved versions — that is the only evidence that the setting was read
@@ -283,9 +289,8 @@ build, and `pnpm dev` still serves the Next.js copy of every page.
 
 ## Rules
 
-- **tRPC is being retired (#9).** The 17 routers under `src/server/api/routers` are the old
-  world and are deleted area by area. Do not add a procedure to one — see "The dashboard
-  (TanStack Start)" above for where a new server-side call goes.
+- **tRPC is gone (#9).** There are no routers and no `@trpc/*` packages. A new server-side
+  call is a server function — see "The dashboard (TanStack Start)" above.
 - **Do not add work to the SES event pipeline to learn something we already
   know.** Every subscribed SES event costs an SNS POST, a queue message and a
   consumer invocation per email, and the pipeline is the single largest line in
@@ -311,28 +316,35 @@ build, and `pnpm dev` still serves the Next.js copy of every page.
   keep the KDF for secrets a human chose.
 - **Every new secret has to be declared in four places** or something breaks
   quietly: `apps/web/src/env.js` (schema *and* `runtimeEnv`), `turbo.json`'s
-  `env` list, `.env.example`, and `.env.selfhost.example` — the last two with the
-  command that generates it. Add a placeholder to
-  `apps/web/src/test/setup/setup-env.ts` if it is required rather than optional.
-  Never commit a real value. Docker and self-host paths carry their own copies —
-  `docker/prod/compose.yml`, `docker/README.md`, `apps/web/.dev.vars.example`,
-  `apps/web/.env.test.example`, `.github/workflows/test-web.yml`, `CONTRIBUTION.md`
-  and `apps/docs/**` — so renaming one is wider than the four places above.
+  `env` list, `.env.example` — with the command that generates it — and
+  `apps/web/.dev.vars.example`, which is what a local Worker reads. Add a
+  placeholder to `apps/web/src/test/setup/setup-env.ts` if it is required rather
+  than optional. Never commit a real value. On a deployed Worker a secret is
+  `wrangler secret put`, not a file, so `apps/docs/self-hosting/overview.mdx`
+  lists them too; `apps/web/.env.test.example`, `.github/workflows/test-web.yml`
+  and `CONTRIBUTION.md` carry their own copies. Renaming one is wider than the
+  four places above.
+- **There is no web container.** Self-hosting useSend is `wrangler deploy`
+  (#12). `docker/Dockerfile`, `docker/start.sh`, `docker/build.sh`,
+  `docker/prod/compose.yml`, `.env.selfhost.example` and `nixpacks.toml` are
+  deleted, and `.github/workflows/publish.yml` publishes exactly one image:
+  `apps/smtp-server`, which is a raw TCP listener that cannot run on Workers.
+  `docker/dev/compose.yml` and `docker/testing/compose.yml` stay — they are
+  local infrastructure, not shipped artifacts.
 - **There are two env modules, and which one a variable goes in is a security
   boundary, not a style choice.** `~/env` is server-only: its `runtimeEnv`
   reads `process.env` once per declared variable at module load, and `process`
   does not exist in a Vite client bundle, so one client import of it is a
   `ReferenceError` on first paint. `~/env.public` holds the handful a browser
-  may read. Both frameworks **bake those in at build time** — Vite inlines
-  `import.meta.env.NEXT_PUBLIC_*` exactly as Next.js inlines
-  `process.env.NEXT_PUBLIC_*` — so changing one on a deployed Worker without
+  may read. Vite **bakes those in at build time** — it inlines
+  `import.meta.env.NEXT_PUBLIC_*` — so changing one on a deployed Worker without
   rebuilding changes nothing in the browser, and nothing secret can go there.
   A module imported from a component reads `~/env.public`; that is why
   `~/utils/common` holds only `isCloud`/`isSelfHosted` and the retention flags
   it used to sit next to now live in `~/server/retention`.
-  The `NEXT_PUBLIC_` prefix survives only until `src/app` goes: Next.js inlines
-  nothing without it, so renaming while both frameworks are in the tree would
-  break the half still running.
+  The `NEXT_PUBLIC_` prefix outlived Next.js. It is now only a name — nothing
+  reads it that is not ours — and dropping it is Phase 10's (#12), because it
+  changes operator-facing configuration and wants its own PR.
 - **`APP_URL` is the one name for the application's public base URL**, and
   `APP_SECRET` is the one name for the application-wide signing key. Neither is
   an auth setting despite having been called `NEXTAUTH_*` until issue #59. Do not
@@ -359,11 +371,12 @@ build, and `pnpm dev` still serves the Next.js copy of every page.
 ## Testing Guidelines
 
 - Web testing is configured with Vitest in `apps/web`; add tests when changes impact logic, APIs, or behavior.
-- Prefer targeted suites first: `pnpm test:web:unit`, `pnpm test:web:trpc`, `pnpm test:web:api`; use `pnpm test:web` for default non-integration coverage.
-- Test file conventions: `*.unit.test.ts`, `*.trpc.test.ts`, `*.api.test.ts`, `*.integration.test.ts`.
+- Prefer targeted suites first: `pnpm test:web:unit`, `pnpm test:web:api`; use `pnpm test:web` for default non-integration coverage.
+- Test file conventions: `*.unit.test.ts`, `*.api.test.ts`, `*.integration.test.ts`. The `*.trpc.test.ts` tier went with the routers it covered (#9).
 - Choose the suite by what is under test, not by what the code touches. Logic — branching, validation, defaults, which notification fires — belongs in a unit test with its edges faked. Queries belong in an integration test against the real database: a mocked query builder only ever asserts the arguments you passed it, never what the query did.
 - Do not assert on the shape of a database call (`expect(mockDb.x.update).toHaveBeenCalledWith(...)`). That restates the input and passes even when the query is wrong. Assert on the row that came back, or capture the payload the builder actually received.
-- Integration tests require infra and env (`RUN_INTEGRATION=true` with Postgres/Redis available). Root commands `pnpm test:web:all` and `pnpm test:web:integration:full` auto-manage infra lifecycle.
+- Integration tests require infra and env (`RUN_INTEGRATION=true` with the `usesend_test` Postgres container running). Root commands `pnpm test:web:all` and `pnpm test:web:integration:full` auto-manage infra lifecycle. Postgres is the only infrastructure they need: the cache, the rate limiter, the idempotency store and the webhook dispatcher are Worker bindings, and `src/test/integration/bindings.ts` supplies in-memory ones that run the real Durable Object classes.
+- **Install those bindings from `src/test/integration/helpers.ts`, never from a `setupFiles` entry.** A setup file is evaluated before the test module, so everything `bindings.ts` imports — the DO classes pull in a large part of the server graph — would already be in the module registry when a test file's hoisted `vi.mock` calls ran, and the mocks would silently not apply. Twenty-nine tests failed exactly that way before this moved.
 - Use `pnpm test:infra:up` / `pnpm test:infra:down` when running targeted integration commands manually.
 - The integration suite runs single-fork, so module-level clients are shared across every file. Never close one in a per-file `afterAll` — `postgres-js` `end()` is terminal, and the first file to call it fails every file after it. (Prisma's `$disconnect` is safe only because it reconnects lazily.)
 - `pnpm test:web:integration:full` and `test:integration:prepare` run migrations (`drizzle-kit migrate`); never run these unless the user explicitly asks, because they take `DATABASE_URL` from the environment and will migrate whatever it points at. The one safe path is `test:integration:prepare:local`, which `pnpm test:web:all` uses: its `DATABASE_URL` is hardcoded to the `usesend_test` container that `test:infra:up`/`down` creates and destroys per run, so it cannot reach a dev or production database. It takes an empty container to the current schema.

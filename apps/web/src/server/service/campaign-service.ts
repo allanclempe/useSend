@@ -5,6 +5,7 @@ import { createId } from "../drizzle/id";
 import { withUpdatedAt } from "../drizzle/touch";
 import { createHash } from "crypto";
 import { env } from "~/env";
+import { badRequest } from "~/server/app-error";
 import {
   Campaign,
   Contact,
@@ -1432,4 +1433,76 @@ export class CampaignBatchService {
       remaining,
     });
   }
+}
+
+/**
+ * Refuses a contact book the team does not own.
+ *
+ * A team-scoped read is the whole check: a book belonging to someone else is
+ * simply not found, so there is no second query whose result could disagree
+ * with the first. Lives here rather than beside `updateCampaign` for two reasons: a server
+ * function cannot be called outside a Start request context, so a handler is
+ * not a testable seam; and a plain export on a `server/functions` module is
+ * one the client bundle has to keep, which drags Drizzle and the `postgres`
+ * driver into the browser (#9).
+ */
+export async function assertContactBookInTeam(
+  contactBookId: string,
+  teamId: number,
+): Promise<void> {
+  const [contactBook] = await drizzleDb
+    .select({ id: schema.contactBook.id })
+    .from(schema.contactBook)
+    .where(
+      and(
+        eq(schema.contactBook.id, contactBookId),
+        eq(schema.contactBook.teamId, teamId),
+      ),
+    )
+    .limit(1);
+
+  if (!contactBook) {
+    throw badRequest("Contact book not found");
+  }
+}
+
+/**
+ * The row a duplicated campaign is inserted as.
+ *
+ * Every addressing field is carried over deliberately — `replyTo`, `cc` and
+ * `bcc` are the ones a copy silently dropping them would be noticed for only
+ * after a send. Here for the same two reasons as `assertContactBookInTeam`.
+ */
+export function campaignCopyValues(
+  campaign: Pick<
+    typeof schema.campaign.$inferSelect,
+    | "name"
+    | "from"
+    | "replyTo"
+    | "cc"
+    | "bcc"
+    | "subject"
+    | "previewText"
+    | "content"
+    | "html"
+    | "domainId"
+    | "contactBookId"
+  >,
+  teamId: number,
+) {
+  return withUpdatedAt({
+    id: createId(),
+    name: `${campaign.name} (Copy)`,
+    from: campaign.from,
+    replyTo: campaign.replyTo,
+    cc: campaign.cc,
+    bcc: campaign.bcc,
+    subject: campaign.subject,
+    previewText: campaign.previewText,
+    content: campaign.content,
+    html: campaign.html,
+    teamId,
+    domainId: campaign.domainId,
+    contactBookId: campaign.contactBookId,
+  });
 }

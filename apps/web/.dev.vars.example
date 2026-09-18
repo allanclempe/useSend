@@ -17,7 +17,6 @@
 DATABASE_URL="postgresql://usesend:password@127.0.0.1:54329/usesend_test"
 APP_URL="http://localhost:8788"
 APP_SECRET="cf-local-dev-secret"
-REDIS_URL="redis://127.0.0.1:6380"
 NODE_ENV="development"
 AWS_ACCESS_KEY_ID="local"
 AWS_SECRET_ACCESS_KEY="local"

@@ -8,23 +8,25 @@ import { UnsendApiError } from "~/server/public-api/api-error";
 import {
   closeIntegrationConnections,
   integrationEnabled,
-  resetRedis,
+  resetWorkerBindings,
 } from "~/test/integration/helpers";
 
 const describeIntegration = integrationEnabled ? describe : describe.skip;
 
 /**
- * Against real Redis, which is the Node driver.
+ * Against the real `IdempotencyKeeper`, on in-memory Durable Object storage
+ * (`src/test/integration/bindings.ts`). These used to run against Redis, which
+ * was the other driver; that driver is deleted (#12), so they now exercise the
+ * class a deploy runs.
  *
- * The Durable Object driver is checked in a real `workerd` isolate instead
- * (`pnpm --filter=web bindings:check`) — including the case these cannot cover,
- * two identical requests arriving at once. What these assert is that both
- * drivers answer `begin` the same four ways, because the service above them
- * switches on exactly that.
+ * The real isolate is still where the runtime's own guarantees are checked
+ * (`pnpm --filter=web bindings:check`) — object placement, RPC, and two
+ * identical requests arriving at once. What these assert is the four answers
+ * `begin` can give, because the service above switches on exactly that.
  */
 describeIntegration("idempotency store integration", () => {
   beforeEach(async () => {
-    await resetRedis();
+    await resetWorkerBindings();
   });
 
   afterAll(async () => {

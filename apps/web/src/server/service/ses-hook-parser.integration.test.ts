@@ -40,8 +40,8 @@ vi.mock("~/server/service/suppression-service", () => ({
   },
 }));
 
-vi.mock("~/server/queue/bullmq-driver", () => ({
-  bullmqDriver: {
+vi.mock("~/server/queue/workers-driver", () => ({
+  workersDriver: {
     createQueue: () => ({ enqueue: vi.fn(), schedule: vi.fn() }),
     createWorker: () => ({ concurrency: 1 }),
   },

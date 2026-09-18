@@ -1,9 +1,12 @@
 # Cloudflare migration plan
 
-Status: **in progress — Phases 0–3, 5, 8 and 9 landed; 7 under way; 4, 6 and 10 outstanding.**
+Status: **code complete — Phases 0–3 and 5–10 landed; Phase 4 (the Neon data migration) is the
+only one left, and it is an operational step rather than a code change.**
 Sections marked **Done** record what was actually built and where it differed from the plan; the
 rest is still a plan. Nothing here has run on a Cloudflare account — every measurement is local
-`workerd` under `wrangler dev`.
+`workerd` under `wrangler dev`, and **nothing has been deployed**: `wrangler deploy`, the
+Hyperdrive/KV/R2 ids in `wrangler.jsonc`, and the queue and Durable Object creation that comes
+with a first deploy all still need an account.
 
 **Target stack**
 
@@ -25,20 +28,26 @@ rest is still a plan. Nothing here has run on a Cloudflare account — every mea
 
 ---
 
-## 1. What Redis is doing today, and where each piece lands
+## 1. What Redis was doing, and where each piece landed
 
-Redis carries five unrelated responsibilities. Only the first is a queue.
+**Done (#12).** Redis carried five unrelated responsibilities; only the first was a queue. All
+five have moved, and `bullmq`, `ioredis`, `server/redis.ts` and the four Redis drivers are deleted.
 
-| # | Responsibility | Today | Target |
+| # | Responsibility | Was | Is |
 |---|---|---|---|
-| 1 | Job queues | BullMQ, 8 queues | **Cloudflare Queues** + **Cron Triggers** |
-| 2 | Per-webhook ordering lock | `SET NX PX` + Lua release (`webhook-service.ts:681-703`) | **Durable Object per `webhookId`** — the lock is deleted, not ported |
-| 3 | Idempotency keys | `idem:` / `idemlock:` (`idempotency-service.ts`) | **Durable Object** — `server/idempotency/`, **done** |
-| 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` (`hono.ts:69-86`) | **Durable Object**, one per bucket — `server/rate-limit/`, **done** |
-| 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` (`team-service.ts:398`) | **Workers KV** with TTL — `server/cache/`, **done** |
+| 1 | Job queues | BullMQ, 8 queues | **Cloudflare Queues** + **Cron Triggers** — `server/queue/workers-driver.ts` |
+| 2 | Per-webhook ordering lock | `SET NX PX` + Lua release | **Durable Object per `webhookId`** — the lock was deleted, not ported |
+| 3 | Idempotency keys | `idem:` / `idemlock:` | **Durable Object** — `server/idempotency/` |
+| 4 | API / auth / waitlist rate limits | `INCR` + `EXPIRE` | **Durable Object**, one per bucket — `server/rate-limit/` |
+| 5 | Team & usage cache, notification dedup | `withCache`, `limit:notify:` | **Workers KV** with TTL — `server/cache/` |
 
 **Do not use KV for #3 or #4.** KV is eventually consistent (~60s global propagation). Idempotency
 and rate limiting both need read-after-write. KV is correct for #5 only.
+
+Each of those four is a seam with exactly one driver now, and `server/runtime.ts` —
+`isWorkersRuntime()`, which chose between the two — is gone with the second runtime it existed to
+serve. The seams stay: a seam with one driver is an interface, and it is the line that kept the
+swap to one file each.
 
 ## 2. Queue-by-queue mapping
 
@@ -433,9 +442,34 @@ requires a Cloudflare account.
   retired** in favour of TanStack Start server functions; `@trpc/*` leaves the dependency tree.
   The Hono public API (`server/public-api/`) is untouched and remains the external contract.
 
-  **In progress.** It ships as a stack of small PRs that leave Next.js serving `src/app` until
-  the last one, so no intermediate state has neither framework working. What the plan did not
-  anticipate, and what makes it smaller than 126 files suggests:
+  **Done.** It shipped as a stack of small PRs that left Next.js serving `src/app` until the
+  last one, so no intermediate state had neither framework working. The teardown is the three
+  PRs at the end of the stack: `src/app`, then `src/trpc` + `src/server/api`, then `next`
+  itself. `NotPortedYet` is gone, `next` and `@trpc/*` are out of `apps/web/package.json`, and
+  `pnpm --filter=web dev` is `vite dev`.
+
+  **Four things the teardown found that nothing typechecked.** Worth reading before the next
+  bulk deletion, because none of them failed a build:
+
+  1. **`app/globals.css` was the Tailwind entry**, imported by `src/styles.css`. Deleting the
+     directory would have taken every `@source` glob and the theme import with it, silently.
+     It now lives in `src/styles.css`.
+  2. **`team-service.ts` imported `TRPCError`** — a service, not a router, so it survived every
+     grep for `~/trpc` and `~/server/api`. It throws `AppError` now.
+  3. **A plain export on a `server/functions` module reaches the browser.** Start strips
+     `createServerFn` handler bodies from the client build; it does not strip an ordinary
+     exported function beside them. Exporting two helpers from `functions/campaign.ts` pulled
+     Drizzle and the `postgres` driver into the client bundle, which died on `Buffer is not
+     defined` — so React never hydrated and every form fell back to a native submit. Helpers
+     worth testing go on a service. **This is the one to remember:** it is invisible to `tsc`
+     and to every test, and only shows up when a page is actually loaded in a browser.
+  4. **Duplicate `vite` instances are order-sensitive.** `lightningcss` is an optional peer of
+     `vite`, so two resolutions of it produce two nominally distinct copies of vite's `Plugin`
+     type. The vitest configs mix them, and which copy `tsc` anchors on depends on the order
+     files enter the program — so deleting enough files turned a latent mismatch into six
+     errors in untouched files. `lightningcss` is pinned in `pnpm-workspace.yaml`.
+
+  What the plan did not anticipate, and what made it smaller than 126 files suggests:
 
   - **There is no server-component data flow to port.** The dashboard is already a
     client-rendered SPA — `app/(dashboard)/layout.tsx` is `force-static`, the gate is
@@ -499,9 +533,9 @@ requires a Cloudflare account.
      written the alert.
 - **Phase 9 — Redis's other four jobs.** Idempotency + rate limits → DO; cache + dedup → KV.
   **Done**, and **the domain verification blocker is cleared**. Nothing outside
-  `server/queue/bullmq-driver.ts` imports `server/redis` any more; what is left of it is three
-  drivers (`server/cache`, `server/rate-limit`, `server/idempotency`) and the integration test
-  helper, all of which Phase 10 deletes.
+  `server/queue/bullmq-driver.ts` imported `server/redis` by the end of it; the three drivers it
+  left (`server/cache`, `server/rate-limit`, `server/idempotency`) and the integration test
+  helper are what Phase 10 deleted.
 
   `getDomainVerificationState` used to read three Redis keys per domain, through the module-level
   `let` in `server/redis.ts` — which on Workers serves exactly one invocation and then hangs, so
@@ -544,19 +578,81 @@ requires a Cloudflare account.
   Verified in a real isolate: ten concurrent `withIdempotency` calls on one key run the operation
   **once**, one caller gets the result and nine are refused, and a later duplicate replays rather
   than runs (`pnpm --filter=web bindings:check`).
-- **Phase 10 — Delete.** Drop `bullmq`, `ioredis`, `server/redis.ts`, `REDIS_URL` / `REDIS_KEY_PREFIX`
-  from `env.js` and `turbo.json`. Delete `docker/prod/compose.yml`.
+- **Phase 10 — Delete. Done (#12).** `bullmq`, `ioredis`, `server/redis.ts`,
+  `server/runtime.ts` and the four Redis drivers are gone; `REDIS_URL` and `REDIS_KEY_PREFIX` are
+  out of `env.js`, `turbo.json`, both `.env` examples, `.dev.vars.example`, the test env and CI;
+  the Redis container is out of `docker/dev/compose.yml` and `docker/testing/compose.yml`.
+
+  **The product decision that unblocked it: useSend no longer ships a web container.** Self-hosting
+  is `wrangler deploy`. `docker/Dockerfile`, `docker/start.sh`, `docker/build.sh`,
+  `docker/prod/compose.yml`, `.env.selfhost.example`, `nixpacks.toml`, the Railway one-click page
+  and the web entry in `.github/workflows/publish.yml` are deleted; `apps/smtp-server` keeps its
+  own Dockerfile and is now the only image published. That is what made the rest possible — with
+  no Node deployment target, the dual-runtime seam had no second runtime to serve.
+
+  **What the seams cost to collapse, measured rather than assumed.** Each of the four was a
+  one-file change plus a deleted branch, as designed. Three call sites had a runtime branch of
+  their own and had to go with them: `email-queue-service.ts` (queue creation per region, the
+  `init()` that read `SesSetting` to size workers, and the concurrency retuning — all of which
+  were already inert on Workers), `webhook-service.ts` (the `webhook-dispatch` queue and its
+  concurrency-1 worker, the Node stand-in for the Durable Object), and
+  `campaign-scheduler-job.ts` (the BullMQ repeatable job it fell back to). `enqueueCall` and
+  `CampaignSchedulerService.start()` now require their binding rather than falling back.
+
+  **The integration suite was the real work.** It runs under Node and reset state with Redis
+  `flushdb`, so deleting the drivers left it with no backend. See §10.
+
+  Phase 7's teardown handed Phase 10 two things that are **not** done and are not Redis:
+
+  1. **The `NEXT_PUBLIC_` prefix is still free to go.** Nothing depends on the name any more. It
+     is a wide but mechanical rename — `env.public.ts`, the `envPrefix` in `vite.config.ts`,
+     `turbo.json`, `.dev.vars.example`, `.github/workflows/test-web.yml` and every
+     `publicEnv.NEXT_PUBLIC_*` read — and it changes operator-facing configuration, so it wants
+     its own PR.
+  2. **`apps/web/.eslintrc.cjs` still extends `@usesend/eslint-config/next.js`.** The preset's
+     Next rules are inert in a Vite app but the name now lies, and one
+     `eslint-disable-next-line @next/next/no-img-element` in
+     `routes/_dashboard/contacts/$contactBookId/-contact-list.tsx` depends on the plugin still
+     being loaded. `apps/marketing` is a real Next.js app and keeps the preset, so this is a
+     new non-Next config for `apps/web`, not a change to the shared one.
+
+  Note that `pnpm --filter=web lint` already fails `--max-warnings 0` on `main`. That backlog
+  predates #9 and belongs to #87, not here.
 
 ## 10. Test impact
 
-Integration tests require real Redis today (`AGENTS.md:37`, `docker/testing/compose.yml`,
-`test/setup/setup-env.ts`). Target: `@cloudflare/vitest-pool-workers` / Miniflare for Queues, DOs,
-KV and R2, against Neon branches for Postgres.
+**Settled in Phase 10 (#12), and not the way this section planned.**
 
-Affected: `hono.integration.test.ts`, `idempotency-service.integration.test.ts`,
-`api-service.integration.test.ts`, `trpc.integration.test.ts`, `helpers.ts` (uses `$queryRaw` +
-`$executeRawUnsafe` for table truncation — needs a Drizzle port), plus the mocked unit tests for
-webhook, campaign and domain services.
+The plan was `@cloudflare/vitest-pool-workers` / Miniflare for Queues, DOs, KV and R2. What
+shipped keeps the suite on Node and vitest and supplies the bindings instead:
+`src/test/integration/bindings.ts` builds an in-memory KV namespace and in-memory Durable Object
+storage, and hands them to the **real** `RateLimiter`, `IdempotencyKeeper` and `WebhookDispatcher`
+classes. `server/worker-bindings.ts` gained a process-wide fallback under the `AsyncLocalStorage`
+scope — the same shape the Drizzle client already had — and the integration helpers set it.
+
+Why that and not the pool: the suite's subject is services against a real Postgres, and its Redis
+use was incidental infrastructure. Moving to `workerd` would have rewritten 223 tests to answer a
+question they are not asking, while the drivers and the DO classes are already exercised in a real
+isolate by `pnpm --filter=web bindings:check` and `queue:check`. The choice is also strictly
+*stronger* than what it replaced: the tests used to run against the Redis drivers, which were
+about to be deleted and had never served a request in production; they now run the code a deploy
+runs. What in-memory storage does not reproduce is documented at the top of `bindings.ts` —
+alarms never fire, and KV is strongly consistent.
+
+Three consequences worth knowing:
+
+- **`cloudflare:workers` is aliased to a shim** (`src/test/setup/cloudflare-workers-shim.ts`) in
+  `vitest.config.ts`, because a Durable Object class cannot otherwise load under Node.
+- **The bindings are installed from `src/test/integration/helpers.ts`, not from `setupFiles`.** A
+  setup file runs before the test module, so everything `bindings.ts` imports would already be in
+  the module registry when a test file's hoisted `vi.mock` calls ran, and the mocks would silently
+  not apply. That cost 29 failures before it was moved, in files that had nothing to do with the
+  change.
+- **Four test files stub the queue driver** (`~/server/queue/workers-driver`) where they used to
+  stub `bullmq-driver`. Same shape, same intent: they capture handlers and enqueues rather than
+  standing up a queue.
+
+223 integration tests, 236 unit and 18 api tests pass with no Redis anywhere.
 
 ## 11. Decisions (settled 2026-09-17)
 

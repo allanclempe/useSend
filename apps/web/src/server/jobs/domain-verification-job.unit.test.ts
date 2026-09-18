@@ -29,8 +29,8 @@ const {
 }));
 
 // Mock the driver, not the queue module — the interface and constants stay real.
-vi.mock("~/server/queue/bullmq-driver", () => ({
-  bullmqDriver: {
+vi.mock("~/server/queue/workers-driver", () => ({
+  workersDriver: {
     createQueue: mockCreateQueue,
     createWorker: mockCreateWorker,
   },
@@ -52,11 +52,6 @@ vi.mock("~/server/drizzle", async (importOriginal) => {
     },
   };
 });
-
-vi.mock("~/server/redis", () => ({
-  BULL_PREFIX: "bull",
-  getRedis: vi.fn(() => ({})),
-}));
 
 // importOriginal on ~/server/drizzle constructs the client, which logs on the
 // way up, so every level has to exist or the mock factory itself throws.

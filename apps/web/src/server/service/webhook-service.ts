@@ -22,14 +22,7 @@ import { drizzleDb, schema } from "../drizzle";
 import { createId } from "../drizzle/id";
 import { withUpdatedAt } from "../drizzle/touch";
 import { currentTraceparent } from "../logger/trace-context";
-import {
-  createQueue,
-  createWorker,
-  createWorkerHandler,
-  WEBHOOK_DISPATCH_QUEUE,
-  type TeamJob,
-} from "../queue";
-import { isWorkersRuntime } from "../runtime";
+import { type TeamJob } from "../queue";
 import { getWorkerBindings } from "../worker-bindings";
 import { logger } from "../logger/log";
 import { LimitService } from "./limit-service";
@@ -40,14 +33,11 @@ import { UnsendApiError } from "../public-api/api-error";
  *
  * A webhook endpoint is told about events in the order they happened, which
  * used to be enforced by a Redis `SET NX PX` lock per `webhookId` plus a Lua
- * release and a retry path for losing the race. On Workers that lock is
- * replaced by a Durable Object per `webhookId`, which is single-threaded by
- * construction (§3). Under Node the same property comes from running the
- * dispatch worker at concurrency 1 — a stronger guarantee than the lock gave,
- * since it serialises globally, and a slower one, which is the trade. Node is
- * on its way out and the lock is not worth keeping alive for it.
+ * release and a retry path for losing the race. That lock is a Durable Object
+ * per `webhookId` now — single-threaded by construction, so ordering is a
+ * property of where the code runs rather than something to acquire (§3). The
+ * lock, the Lua and the `webhook-dispatch` queue are all deleted.
  */
-const WEBHOOK_DISPATCH_CONCURRENCY = 1;
 export const WEBHOOK_MAX_ATTEMPTS = 6;
 const WEBHOOK_BASE_BACKOFF_MS = 5_000;
 const WEBHOOK_AUTO_DISABLE_THRESHOLD = 30;
@@ -64,37 +54,19 @@ type WebhookCallJob = TeamJob<WebhookCallJobData>;
 type WebhookEventInput<TType extends WebhookEventType> =
   WebhookPayloadData<TType>;
 
-/**
- * The BullMQ half. Absent inside a Worker, where dispatch is a Durable Object
- * and there is no `webhook-dispatch` queue to create or consume.
- */
-const dispatchQueue = isWorkersRuntime()
-  ? undefined
-  : createQueue<WebhookCallJobData>(WEBHOOK_DISPATCH_QUEUE, {
-      attempts: WEBHOOK_MAX_ATTEMPTS,
-      backoff: {
-        type: "exponential",
-        delay: WEBHOOK_BASE_BACKOFF_MS,
-      },
-    });
-
-if (dispatchQueue) {
-  createWorker(WEBHOOK_DISPATCH_QUEUE, createWorkerHandler(processWebhookCall), {
-    concurrency: WEBHOOK_DISPATCH_CONCURRENCY,
-    onError: (error) => {
-      logger.error({ error }, "[WebhookQueueService]: Worker error");
-    },
-  });
-}
-
 export class WebhookQueueService {
   /**
-   * Hands a call to whatever delivers webhooks in this runtime.
+   * Hands a call to the Durable Object that delivers it.
    *
-   * `webhookId` is new in the signature and is the whole point: it is the
-   * Durable Object's name, so every call for one webhook lands on one object
-   * and is delivered in order. Every caller already had it — `emit` from the
-   * webhook row it just matched, `retryCall` from the call row it just read.
+   * `webhookId` is the object's name, so every call for one webhook lands on
+   * one object and is delivered in order — which is the whole reason the Redis
+   * lock could be deleted rather than ported (§3). Every caller already had it:
+   * `emit` from the webhook row it just matched, `retryCall` from the call row
+   * it just read.
+   *
+   * There was a BullMQ queue beside this, taken when no binding was in scope.
+   * It went with Redis (#12); `processWebhookCall` is now reached only from the
+   * dispatcher's alarm.
    */
   public static async enqueueCall(
     callId: string,
@@ -105,22 +77,18 @@ export class WebhookQueueService {
       | WebhookDispatcherNamespace
       | undefined;
 
-    if (dispatcher) {
-      const stub = dispatcher.get(dispatcher.idFromName(webhookId));
-      // The trace does not ride on a message body here — there is no message —
-      // so it is passed explicitly, the way the queue seam does it implicitly.
-      await stub.deliver(callId, teamId, currentTraceparent() ?? null);
-      return;
-    }
-
-    if (!dispatchQueue) {
+    if (!dispatcher) {
       throw new Error(
-        "Webhook dispatch has nowhere to go: no WEBHOOK_DISPATCHER binding and no BullMQ queue. " +
-          "Declare the Durable Object in wrangler.jsonc.",
+        "Webhook dispatch has nowhere to go: no WEBHOOK_DISPATCHER binding. " +
+          "Declare the Durable Object in wrangler.jsonc, or open a binding " +
+          "scope — they are only readable inside a handler.",
       );
     }
 
-    await dispatchQueue.enqueue(callId, { callId, teamId });
+    const stub = dispatcher.get(dispatcher.idFromName(webhookId));
+    // The trace does not ride on a message body here — there is no message —
+    // so it is passed explicitly, the way the queue seam does it implicitly.
+    await stub.deliver(callId, teamId, currentTraceparent() ?? null);
   }
 }
 
@@ -727,9 +695,8 @@ export async function processWebhookCall(job: WebhookCallJob) {
     .where(eq(schema.webhookCall.id, call.id));
 
   // No lock. Ordering per webhook is a property of where this runs, not
-  // something to acquire: on Workers a Durable Object per `webhookId` is
-  // single-threaded by construction, and under Node the dispatch worker runs at
-  // concurrency 1. The Redis `SET NX PX`, its Lua release and the
+  // something to acquire: a Durable Object per `webhookId` is single-threaded
+  // by construction. The Redis `SET NX PX`, its Lua release and the
   // lock-not-acquired retry path are gone (§3).
   try {
     const body = buildPayload(call, attempt);

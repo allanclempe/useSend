@@ -162,7 +162,7 @@ AWS_SECRET_ACCESS_KEY=<secret-access-key>
 
 ## Running useSend locally
 
-We are using a local Postgresql server and a local Redis server. But if you don't have docker you can also manually set these up.
+We are using a local Postgres server through Docker. If you don't have Docker you can point `DATABASE_URL` at your own.
 
 ### Option 1: Using Docker Recommended
 
@@ -198,10 +198,9 @@ You can paste the URL provided by cloudflare in the Callback URL section
 ### Option 2: Using your own database or hosted database
 
 <Steps>
-<Step title="Set up your PostgreSQL and Redis database in Environment Variables">
+<Step title="Set up your PostgreSQL database in Environment Variables">
 ```bash
 DATABASE_URL=""
-REDIS_URL=""
 ```
 </Step>
 <Step title="Migrate the database">

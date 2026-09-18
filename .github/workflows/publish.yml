@@ -1,4 +1,11 @@
-name: Publish Docker
+# The only image useSend ships.
+#
+# `apps/smtp-server` is a raw TCP listener on :465/:587 and cannot run on
+# Workers, so it stays a container (references/serverless-migration.md §7). The
+# web app has no image any more: it is a Cloudflare Worker, deployed with
+# `wrangler deploy`, and the `usesend/usesend` image it used to publish was a
+# Next.js standalone server that no longer exists (#12).
+name: Publish SMTP proxy image
 
 on:
   push:
@@ -13,7 +20,7 @@ on:
 
 jobs:
   build_and_publish_platform_containers:
-    name: Build and publish platform containers
+    name: Build and publish the SMTP proxy container
     runs-on: ${{ matrix.os }}
     permissions:
       packages: write
@@ -24,9 +31,6 @@ jobs:
           - warp-ubuntu-latest-x64-2x
           - warp-ubuntu-latest-arm64-2x
         app:
-          - name: usesend
-            dockerfile: ./docker/Dockerfile
-            context: .
           - name: smtp-proxy
             dockerfile: ./apps/smtp-server/Dockerfile
             context: ./apps/smtp-server
@@ -119,7 +123,7 @@ jobs:
           APP_VERSION="$(git name-rev --tags --name-only $(git rev-parse HEAD) | head -n 1 | sed 's/\^0//')"
           GIT_SHA="$(git rev-parse HEAD)"
 
-          for APP_NAME in usesend smtp-proxy; do
+          for APP_NAME in smtp-proxy; do
             docker manifest create \
               usesend/$APP_NAME:latest \
               --amend usesend/$APP_NAME-amd64:latest \
@@ -145,7 +149,7 @@ jobs:
           APP_VERSION="$(git name-rev --tags --name-only $(git rev-parse HEAD) | head -n 1 | sed 's/\^0//')"
           GIT_SHA="$(git rev-parse HEAD)"
 
-          for APP_NAME in usesend smtp-proxy; do
+          for APP_NAME in smtp-proxy; do
             docker manifest create \
               ghcr.io/usesend/$APP_NAME:latest \
               --amend ghcr.io/usesend/$APP_NAME-amd64:latest \

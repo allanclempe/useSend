@@ -119,11 +119,11 @@ const dnsResolveTxt = util.promisify(dns.resolveTxt);
  * between runs.
  *
  * This is the state that blocked domain verification on Workers. It used to be
- * three Redis keys read with `MGET`, and `server/redis.ts` caches its ioredis
- * connection in a module-level `let` — which on Workers serves exactly one
- * invocation and then hangs, because the runtime ties an I/O object to the
- * request that opened it. Measured under `wrangler dev`: page one of the hourly
- * sweep ran, and both its continuation and the next cron stalled.
+ * three Redis keys read with `MGET`, through an ioredis connection cached in a
+ * module-level `let` — which on Workers serves exactly one invocation and then
+ * hangs, because the runtime ties an I/O object to the request that opened it.
+ * Measured under `wrangler dev`: page one of the hourly sweep ran, and both its
+ * continuation and the next cron stalled.
  *
  * It is now one KV value per domain rather than three keys. Not cosmetic: every
  * binding call is a subrequest against a cap of 1000 per invocation, the page
