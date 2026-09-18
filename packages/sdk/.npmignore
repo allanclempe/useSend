@@ -7,4 +7,3 @@ index.ts
 # Ignore specific directories
 src/
 types/
-.turbo/

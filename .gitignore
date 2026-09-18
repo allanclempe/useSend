@@ -24,9 +24,6 @@ node_modules
 coverage
 .idea
 
-# Turbo
-.turbo
-
 # Vercel
 .vercel
 

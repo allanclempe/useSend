@@ -8,7 +8,6 @@ import { Analytics } from "./analytics";
 import { Webhooks } from "./webhooks";
 
 const defaultBaseUrl = "https://app.usesend.com";
-// eslint-disable-next-line turbo/no-undeclared-env-vars
 const baseUrl = `${process?.env?.USESEND_BASE_URL ?? process?.env?.UNSEND_BASE_URL ?? defaultBaseUrl}/api/v1`;
 
 function isUseSendErrorResponse(error: { error: ErrorResponse }) {

@@ -606,9 +606,9 @@ requires a Cloudflare account.
 
   1. **The `NEXT_PUBLIC_` prefix is still free to go.** Nothing depends on the name any more. It
      is a wide but mechanical rename — `env.public.ts`, the `envPrefix` in `vite.config.ts`,
-     `turbo.json`, `.dev.vars.example`, `.github/workflows/test-web.yml` and every
+     `.dev.vars.example`, `.github/workflows/test-web.yml` and every
      `publicEnv.NEXT_PUBLIC_*` read — and it changes operator-facing configuration, so it wants
-     its own PR.
+     its own PR. (`turbo.json` was on that list; Turborepo is gone.)
   2. **`apps/web/.eslintrc.cjs` still extends `@usesend/eslint-config/next.js`.** The preset's
      Next rules are inert in a Vite app but the name now lies, and one
      `eslint-disable-next-line @next/next/no-img-element` in
