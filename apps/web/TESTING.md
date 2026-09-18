@@ -1,9 +1,8 @@
 # Testing in `apps/web`
 
-This app now supports four testing layers:
+This app has three testing layers:
 
 - Unit tests (`*.unit.test.ts`)
-- tRPC tests (`*.trpc.test.ts`)
 - API tests (`*.api.test.ts`)
 - Infra-backed integration tests (`*.integration.test.ts`)
 
@@ -21,7 +20,6 @@ From repo root:
 - `pnpm test:web`
 - `pnpm test:web:all`
 - `pnpm test:web:unit`
-- `pnpm test:web:trpc`
 - `pnpm test:web:api`
 - `pnpm test:web:integration`
 - `pnpm test:web:integration:full`

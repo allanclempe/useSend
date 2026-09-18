@@ -76,9 +76,6 @@ jobs:
       - name: Run unit tests
         run: pnpm --filter=web test:unit
 
-      - name: Run tRPC tests
-        run: pnpm --filter=web test:trpc
-
       - name: Run API tests
         run: pnpm --filter=web test:api
 
