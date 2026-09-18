@@ -41,7 +41,8 @@
     "@usesend/typescript-config": "workspace:*",
     "dotenv-cli": "^8.0.0",
     "mintlify": "^4.2.566",
-    "prettier": "^3.5.3"
+    "prettier": "^3.5.3",
+    "sst": "^4.17.1"
   },
   "packageManager": "pnpm@11.11.0",
   "engines": {

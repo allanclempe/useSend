@@ -224,10 +224,25 @@ Things that behave differently inside the Worker, by design:
   both send.
 - **KV namespaces and Durable Object bindings live in `server/binding-registry.ts`**,
   and `binding-registry.unit.test.ts` fails if `wrangler.jsonc` disagrees. Same
-  rule as queues: **adding one means editing both**, plus a `migrations` entry
-  for a new Durable Object class and an `export` from `src/server.ts`.
+  rule as queues: **adding one means editing both**, plus an entry in
+  `server/durable-object-migrations.ts` for a new Durable Object class and an
+  `export` from `src/server.ts`.
+- **The Durable Object migration ledger is `server/durable-object-migrations.ts`**,
+  not the `migrations` block in `wrangler.jsonc` — that block is a copy of it and
+  the test says so. The ledger is **append-only and ordered**: Cloudflare keys
+  the account's state on the last `tag` a script deployed with, so editing,
+  reordering or reusing an entry is a deploy that either fails with
+  `Actor migration tag precondition failed` or quietly creates a second
+  namespace.
 - **`wrangler dev` writes nothing to Cloudflare.** Never run `wrangler deploy` or
   `wrangler login` without being asked.
+- **`sst.config.ts` at the repo root is not live yet.** It declares the same
+  Worker in SST/Pulumi terms and **nothing reads it** — `wrangler.jsonc` is
+  still what `vite dev` and `wrangler deploy` use, and `sst deploy` has never
+  been run (issue #130, PR A). Every name in it is derived by looping over the
+  registries above, and `sst-config.unit.test.ts` executes the program with
+  recording stubs and diffs it against `wrangler.jsonc`, so adding a queue or a
+  binding needs no edit there. Never run `sst deploy` or `sst dev`.
 
 `pnpm --filter=web compat:check` runs the §8 runtime-compatibility list
 (`src/worker/compat-check.ts`) inside a real isolate and reports what passed.
