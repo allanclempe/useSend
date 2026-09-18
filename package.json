@@ -14,7 +14,6 @@
     "test:web:all": "pnpm test:infra:up && (pnpm --filter=web test:all; code=$?; pnpm test:infra:down; exit $code)",
     "test:web:all:raw": "pnpm --filter=web test:all",
     "test:web:unit": "pnpm --filter=web test:unit",
-    "test:web:trpc": "pnpm --filter=web test:trpc",
     "test:web:api": "pnpm --filter=web test:api",
     "test:web:integration": "pnpm --filter=web test:integration",
     "test:web:integration:full": "pnpm test:infra:up && (pnpm --filter=web test:integration:full; code=$?; pnpm test:infra:down; exit $code)",
