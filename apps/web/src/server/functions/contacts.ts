@@ -10,6 +10,7 @@ import {
 } from "~/server/functions/middleware";
 import * as contactBookService from "~/server/service/contact-book-service";
 import * as contactService from "~/server/service/contact-service";
+import { getGravatarUrl } from "~/utils/gravatar-utils";
 
 /**
  * Contact books and the contacts in them, from
@@ -161,9 +162,19 @@ export const contacts = createServerFn({ method: "GET" })
     const [rows, count] = await Promise.all([contactsP, countP]);
 
     // jsonb reads as `unknown` in Drizzle; the list expects a string map.
+    //
+    // The avatar URL is derived here rather than in the list component because
+    // it is a SHA-256 of the address and `utils/gravatar-utils` gets that from
+    // node:crypto. Next.js polyfilled node built-ins into the browser bundle;
+    // Vite does not, so the same import from a route component is a broken
+    // page. WebCrypto's digest is async, which a render is not.
     const list = rows.map((row) => ({
       ...row,
       properties: (row.properties ?? {}) as Record<string, string>,
+      gravatarUrl: getGravatarUrl(row.email, {
+        size: 75,
+        defaultImage: "robohash",
+      }),
     }));
 
     return { contacts: list, totalPage: Math.ceil(count / limit) };
