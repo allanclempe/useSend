@@ -1,6 +1,37 @@
 import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
+/**
+ * Schema for one AWS service endpoint: optional where real AWS is allowed,
+ * required — with an error that says what to do — where it is not.
+ *
+ * Reading `process.env` here rather than refining the parsed object is
+ * deliberate and matches `APP_SECRET` below: the answer decides the *shape* of
+ * the schema, so it has to be known before parsing. An unset `NODE_ENV` fails
+ * this test, which is the safe direction: it demands an endpoint rather than
+ * assuming production.
+ */
+function awsEndpoint(name, localValue) {
+  const realAwsAllowed =
+    process.env.NODE_ENV === "production" ||
+    process.env.AWS_ALLOW_REAL_ENDPOINTS === "true";
+
+  if (realAwsAllowed) {
+    return z.string().url().optional();
+  }
+
+  const message =
+    `${name} is required outside production. Unset, the AWS SDK talks to real ` +
+    `AWS, where adding a domain creates a real, billable SES identity. Point ` +
+    `it at the local simulator (\`pnpm dx:up\`): ${name}="${localValue}". To ` +
+    `use a real AWS account from a non-production environment on purpose, set ` +
+    `AWS_ALLOW_REAL_ENDPOINTS=true.`;
+
+  return z
+    .string({ required_error: message, invalid_type_error: message })
+    .url();
+}
+
 export const env = createEnv({
   /**
    * Specify your server-side environment variables schema here. This way you can ensure the app
@@ -73,8 +104,42 @@ export const env = createEnv({
     UNSEND_API_KEY: z.string().optional(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
-    AWS_SES_ENDPOINT: z.string().optional(),
-    AWS_SNS_ENDPOINT: z.string().optional(),
+    /**
+     * Where the SES and SNS clients send their requests
+     * (`server/aws/ses.ts`, `server/aws/sns.ts`).
+     *
+     * Unset means real AWS — that is the SDK's own default, and it is the
+     * right one in production and the wrong one everywhere else. Adding a
+     * domain calls `CreateEmailIdentityCommand`, so with an unset endpoint and
+     * any usable credentials, clicking "add domain" in local dev creates a
+     * real, billable, persistent identity in whoever's account those
+     * credentials belong to. That is too large a consequence for a variable
+     * nobody set.
+     *
+     * So outside production they are required, and what they should point at
+     * is the local simulator that `pnpm dx:up` starts
+     * (`docker/dev/compose.yml`, port 5350). Driving a real AWS account from a
+     * development environment is still supported — it is how you onboard your
+     * own SES account — but `AWS_ALLOW_REAL_ENDPOINTS` below has to say so.
+     */
+    AWS_SES_ENDPOINT: awsEndpoint(
+      "AWS_SES_ENDPOINT",
+      "http://localhost:5350/api/ses",
+    ),
+    AWS_SNS_ENDPOINT: awsEndpoint(
+      "AWS_SNS_ENDPOINT",
+      "http://localhost:5350/api/sns",
+    ),
+    /**
+     * Opts a non-production environment into talking to real AWS.
+     *
+     * Nothing reads the parsed value: the decision happens above, at schema
+     * construction, from `process.env` directly — the same shape as
+     * `APP_SECRET`. It is declared so that the one variable that can point
+     * local dev at a billable account is documented and validated rather than
+     * being an undeclared string someone has to find in a conditional.
+     */
+    AWS_ALLOW_REAL_ENDPOINTS: z.enum(["true", "false"]).optional(),
     AWS_DEFAULT_REGION: z
       .string()
       .trim()
@@ -101,22 +166,22 @@ export const env = createEnv({
     SMTP_USER: z.string().default("usesend"),
     CONTACT_BOOK_ID: z.string().optional(),
     EMAIL_CLEANUP_DAYS: z
-        .string()
-        .optional()
-        .transform((str) => (str ? parseInt(str, 10) : undefined)),
+      .string()
+      .optional()
+      .transform((str) => (str ? parseInt(str, 10) : undefined)),
     EMAIL_EVENT_RETENTION_DAYS: z
-        .string()
-        .optional()
-        .transform((str) => (str ? parseInt(str, 10) : undefined)),
+      .string()
+      .optional()
+      .transform((str) => (str ? parseInt(str, 10) : undefined)),
     // Defaults to 30 days rather than being opt-in. It was opt-in so that wiring
     // up a job that deletes rows would not quietly start deleting them at an
     // existing install on upgrade; the log is a debugging aid nobody reads at 31
     // days, and leaving it unbounded by default is the worse failure. Set to 0
     // to keep it indefinitely.
     WEBHOOK_CALL_RETENTION_DAYS: z
-        .string()
-        .default("30")
-        .transform((str) => parseInt(str, 10)),
+      .string()
+      .default("30")
+      .transform((str) => parseInt(str, 10)),
     /**
      * OpenTelemetry resource attributes stamped on every log record. Declared
      * here so they are validated and documented; `server/logger/log.ts` reads
@@ -148,8 +213,10 @@ export const env = createEnv({
     API_KEY_HMAC_SECRET: process.env.API_KEY_HMAC_SECRET,
     GITHUB_ID: process.env.GITHUB_ID,
     GITHUB_SECRET: process.env.GITHUB_SECRET,
-    AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY,
-    AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_KEY,
+    AWS_ACCESS_KEY_ID:
+      process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY,
+    AWS_SECRET_ACCESS_KEY:
+      process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_KEY,
     USESEND_API_KEY: process.env.USESEND_API_KEY,
     UNSEND_API_KEY: process.env.UNSEND_API_KEY,
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
@@ -157,6 +224,7 @@ export const env = createEnv({
     AWS_DEFAULT_REGION: process.env.AWS_DEFAULT_REGION,
     AWS_SES_ENDPOINT: process.env.AWS_SES_ENDPOINT,
     AWS_SNS_ENDPOINT: process.env.AWS_SNS_ENDPOINT,
+    AWS_ALLOW_REAL_ENDPOINTS: process.env.AWS_ALLOW_REAL_ENDPOINTS,
     API_RATE_LIMIT: process.env.API_RATE_LIMIT,
     AUTH_EMAIL_RATE_LIMIT: process.env.AUTH_EMAIL_RATE_LIMIT,
     ADMIN_EMAIL: process.env.ADMIN_EMAIL,

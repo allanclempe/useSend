@@ -111,6 +111,49 @@ configs and are still plain `wrangler dev`.
    document (no auth), `/storage/*` for R2 and `/api/health` for a liveness
    check that touches nothing.
 
+## Local SES and SNS
+
+`pnpm dx:up` starts `usesend/local-ses-sns` alongside the database. It answers
+the SES and SNS APIs on **5350** and posts delivery and bounce notifications
+back to the app, so the whole pipeline — identity, send, SNS callback,
+`EmailEvent` row — runs with no AWS account. Point the Worker at it with the
+`AWS_SES_ENDPOINT` and `AWS_SNS_ENDPOINT` in `.dev.vars.example`; the SDK
+appends its own path, so those values end at `/api/ses` and `/api/sns`.
+
+**An unset endpoint means real AWS**, and saving a domain then creates a real,
+billable SES identity in whatever account the credentials belong to. `env.js`
+therefore requires both outside production, and reaching a real account from a
+dev or test environment is an explicit `AWS_ALLOW_REAL_ENDPOINTS=true` (#126).
+That is still a supported way to work — it is how you onboard your own SES
+account — it just has to be typed rather than forgotten.
+
+Getting to a first send, in order, because each step gates the next:
+
+1. **An SES setting has to exist before any domain can.** `createDomain` asks
+   `SesSettingsService.getSetting(region)` first and throws `Ses setting not
+   found` with none. One is created under `/admin`, which needs instance admin:
+   on a cloud install (`NEXT_PUBLIC_IS_CLOUD=true`, which the repo-root
+   `.env.example` sets) that is `ADMIN_EMAIL` matching the address you sign in
+   with. Unset, `/admin` is denied and there is no way to configure a region.
+2. **The callback URL you give that form must be reachable from inside the
+   container**, because SNS confirms the subscription by posting to it, and the
+   simulator *exits* when it cannot — leaving the SES call that triggered it to
+   fail with `Network connection lost`. `localhost` is the container itself, so
+   on Linux use the docker bridge address (`http://172.17.0.1:8788`) and run the
+   dev server with `--host`; a host firewall such as `ufw` blocks the bridge by
+   default and has to allow it. `WEBHOOK_URL` in `docker/dev/compose.yml` is the
+   same address seen from the other side.
+3. Sign in — in development `sendSignUpEmail` logs the code instead of sending
+   it, so read it out of the dev server's output.
+
+Known gap: `GetEmailIdentity` against the simulator fails to deserialise
+(`Expected real number, got implicit NaN`) because it returns ISO-8601 strings
+for `VerificationInfo` timestamps where SESv2 specifies epoch seconds. That
+breaks **Verify domain** and the domain detail page locally. Sending works;
+`Domain.status` has to be set to `SUCCESS` by hand to get past the verification
+check. The image is upstream's, third-party, pinned to `:latest`, and has no
+source in this repository, so the fix belongs there.
+
 The Worker's request routing is written down once, in the order it is
 evaluated, in `src/worker/routing.ts`: `/storage/*`, then the SES callback,
 then `/api/v1/*` to Hono, then TanStack Start for everything else. `src/server.ts`

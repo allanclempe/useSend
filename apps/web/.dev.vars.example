@@ -32,6 +32,22 @@ AWS_ACCESS_KEY_ID="local"
 AWS_SECRET_ACCESS_KEY="local"
 AWS_DEFAULT_REGION="us-east-1"
 
+# The local SES/SNS simulator that `pnpm dx:up` starts (docker/dev/compose.yml,
+# published on 5350). The AWS SDK appends its own path to whatever is here, so
+# these end at the `/api/ses` and `/api/sns` prefixes and the SDK adds the rest
+# -- `/v2/email/identities`, `/v2/email/outbound-emails` and so on.
+#
+# **Leaving these unset points local dev at real AWS.** That is the SDK's
+# default, so saving a domain would call CreateEmailIdentity against whatever
+# account AWS_ACCESS_KEY_ID belongs to and create a real, billable, persistent
+# identity there. `src/env.js` therefore refuses to start without them outside
+# production. Onboarding your own SES account from here is still supported:
+# clear these, set real credentials above and add
+# AWS_ALLOW_REAL_ENDPOINTS="true" -- which is the point, that reaching real AWS
+# is something you type rather than something you forget.
+AWS_SES_ENDPOINT="http://localhost:5350/api/ses"
+AWS_SNS_ENDPOINT="http://localhost:5350/api/sns"
+
 # Keys the HMAC that hashes API keys (#48). Required -- `src/env.js` refuses to
 # validate without it, so the isolate fails at startup rather than at request
 # time. Generate a throwaway one for local dev with:
