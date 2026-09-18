@@ -11,8 +11,8 @@ What is left here is local infrastructure and one shipped image.
 ## Local development infrastructure
 
 `docker/dev/compose.yml` — started by `pnpm dx:up`, stopped by `pnpm dx:down`.
-It runs Neon Local (a proxy to a real Neon branch, not a local Postgres), the
-local SES/SNS simulator and MinIO. It reads `NEON_PROJECT_ID`, `NEON_API_KEY`
+It runs Neon Local (a proxy to a real Neon branch, not a local Postgres) and
+the local SES/SNS simulator. It reads `NEON_PROJECT_ID`, `NEON_API_KEY`
 and `NEON_BRANCH_ID` from the repo-root `.env`; the `dx` scripts pass
 `--project-directory .` so compose finds it.
 
