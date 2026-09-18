@@ -1,5 +1,10 @@
-"use client";
-
+/**
+ * The waitlist request form, on TanStack Start (#9).
+ *
+ * Unchanged apart from how it calls the server. The "log out" button is a full
+ * page navigation rather than a router one, because the session cookie it just
+ * cleared is what every route in here is gated on.
+ */
 import { useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -22,7 +27,9 @@ import {
   waitlistSubmissionSchema,
   type WaitlistSubmissionInput,
 } from "~/lib/zod/waitlist-schema";
-import { api } from "~/trpc/react";
+import { useMutation } from "@tanstack/react-query";
+
+import { submitRequest as submitWaitlistRequest } from "~/server/functions/waitlist";
 import { signOut } from "~/lib/auth-client";
 
 type WaitListFormProps = {
@@ -48,7 +55,8 @@ export function WaitListForm({ userEmail }: WaitListFormProps) {
 
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  const submitRequest = api.waitlist.submitRequest.useMutation({
+  const submitRequest = useMutation({
+    mutationFn: submitWaitlistRequest,
     onSuccess: () => {
       toast.success("Thanks! We'll reach out shortly.");
       form.reset();
@@ -59,7 +67,7 @@ export function WaitListForm({ userEmail }: WaitListFormProps) {
   });
 
   const onSubmit = (values: WaitlistSubmissionInput) => {
-    submitRequest.mutate(values);
+    submitRequest.mutate({ data: values });
   };
 
   const handleLogout = () => {

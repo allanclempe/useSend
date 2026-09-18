@@ -1,20 +1,17 @@
 import { z } from "zod";
 
-export const WAITLIST_EMAIL_TYPES = [
-  "transactional",
-  "marketing",
-] as const;
+export const WAITLIST_EMAIL_TYPES = ["transactional", "marketing"] as const;
 
 export const waitlistSubmissionSchema = z.object({
- domain: z
-  .string({ required_error: "Domain is required" })
-  .trim()
-  .min(1, "Domain is required")
-  .max(255, "Domain must be 255 characters or fewer")
-  .regex(
-    /^(?!:\/\/)([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/,
-    "Please enter a valid domain (e.g. example.com)"
-  ),
+  domain: z
+    .string({ required_error: "Domain is required" })
+    .trim()
+    .min(1, "Domain is required")
+    .max(255, "Domain must be 255 characters or fewer")
+    .regex(
+      /^(?!:\/\/)([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/,
+      "Please enter a valid domain (e.g. example.com)",
+    ),
   emailTypes: z
     .array(z.enum(WAITLIST_EMAIL_TYPES))
     .min(1, "Select at least one email type"),

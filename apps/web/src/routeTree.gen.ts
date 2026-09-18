@@ -13,7 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardRouteImport } from './routes/_dashboard'
 import { Route as JoinTeamRouteImport } from './routes/join-team'
 import { Route as SignupRouteImport } from './routes/signup'
-import { Route as WaitListRouteImport } from './routes/wait-list'
+import { Route as SubscribeRouteImport } from './routes/subscribe'
+import { Route as UnsubscribeRouteImport } from './routes/unsubscribe'
 import { Route as DashboardAdminRouteImport } from './routes/_dashboard/admin'
 import { Route as DashboardDashboardRouteImport } from './routes/_dashboard/dashboard'
 import { Route as DashboardDevSettingsRouteImport } from './routes/_dashboard/dev-settings'
@@ -25,6 +26,7 @@ import { Route as ApiToHtmlRouteImport } from './routes/api.to-html'
 import { Route as ApiUnsubscribeOneclickRouteImport } from './routes/api.unsubscribe-oneclick'
 import { Route as LoginIndexRouteImport } from './routes/login/index'
 import { Route as LoginVerifyRouteImport } from './routes/login/verify'
+import { Route as WaitListIndexRouteImport } from './routes/wait-list/index'
 import { Route as DashboardAdminIndexRouteImport } from './routes/_dashboard/admin/index'
 import { Route as DashboardAdminEmailAnalyticsRouteImport } from './routes/_dashboard/admin/email-analytics'
 import { Route as DashboardAdminTeamsRouteImport } from './routes/_dashboard/admin/teams'
@@ -71,9 +73,14 @@ const SignupRoute = SignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WaitListRoute = WaitListRouteImport.update({
-  id: '/wait-list',
-  path: '/wait-list',
+const SubscribeRoute = SubscribeRouteImport.update({
+  id: '/subscribe',
+  path: '/subscribe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UnsubscribeRoute = UnsubscribeRouteImport.update({
+  id: '/unsubscribe',
+  path: '/unsubscribe',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardAdminRoute = DashboardAdminRouteImport.update({
@@ -129,6 +136,11 @@ const LoginIndexRoute = LoginIndexRouteImport.update({
 const LoginVerifyRoute = LoginVerifyRouteImport.update({
   id: '/login/verify',
   path: '/login/verify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WaitListIndexRoute = WaitListIndexRouteImport.update({
+  id: '/wait-list/',
+  path: '/wait-list/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardAdminIndexRoute = DashboardAdminIndexRouteImport.update({
@@ -278,7 +290,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/join-team': typeof JoinTeamRoute
   '/signup': typeof SignupRoute
-  '/wait-list': typeof WaitListRoute
+  '/subscribe': typeof SubscribeRoute
+  '/unsubscribe': typeof UnsubscribeRoute
   '/admin': typeof DashboardAdminRouteWithChildren
   '/dashboard': typeof DashboardDashboardRoute
   '/dev-settings': typeof DashboardDevSettingsRouteWithChildren
@@ -290,6 +303,7 @@ export interface FileRoutesByFullPath {
   '/api/unsubscribe-oneclick': typeof ApiUnsubscribeOneclickRoute
   '/login/verify': typeof LoginVerifyRoute
   '/login/': typeof LoginIndexRoute
+  '/wait-list/': typeof WaitListIndexRoute
   '/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
   '/admin/teams': typeof DashboardAdminTeamsRoute
   '/admin/waitlist': typeof DashboardAdminWaitlistRoute
@@ -321,7 +335,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/join-team': typeof JoinTeamRoute
   '/signup': typeof SignupRoute
-  '/wait-list': typeof WaitListRoute
+  '/subscribe': typeof SubscribeRoute
+  '/unsubscribe': typeof UnsubscribeRoute
   '/dashboard': typeof DashboardDashboardRoute
   '/payments': typeof DashboardPaymentsRoute
   '/suppressions': typeof DashboardSuppressionsRoute
@@ -330,6 +345,7 @@ export interface FileRoutesByTo {
   '/api/unsubscribe-oneclick': typeof ApiUnsubscribeOneclickRoute
   '/login/verify': typeof LoginVerifyRoute
   '/login': typeof LoginIndexRoute
+  '/wait-list': typeof WaitListIndexRoute
   '/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
   '/admin/teams': typeof DashboardAdminTeamsRoute
   '/admin/waitlist': typeof DashboardAdminWaitlistRoute
@@ -363,7 +379,8 @@ export interface FileRoutesById {
   '/_dashboard': typeof DashboardRouteWithChildren
   '/join-team': typeof JoinTeamRoute
   '/signup': typeof SignupRoute
-  '/wait-list': typeof WaitListRoute
+  '/subscribe': typeof SubscribeRoute
+  '/unsubscribe': typeof UnsubscribeRoute
   '/_dashboard/admin': typeof DashboardAdminRouteWithChildren
   '/_dashboard/dashboard': typeof DashboardDashboardRoute
   '/_dashboard/dev-settings': typeof DashboardDevSettingsRouteWithChildren
@@ -375,6 +392,7 @@ export interface FileRoutesById {
   '/api/unsubscribe-oneclick': typeof ApiUnsubscribeOneclickRoute
   '/login/verify': typeof LoginVerifyRoute
   '/login/': typeof LoginIndexRoute
+  '/wait-list/': typeof WaitListIndexRoute
   '/_dashboard/admin/email-analytics': typeof DashboardAdminEmailAnalyticsRoute
   '/_dashboard/admin/teams': typeof DashboardAdminTeamsRoute
   '/_dashboard/admin/waitlist': typeof DashboardAdminWaitlistRoute
@@ -408,7 +426,8 @@ export interface FileRouteTypes {
     | '/'
     | '/join-team'
     | '/signup'
-    | '/wait-list'
+    | '/subscribe'
+    | '/unsubscribe'
     | '/admin'
     | '/dashboard'
     | '/dev-settings'
@@ -420,6 +439,7 @@ export interface FileRouteTypes {
     | '/api/unsubscribe-oneclick'
     | '/login/verify'
     | '/login/'
+    | '/wait-list/'
     | '/admin/email-analytics'
     | '/admin/teams'
     | '/admin/waitlist'
@@ -451,7 +471,8 @@ export interface FileRouteTypes {
     | '/'
     | '/join-team'
     | '/signup'
-    | '/wait-list'
+    | '/subscribe'
+    | '/unsubscribe'
     | '/dashboard'
     | '/payments'
     | '/suppressions'
@@ -460,6 +481,7 @@ export interface FileRouteTypes {
     | '/api/unsubscribe-oneclick'
     | '/login/verify'
     | '/login'
+    | '/wait-list'
     | '/admin/email-analytics'
     | '/admin/teams'
     | '/admin/waitlist'
@@ -492,7 +514,8 @@ export interface FileRouteTypes {
     | '/_dashboard'
     | '/join-team'
     | '/signup'
-    | '/wait-list'
+    | '/subscribe'
+    | '/unsubscribe'
     | '/_dashboard/admin'
     | '/_dashboard/dashboard'
     | '/_dashboard/dev-settings'
@@ -504,6 +527,7 @@ export interface FileRouteTypes {
     | '/api/unsubscribe-oneclick'
     | '/login/verify'
     | '/login/'
+    | '/wait-list/'
     | '/_dashboard/admin/email-analytics'
     | '/_dashboard/admin/teams'
     | '/_dashboard/admin/waitlist'
@@ -537,12 +561,14 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRouteWithChildren
   JoinTeamRoute: typeof JoinTeamRoute
   SignupRoute: typeof SignupRoute
-  WaitListRoute: typeof WaitListRoute
+  SubscribeRoute: typeof SubscribeRoute
+  UnsubscribeRoute: typeof UnsubscribeRoute
   ApiHealthRoute: typeof ApiHealthRoute
   ApiToHtmlRoute: typeof ApiToHtmlRoute
   ApiUnsubscribeOneclickRoute: typeof ApiUnsubscribeOneclickRoute
   LoginVerifyRoute: typeof LoginVerifyRoute
   LoginIndexRoute: typeof LoginIndexRoute
+  WaitListIndexRoute: typeof WaitListIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiDevEmailPreviewRoute: typeof ApiDevEmailPreviewRoute
   ApiWebhookStripeRoute: typeof ApiWebhookStripeRoute
@@ -578,11 +604,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/wait-list': {
-      id: '/wait-list'
-      path: '/wait-list'
-      fullPath: '/wait-list'
-      preLoaderRoute: typeof WaitListRouteImport
+    '/subscribe': {
+      id: '/subscribe'
+      path: '/subscribe'
+      fullPath: '/subscribe'
+      preLoaderRoute: typeof SubscribeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/unsubscribe': {
+      id: '/unsubscribe'
+      path: '/unsubscribe'
+      fullPath: '/unsubscribe'
+      preLoaderRoute: typeof UnsubscribeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_dashboard/admin': {
@@ -660,6 +693,13 @@ declare module '@tanstack/react-router' {
       path: '/login/verify'
       fullPath: '/login/verify'
       preLoaderRoute: typeof LoginVerifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wait-list/': {
+      id: '/wait-list/'
+      path: '/wait-list'
+      fullPath: '/wait-list/'
+      preLoaderRoute: typeof WaitListIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_dashboard/admin/': {
@@ -951,12 +991,14 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRouteWithChildren,
   JoinTeamRoute: JoinTeamRoute,
   SignupRoute: SignupRoute,
-  WaitListRoute: WaitListRoute,
+  SubscribeRoute: SubscribeRoute,
+  UnsubscribeRoute: UnsubscribeRoute,
   ApiHealthRoute: ApiHealthRoute,
   ApiToHtmlRoute: ApiToHtmlRoute,
   ApiUnsubscribeOneclickRoute: ApiUnsubscribeOneclickRoute,
   LoginVerifyRoute: LoginVerifyRoute,
   LoginIndexRoute: LoginIndexRoute,
+  WaitListIndexRoute: WaitListIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiDevEmailPreviewRoute: ApiDevEmailPreviewRoute,
   ApiWebhookStripeRoute: ApiWebhookStripeRoute,
