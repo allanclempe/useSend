@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import { cloudflare } from "@cloudflare/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -36,9 +38,16 @@ export default defineConfig({
     }),
     viteReact(),
   ],
+  // The repo-root `.env`, which is what `pnpm dev`, `pnpm dx` and Next.js
+  // already read. Vite's default is this package, which would have made a
+  // second place to set `NEXT_PUBLIC_IS_CLOUD` and a second chance for the
+  // browser and the Worker to disagree about it. `.dev.vars` is not a
+  // candidate: `wrangler` reads it at runtime inside the Worker, and a value
+  // that has to be inlined into a browser bundle is not a runtime value.
+  envDir: fileURLToPath(new URL("../../", import.meta.url)),
   // Vite only inlines prefixed variables into the client bundle, which is the
-  // property that keeps `DATABASE_URL` out of it. `NEXT_PUBLIC_` is here while
-  // Next.js is still in the tree; the env rename adds `PUBLIC_` and takes it
-  // away again.
+  // property that keeps `DATABASE_URL` out of it even though the file it is
+  // reading has one. `NEXT_PUBLIC_` is here while Next.js is still in the
+  // tree; the env rename adds `PUBLIC_` and takes it away again.
   envPrefix: ["NEXT_PUBLIC_", "PUBLIC_"],
 });

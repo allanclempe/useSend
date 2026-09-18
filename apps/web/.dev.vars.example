@@ -6,13 +6,19 @@
 # DATABASE_URL is only a fallback: when the Hyperdrive binding is present the
 # Worker uses its connection string instead. It still has to be set and valid,
 # because `src/env.js` validates it at module load.
+#
+# NEXT_PUBLIC_* does NOT belong here, and setting it here does nothing useful.
+# Those are inlined into the browser bundle at build time, and this file is read
+# by `wrangler` at runtime inside the Worker, where the browser cannot see it --
+# so a value set here applied to the server half only, and the two halves of the
+# same page disagreed about whether this was a cloud install (#9). They come
+# from the repo-root `.env`, which Vite reads for both bundles.
 
 DATABASE_URL="postgresql://usesend:password@127.0.0.1:54329/usesend_test"
 APP_URL="http://localhost:8788"
 APP_SECRET="cf-local-dev-secret"
 REDIS_URL="redis://127.0.0.1:6380"
 NODE_ENV="development"
-NEXT_PUBLIC_IS_CLOUD="false"
 AWS_ACCESS_KEY_ID="local"
 AWS_SECRET_ACCESS_KEY="local"
 AWS_DEFAULT_REGION="us-east-1"
