@@ -66,6 +66,14 @@ configs and are still plain `wrangler dev`.
    `src/env.js` validates inside the Worker exactly as it does under Node — an
    env var missing from `.dev.vars` fails the isolate at startup, not at request
    time.
+   **`NEXT_PUBLIC_*` does not go in `.dev.vars`** — those come from the
+   repo-root `.env`, which `vite.config.ts` points `envDir` at. `.dev.vars` is
+   read by `wrangler` at runtime inside the Worker; a public variable has to be
+   inlined into the browser bundle at build time, so one set there reached the
+   server half only and the two halves of a page disagreed about whether this
+   was a cloud install (#9). `src/env.public.ts` therefore takes
+   `import.meta.env` before `process.env`: the Worker and the browser it renders
+   for are one Vite build and cannot disagree.
 3. `pnpm dev:worker`. Everything is on `http://localhost:8788` — the dashboard
    at `/`, the public API under `/api/v1`, `GET /api/v1/doc` for the OpenAPI
    document (no auth), `/storage/*` for R2 and `/api/health` for a liveness
