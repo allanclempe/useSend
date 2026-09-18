@@ -15,6 +15,7 @@ import { Route as JoinTeamRouteImport } from './routes/join-team'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as WaitListRouteImport } from './routes/wait-list'
 import { Route as DashboardDashboardRouteImport } from './routes/_dashboard/dashboard'
+import { Route as DashboardDevSettingsRouteImport } from './routes/_dashboard/dev-settings'
 import { Route as DashboardPaymentsRouteImport } from './routes/_dashboard/payments'
 import { Route as DashboardSuppressionsRouteImport } from './routes/_dashboard/suppressions'
 import { Route as ApiHealthRouteImport } from './routes/api.health'
@@ -76,6 +77,11 @@ const WaitListRoute = WaitListRouteImport.update({
 const DashboardDashboardRoute = DashboardDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardDevSettingsRoute = DashboardDevSettingsRouteImport.update({
+  id: '/dev-settings',
+  path: '/dev-settings',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardPaymentsRoute = DashboardPaymentsRouteImport.update({
@@ -146,21 +152,21 @@ const DashboardContactsIndexRoute = DashboardContactsIndexRouteImport.update({
 } as any)
 const DashboardDevSettingsIndexRoute =
   DashboardDevSettingsIndexRouteImport.update({
-    id: '/dev-settings/',
-    path: '/dev-settings/',
-    getParentRoute: () => DashboardRoute,
+    id: '/',
+    path: '/',
+    getParentRoute: () => DashboardDevSettingsRoute,
   } as any)
 const DashboardDevSettingsApiKeysRoute =
   DashboardDevSettingsApiKeysRouteImport.update({
-    id: '/dev-settings/api-keys',
-    path: '/dev-settings/api-keys',
-    getParentRoute: () => DashboardRoute,
+    id: '/api-keys',
+    path: '/api-keys',
+    getParentRoute: () => DashboardDevSettingsRoute,
   } as any)
 const DashboardDevSettingsSmtpRoute =
   DashboardDevSettingsSmtpRouteImport.update({
-    id: '/dev-settings/smtp',
-    path: '/dev-settings/smtp',
-    getParentRoute: () => DashboardRoute,
+    id: '/smtp',
+    path: '/smtp',
+    getParentRoute: () => DashboardDevSettingsRoute,
   } as any)
 const DashboardDomainsIndexRoute = DashboardDomainsIndexRouteImport.update({
   id: '/domains/',
@@ -262,6 +268,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/wait-list': typeof WaitListRoute
   '/dashboard': typeof DashboardDashboardRoute
+  '/dev-settings': typeof DashboardDevSettingsRouteWithChildren
   '/payments': typeof DashboardPaymentsRoute
   '/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
@@ -344,6 +351,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/wait-list': typeof WaitListRoute
   '/_dashboard/dashboard': typeof DashboardDashboardRoute
+  '/_dashboard/dev-settings': typeof DashboardDevSettingsRouteWithChildren
   '/_dashboard/payments': typeof DashboardPaymentsRoute
   '/_dashboard/suppressions': typeof DashboardSuppressionsRoute
   '/api/health': typeof ApiHealthRoute
@@ -386,6 +394,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/wait-list'
     | '/dashboard'
+    | '/dev-settings'
     | '/payments'
     | '/suppressions'
     | '/api/health'
@@ -467,6 +476,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/wait-list'
     | '/_dashboard/dashboard'
+    | '/_dashboard/dev-settings'
     | '/_dashboard/payments'
     | '/_dashboard/suppressions'
     | '/api/health'
@@ -562,6 +572,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardDashboardRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/_dashboard/dev-settings': {
+      id: '/_dashboard/dev-settings'
+      path: '/dev-settings'
+      fullPath: '/dev-settings'
+      preLoaderRoute: typeof DashboardDevSettingsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/_dashboard/payments': {
       id: '/_dashboard/payments'
       path: '/payments'
@@ -655,24 +672,24 @@ declare module '@tanstack/react-router' {
     }
     '/_dashboard/dev-settings/': {
       id: '/_dashboard/dev-settings/'
-      path: '/dev-settings'
+      path: '/'
       fullPath: '/dev-settings/'
       preLoaderRoute: typeof DashboardDevSettingsIndexRouteImport
-      parentRoute: typeof DashboardRoute
+      parentRoute: typeof DashboardDevSettingsRoute
     }
     '/_dashboard/dev-settings/api-keys': {
       id: '/_dashboard/dev-settings/api-keys'
-      path: '/dev-settings/api-keys'
+      path: '/api-keys'
       fullPath: '/dev-settings/api-keys'
       preLoaderRoute: typeof DashboardDevSettingsApiKeysRouteImport
-      parentRoute: typeof DashboardRoute
+      parentRoute: typeof DashboardDevSettingsRoute
     }
     '/_dashboard/dev-settings/smtp': {
       id: '/_dashboard/dev-settings/smtp'
-      path: '/dev-settings/smtp'
+      path: '/smtp'
       fullPath: '/dev-settings/smtp'
       preLoaderRoute: typeof DashboardDevSettingsSmtpRouteImport
-      parentRoute: typeof DashboardRoute
+      parentRoute: typeof DashboardDevSettingsRoute
     }
     '/_dashboard/domains/': {
       id: '/_dashboard/domains/'
@@ -796,15 +813,29 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface DashboardDevSettingsRouteChildren {
+  DashboardDevSettingsApiKeysRoute: typeof DashboardDevSettingsApiKeysRoute
+  DashboardDevSettingsSmtpRoute: typeof DashboardDevSettingsSmtpRoute
+  DashboardDevSettingsIndexRoute: typeof DashboardDevSettingsIndexRoute
+}
+
+const DashboardDevSettingsRouteChildren: DashboardDevSettingsRouteChildren = {
+  DashboardDevSettingsApiKeysRoute: DashboardDevSettingsApiKeysRoute,
+  DashboardDevSettingsSmtpRoute: DashboardDevSettingsSmtpRoute,
+  DashboardDevSettingsIndexRoute: DashboardDevSettingsIndexRoute,
+}
+
+const DashboardDevSettingsRouteWithChildren =
+  DashboardDevSettingsRoute._addFileChildren(DashboardDevSettingsRouteChildren)
+
 interface DashboardRouteChildren {
   DashboardDashboardRoute: typeof DashboardDashboardRoute
+  DashboardDevSettingsRoute: typeof DashboardDevSettingsRouteWithChildren
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
   DashboardSuppressionsRoute: typeof DashboardSuppressionsRoute
   DashboardAdminEmailAnalyticsRoute: typeof DashboardAdminEmailAnalyticsRoute
   DashboardAdminTeamsRoute: typeof DashboardAdminTeamsRoute
   DashboardAdminWaitlistRoute: typeof DashboardAdminWaitlistRoute
-  DashboardDevSettingsApiKeysRoute: typeof DashboardDevSettingsApiKeysRoute
-  DashboardDevSettingsSmtpRoute: typeof DashboardDevSettingsSmtpRoute
   DashboardDomainsDomainIdRoute: typeof DashboardDomainsDomainIdRoute
   DashboardSettingsBillingRoute: typeof DashboardSettingsBillingRoute
   DashboardSettingsTeamRoute: typeof DashboardSettingsTeamRoute
@@ -812,7 +843,6 @@ interface DashboardRouteChildren {
   DashboardAdminIndexRoute: typeof DashboardAdminIndexRoute
   DashboardCampaignsIndexRoute: typeof DashboardCampaignsIndexRoute
   DashboardContactsIndexRoute: typeof DashboardContactsIndexRoute
-  DashboardDevSettingsIndexRoute: typeof DashboardDevSettingsIndexRoute
   DashboardDomainsIndexRoute: typeof DashboardDomainsIndexRoute
   DashboardEmailsIndexRoute: typeof DashboardEmailsIndexRoute
   DashboardSettingsIndexRoute: typeof DashboardSettingsIndexRoute
@@ -827,13 +857,12 @@ interface DashboardRouteChildren {
 
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardDashboardRoute: DashboardDashboardRoute,
+  DashboardDevSettingsRoute: DashboardDevSettingsRouteWithChildren,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
   DashboardSuppressionsRoute: DashboardSuppressionsRoute,
   DashboardAdminEmailAnalyticsRoute: DashboardAdminEmailAnalyticsRoute,
   DashboardAdminTeamsRoute: DashboardAdminTeamsRoute,
   DashboardAdminWaitlistRoute: DashboardAdminWaitlistRoute,
-  DashboardDevSettingsApiKeysRoute: DashboardDevSettingsApiKeysRoute,
-  DashboardDevSettingsSmtpRoute: DashboardDevSettingsSmtpRoute,
   DashboardDomainsDomainIdRoute: DashboardDomainsDomainIdRoute,
   DashboardSettingsBillingRoute: DashboardSettingsBillingRoute,
   DashboardSettingsTeamRoute: DashboardSettingsTeamRoute,
@@ -841,7 +870,6 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardAdminIndexRoute: DashboardAdminIndexRoute,
   DashboardCampaignsIndexRoute: DashboardCampaignsIndexRoute,
   DashboardContactsIndexRoute: DashboardContactsIndexRoute,
-  DashboardDevSettingsIndexRoute: DashboardDevSettingsIndexRoute,
   DashboardDomainsIndexRoute: DashboardDomainsIndexRoute,
   DashboardEmailsIndexRoute: DashboardEmailsIndexRoute,
   DashboardSettingsIndexRoute: DashboardSettingsIndexRoute,
