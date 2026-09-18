@@ -34,16 +34,6 @@ services:
     volumes:
       - ./.neon_local:/tmp/.neon_local
 
-  redis:
-    image: redis:7
-    container_name: unsend-redis-dev
-    restart: always
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis:/data
-    command: ["redis-server", "--maxmemory-policy", "noeviction"]
-
   local-sen-sns:
     image: usesend/local-ses-sns:latest
     container_name: local-ses-sns
@@ -70,5 +60,4 @@ services:
     command: -c 'mkdir -p /data/unsend && minio server /data --console-address ":9001" --address ":9002"'
 
 volumes:
-  redis:
   minio:

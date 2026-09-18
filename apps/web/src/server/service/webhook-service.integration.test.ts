@@ -8,39 +8,43 @@ import {
   closeIntegrationConnections,
   integrationEnabled,
   resetDatabase,
-  resetRedis,
+  pendingWebhookDeliveries,
+  resetWorkerBindings,
 } from "~/test/integration/helpers";
 
-const { capturedHandler, mockQueueAdd, mockLimitService } = vi.hoisted(() => ({
-  capturedHandler: { fn: null as any },
-  mockQueueAdd: vi.fn(),
+const { mockLimitService } = vi.hoisted(() => ({
   mockLimitService: { checkWebhookLimit: vi.fn() },
-}));
-
-// Capture the worker handler instead of running a queue; the database is real.
-// There is no lock any more: ordering comes from where dispatch runs — a
-// Durable Object per webhook on Workers, concurrency 1 under Node (§3).
-vi.mock("~/server/queue/bullmq-driver", () => ({
-  bullmqDriver: {
-    createQueue: () => ({ enqueue: mockQueueAdd }),
-    createWorker: (_name: string, handler: any) => {
-      capturedHandler.fn = handler;
-      return { concurrency: 1 };
-    },
-  },
 }));
 
 vi.mock("~/server/service/limit-service", () => ({
   LimitService: mockLimitService,
 }));
 
-import { WebhookService } from "~/server/service/webhook-service";
+import {
+  processWebhookCall,
+  WebhookService,
+} from "~/server/service/webhook-service";
 
 const describeIntegration = integrationEnabled ? describe : describe.skip;
 
+/**
+ * One delivery attempt, called the way the dispatcher calls it.
+ *
+ * This used to capture the `webhook-dispatch` BullMQ worker's handler and
+ * invoke that. There is no such queue any more (#12): `enqueueCall` hands the
+ * call to a `WebhookDispatcher` Durable Object and the object's alarm calls
+ * `processWebhookCall` with exactly this argument — see
+ * `src/worker/webhook-dispatcher.ts`. Calling it directly runs the attempt
+ * without waiting on an alarm, and `attemptsMade` is the object's retry count
+ * rather than BullMQ's.
+ */
 async function runCall(callId: string, teamId: number, attemptsMade = 0) {
-  if (!capturedHandler.fn) throw new Error("handler not captured");
-  return capturedHandler.fn({ attemptsMade, data: { callId, teamId } });
+  return processWebhookCall({
+    id: callId,
+    name: callId,
+    data: { callId, teamId },
+    attemptsMade,
+  });
 }
 
 describeIntegration("webhook-service", () => {
@@ -49,7 +53,7 @@ describeIntegration("webhook-service", () => {
 
   beforeEach(async () => {
     await resetDatabase();
-    await resetRedis();
+    await resetWorkerBindings();
     vi.restoreAllMocks();
     vi.clearAllMocks();
     mockLimitService.checkWebhookLimit.mockResolvedValue({
@@ -420,7 +424,9 @@ describeIntegration("webhook-service", () => {
       const targets = calls.map((c) => c.webhookId).sort();
       expect(targets).toEqual([subscribed.id, catchAll.id].sort());
       expect(targets).not.toContain(unrelated.id);
-      expect(mockQueueAdd).toHaveBeenCalledTimes(2);
+      // Two webhooks matched, so two dispatchers were handed a call. The
+      // delivery itself is the object's alarm, which does not run here.
+      await expect(pendingWebhookDeliveries()).resolves.toBe(2);
     });
 
     it("filters by domain when the event carries one", async () => {

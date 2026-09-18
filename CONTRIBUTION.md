@@ -113,13 +113,12 @@ Paste the Cloudflare URL in your GitHub App callback settings.
 
 ### Option 2: Manual DB Setup
 
-If you're using your own PostgreSQL & Redis:
+If you're using your own PostgreSQL:
 
 1. Add in `.env`:
 
 ```env
 DATABASE_URL=your_postgres_url
-REDIS_URL=your_redis_url
 ```
 
 2. Migrate database:

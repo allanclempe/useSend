@@ -39,14 +39,14 @@ import {
  * Not a queue on Cloudflare at all: `webhook-dispatch` becomes one Durable
  * Object per `webhookId` (§3), because what it needs is ordering and a queue
  * cannot give it. Named here so a missing binding says that rather than
- * "unknown queue". BullMQ still uses the name under Node.
+ * "unknown queue".
  */
 const DURABLE_OBJECT_QUEUES: Record<string, string> = {
   [WEBHOOK_DISPATCH_QUEUE]: "the WEBHOOK_DISPATCHER Durable Object",
 };
 
 export type QueueDefinition = {
-  /** The name `createQueue`/`createWorker` use — unchanged from BullMQ. */
+  /** The name `createQueue`/`createWorker` use. */
   readonly name: string;
   /** The queue's name in the Cloudflare account, and in `wrangler.jsonc`. */
   readonly queueName: string;

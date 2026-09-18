@@ -22,8 +22,8 @@ import { renderUsageWarningEmail } from "../email-templates/UsageWarningEmail";
  * Two minutes, and on Workers that is a floor rather than a ceiling.
  *
  * KV serves reads from a colo edge cache whose own TTL is also 60 seconds, so a
- * team row can be up to about three minutes stale there against two under
- * Redis. `invalidateTeamCache` narrows that but does not close it: a KV delete
+ * team row can be up to about three minutes stale rather than the two this
+ * asks for. `invalidateTeamCache` narrows that but does not close it: a KV delete
  * is eventually consistent like everything else. Every reader of this cache is
  * a limit check or a plan lookup, where being a minute behind a plan change is
  * a billing question rather than a correctness one — and the hard limits
@@ -35,9 +35,9 @@ const TEAM_CACHE_TTL_SECONDS = 120; // 2 minutes
 /**
  * One limit notification per team per reason per day.
  *
- * `cacheAdd` is a real `SET NX` on Redis and a read-then-write on KV, so on
- * Workers two callers racing inside KV's consistency window can both win and
- * the team gets two copies of the same email. That is the whole cost, it is
+ * `cacheAdd` is a read-then-write on KV rather than a conditional write, so
+ * two callers racing inside KV's consistency window can both win and the team
+ * gets two copies of the same email. That is the whole cost, it is
  * bounded by how often a team crosses a limit, and the alternative — a Durable
  * Object per team per reason — buys exactness nobody is asking for here. The
  * cases that genuinely cannot tolerate this are idempotency and rate limiting,

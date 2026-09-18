@@ -35,8 +35,8 @@ vi.mock("~/server/service/suppression-service", () => ({
   SuppressionService: { checkMultipleEmails: mockCheckMultipleEmails },
 }));
 
-vi.mock("~/server/queue/bullmq-driver", () => ({
-  bullmqDriver: {
+vi.mock("~/server/queue/workers-driver", () => ({
+  workersDriver: {
     createQueue: () => ({ enqueue: mockBatchEnqueue, schedule: vi.fn() }),
     createWorker: (_name: string, handler: any) => {
       capturedBatchHandler.fn = handler;

@@ -13,13 +13,12 @@ const {
   mockResolveTxt,
 } = vi.hoisted(() => {
   /**
-   * An in-memory `CacheStore`, not a mocked Redis client.
+   * An in-memory `CacheStore`, not a mocked KV namespace.
    *
-   * The service no longer knows which backend it is on, so the test should not
-   * either: mocking the seam is what makes these assertions true of both the KV
-   * and the Redis driver. `add` is exact here, which matches Redis and is the
-   * optimistic reading of KV -- the pessimistic one costs a duplicate email and
-   * is documented at the call site.
+   * The service does not know which backend it is on, so the test should not
+   * either: mocking the seam is what keeps these assertions about the service.
+   * `add` is exact here, which is the optimistic reading of KV -- the
+   * pessimistic one costs a duplicate email and is documented at the call site.
    */
   const store = new Map<string, string>();
 

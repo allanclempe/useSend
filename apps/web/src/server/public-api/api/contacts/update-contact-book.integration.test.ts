@@ -18,7 +18,7 @@ import {
   closeIntegrationConnections,
   integrationEnabled,
   resetDatabase,
-  resetRedis,
+  resetWorkerBindings,
 } from "~/test/integration/helpers";
 
 const describeIntegration = integrationEnabled ? describe : describe.skip;
@@ -30,7 +30,7 @@ const describeIntegration = integrationEnabled ? describe : describe.skip;
 describeIntegration("PATCH /v1/contactBooks/{contactBookId}", () => {
   beforeEach(async () => {
     await resetDatabase();
-    await resetRedis();
+    await resetWorkerBindings();
   });
 
   afterAll(async () => {

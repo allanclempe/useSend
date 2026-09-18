@@ -16,8 +16,8 @@ const { mockEnqueue, mockEnqueueBulk, registered } = vi.hoisted(() => ({
 
 // Mock the driver, not the queue module — the seam under test is the wrapper
 // `server/queue/index.ts` puts around it.
-vi.mock("./bullmq-driver", () => ({
-  bullmqDriver: {
+vi.mock("./workers-driver", () => ({
+  workersDriver: {
     createQueue: () => ({
       name: "test-queue",
       enqueue: mockEnqueue,

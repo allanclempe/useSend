@@ -1,6 +1,5 @@
 import {
   CAMPAIGN_SCHEDULER_QUEUE,
-  createQueue,
   createWorker,
   createWorkerHandler,
   type TeamJob,
@@ -29,19 +28,12 @@ import { getWorkerBindings } from "../worker-bindings";
  * The cost is up to 30s of scheduling jitter, which is invisible against
  * `batchWindowMinutes` (minutes) and scheduled sends (minute precision).
  *
- * Node ticks at the same interval. A migration that leaves the two runtimes on
- * different schedules is one where the local reproduction of a scheduling bug
- * means nothing.
  */
 export const SCHEDULER_TICK_MS = 30_000;
 
 type SchedulerJob = TeamJob<{}>;
 
 export class CampaignSchedulerService {
-  private static schedulerQueue = createQueue<SchedulerJob["data"]>(
-    CAMPAIGN_SCHEDULER_QUEUE
-  );
-
   static worker = createWorker(
     CAMPAIGN_SCHEDULER_QUEUE,
     createWorkerHandler(async (_job: SchedulerJob) => {
@@ -122,38 +114,33 @@ export class CampaignSchedulerService {
   );
 
   /**
-   * Starts the tick on whichever runtime this is.
+   * Arms the tick.
    *
-   * Under Node that is a BullMQ repeatable job. Inside a Worker it is the
-   * `CAMPAIGN_SCHEDULER` Durable Object's alarm, armed through
-   * `ensureRunning()` — there is no repeatable job to register, and `schedule()`
-   * would rightly refuse a sub-minute interval as something no Cron Trigger can
-   * express.
+   * It is the `CAMPAIGN_SCHEDULER` Durable Object's alarm: there is no
+   * repeatable job to register, and `schedule()` would rightly refuse a
+   * sub-minute interval as something no Cron Trigger can express. The BullMQ
+   * repeatable job this fell back to is gone with Redis (#12).
    */
   static async start() {
     const scheduler = getWorkerBindings()?.CAMPAIGN_SCHEDULER as
       | CampaignSchedulerNamespace
       | undefined;
 
-    if (scheduler) {
-      // One object, one name. The scheduler is a singleton by construction:
-      // two of them would double every campaign batch.
-      const stub = scheduler.get(scheduler.idFromName(SCHEDULER_OBJECT_NAME));
-      const { armed } = await stub.ensureRunning();
-
-      if (armed) {
-        logger.info("[CampaignScheduler]: Armed the tick alarm");
-      }
-      return;
+    if (!scheduler) {
+      throw new Error(
+        "No CAMPAIGN_SCHEDULER Durable Object binding. Bindings are only " +
+          "readable inside a handler, so this is either a call made outside " +
+          "`withWorkerBindings` or a missing binding in wrangler.jsonc.",
+      );
     }
 
-    try {
-      await this.schedulerQueue.schedule("campaign-scheduler", {
-        every: SCHEDULER_TICK_MS,
-      });
-    } catch (err) {
-      // Registering the same recurring job is idempotent; ignore exists errors
-      logger.info({ err }, "Scheduler start attempted");
+    // One object, one name. The scheduler is a singleton by construction:
+    // two of them would double every campaign batch.
+    const stub = scheduler.get(scheduler.idFromName(SCHEDULER_OBJECT_NAME));
+    const { armed } = await stub.ensureRunning();
+
+    if (armed) {
+      logger.info("[CampaignScheduler]: Armed the tick alarm");
     }
   }
 }

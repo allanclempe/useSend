@@ -90,9 +90,10 @@ Things that behave differently inside the Worker, by design:
 - **No global-scope I/O.** Workers reject sockets, timers and `randomUUID()`
   during module evaluation. Clients must therefore be built on first use, not in
   a module-level `const` or a `static` class field — this is why `drizzleDb` is a
-  lazy proxy and why the BullMQ driver defers its queue.
-- **No BullMQ.** `server/queue/index.ts` picks a driver by runtime. Inside a
-  Worker, `enqueue` goes to a Cloudflare Queue producer binding and
+  lazy proxy and why a `WorkersQueue` resolves its binding at send time rather
+  than at construction.
+- **Queues are Cloudflare Queues.** `server/queue/index.ts` has one driver
+  (#12). `enqueue` goes to a Cloudflare Queue producer binding and
   `createWorker` registers a handler rather than starting one — a Cloudflare
   consumer is the `queue()` export on the Worker (`src/worker/queue-consumer.ts`),
   declared in `wrangler.jsonc`. `server/queue/queue-registry.ts` is the source of
@@ -102,9 +103,9 @@ Things that behave differently inside the Worker, by design:
   config is simply absent from `env` at runtime.
 - **Queue payloads are ID references.** A message caps at 128 KB and the driver
   refuses anything larger. Never a body, never an attachment.
-- **`options.jobId` does nothing on Workers.** It is BullMQ's dedup key and
-  Cloudflare has no equivalent, so a handler that must not run twice needs its
-  own database-side guard (§4.4).
+- **`options.jobId` does nothing.** It was BullMQ's dedup key and Cloudflare
+  has no equivalent, so a handler that must not run twice needs its own
+  database-side guard (§4.4).
 - **Recurring work is a Cron Trigger**, declared in `wrangler.jsonc` and sourced
   from `server/queue/cron-registry.ts`. A job module imports its expression from
   there; it never writes one inline. Sub-minute ticks are not expressible —
@@ -124,17 +125,17 @@ Things that behave differently inside the Worker, by design:
 - **Storage is a Worker capability.** `storage-service.ts` runs on the R2
   binding, so under Node `isStorageConfigured()` is false and the editors hide
   the image picker. `/storage/*` on the Worker serves uploads and downloads.
-- **Never import `server/redis.ts` outside a driver.** It caches its connection
-  in a module-level `let`, and Workers ties an I/O object to the request that
-  opened it — so inside a Worker that connection serves one invocation and then
-  hangs, silently. Cache goes through `server/cache` (Workers KV / Redis).
-  Anything needing read-after-write — a counter, a dedup guard — cannot use KV
-  and belongs on a Durable Object.
+- **There is no Redis, and no second runtime.** `bullmq`, `ioredis`,
+  `server/redis.ts`, `server/runtime.ts` and the four Redis drivers are deleted
+  (#12). Each seam — `server/queue`, `server/cache`, `server/rate-limit`,
+  `server/idempotency` — has exactly one driver, and the seam is still the line
+  nothing above it may reach across. Cache goes through `server/cache` (Workers
+  KV). Anything needing read-after-write — a counter, a dedup guard — cannot use
+  KV and belongs on a Durable Object.
 - **KV cannot express a TTL under 60 seconds**, and its reads, writes, deletes
   and negative lookups are all eventually consistent within roughly that window.
-  `CacheStore.add` is therefore exact on Redis and best-effort on KV; the only
-  callers are notification cooldowns, where losing the race costs a duplicate
-  email.
+  `CacheStore.add` is therefore best-effort; the only callers are notification
+  cooldowns, where losing the race costs a duplicate email.
 - **Rate limits are a Durable Object**, one object per bucket, through
   `server/rate-limit`. Not Cloudflare's Rate Limiting binding: that one is
   per-colo and approximate, and the public API's default is two requests per
@@ -374,7 +375,8 @@ never hydrates. `tsc` and every test still pass. The only way to catch it is to 
 - Test file conventions: `*.unit.test.ts`, `*.api.test.ts`, `*.integration.test.ts`. The `*.trpc.test.ts` tier went with the routers it covered (#9).
 - Choose the suite by what is under test, not by what the code touches. Logic — branching, validation, defaults, which notification fires — belongs in a unit test with its edges faked. Queries belong in an integration test against the real database: a mocked query builder only ever asserts the arguments you passed it, never what the query did.
 - Do not assert on the shape of a database call (`expect(mockDb.x.update).toHaveBeenCalledWith(...)`). That restates the input and passes even when the query is wrong. Assert on the row that came back, or capture the payload the builder actually received.
-- Integration tests require infra and env (`RUN_INTEGRATION=true` with Postgres/Redis available). Root commands `pnpm test:web:all` and `pnpm test:web:integration:full` auto-manage infra lifecycle.
+- Integration tests require infra and env (`RUN_INTEGRATION=true` with the `usesend_test` Postgres container running). Root commands `pnpm test:web:all` and `pnpm test:web:integration:full` auto-manage infra lifecycle. Postgres is the only infrastructure they need: the cache, the rate limiter, the idempotency store and the webhook dispatcher are Worker bindings, and `src/test/integration/bindings.ts` supplies in-memory ones that run the real Durable Object classes.
+- **Install those bindings from `src/test/integration/helpers.ts`, never from a `setupFiles` entry.** A setup file is evaluated before the test module, so everything `bindings.ts` imports — the DO classes pull in a large part of the server graph — would already be in the module registry when a test file's hoisted `vi.mock` calls ran, and the mocks would silently not apply. Twenty-nine tests failed exactly that way before this moved.
 - Use `pnpm test:infra:up` / `pnpm test:infra:down` when running targeted integration commands manually.
 - The integration suite runs single-fork, so module-level clients are shared across every file. Never close one in a per-file `afterAll` — `postgres-js` `end()` is terminal, and the first file to call it fails every file after it. (Prisma's `$disconnect` is safe only because it reconnects lazily.)
 - `pnpm test:web:integration:full` and `test:integration:prepare` run migrations (`drizzle-kit migrate`); never run these unless the user explicitly asks, because they take `DATABASE_URL` from the environment and will migrate whatever it points at. The one safe path is `test:integration:prepare:local`, which `pnpm test:web:all` uses: its `DATABASE_URL` is hardcoded to the `usesend_test` container that `test:infra:up`/`down` creates and destroys per run, so it cannot reach a dev or production database. It takes an empty container to the current schema.

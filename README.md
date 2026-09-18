@@ -57,14 +57,14 @@ We're currently working on opening useSend for public beta.
 
 ## Tech Stack
 
-- [Next.js](https://nextjs.org/) - Framework
+- [TanStack Start](https://tanstack.com/start) on [Cloudflare Workers](https://workers.cloudflare.com/) - Framework and runtime
 - [Drizzle](https://orm.drizzle.team/) - ORM
 - [Tailwind](https://tailwindcss.com/) - CSS
 - [shadcn/ui](https://ui.shadcn.com/) - Component Library
 - [better-auth](https://better-auth.com/) - Authentication
-- [tRPC](https://trpc.io/) - API
 - [hono](https://hono.dev/) - Public API
-- [Redis](https://redis.io/) - Queue
+- [Cloudflare Queues](https://developers.cloudflare.com/queues/) - Queue
+- [Durable Objects](https://developers.cloudflare.com/durable-objects/) - Ordering, rate limits and idempotency
 
 ### Email editor
 

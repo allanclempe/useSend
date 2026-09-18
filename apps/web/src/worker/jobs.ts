@@ -14,16 +14,16 @@ import "~/server/jobs/usage-job";
 /**
  * The Worker's equivalent of `src/instrumentation.ts`.
  *
- * Next.js calls `register()` once at server startup and the BullMQ workers it
- * creates live for the lifetime of the process. A Worker has no startup and no
+ * Next.js called `register()` once at server startup, and the BullMQ workers it
+ * created lived for the lifetime of the process. A Worker has no startup and no
  * process: handlers are registered per isolate, and an isolate exists only as
  * long as it is serving something. So this runs on the way into a scheduled
  * invocation instead, and is idempotent because an isolate can serve many.
  *
- * Note what is *not* here. `EmailQueueService.init()` reads `SesSetting` rows
- * to size a worker per region, and on Cloudflare that sizing is deploy-time
- * config (§4.1); `CampaignSchedulerService.start()` registers a 1.5s repeatable
- * job, which is a Durable Object alarm here and not a Cron Trigger (§4.2).
+ * Note what is *not* here. `EmailQueueService.init()` has nothing left to do —
+ * consumer sizing is deploy-time config (§4.1) — and
+ * `CampaignSchedulerService.start()` arms a Durable Object alarm rather than a
+ * Cron Trigger (§4.2), which `src/worker/scheduled.ts` does directly.
  */
 let registered = false;
 

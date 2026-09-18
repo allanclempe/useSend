@@ -1,18 +1,17 @@
-import { isWorkersRuntime } from "../runtime";
 import { kvCacheStore } from "./kv-driver";
-import { redisCacheStore } from "./redis-driver";
 import type { CacheStore } from "./types";
 
 export * from "./types";
 
 /**
- * The active cache backend, picked the same way and for the same reason as the
- * queue driver in `server/queue/index.ts`: Workers KV inside a Worker isolate,
- * Redis under Node, and nothing above this line knows which.
+ * The cache backend: Workers KV, and nothing above this line knows that.
  *
- * Phase 10 (#12) deletes the Redis half.
+ * There was a Redis driver beside it and a runtime check to choose between
+ * them, for as long as the same code had to run under Node too. Phase 10 (#12)
+ * deleted both — there is one runtime now, so a seam with one driver is just
+ * an interface, which is the point.
  */
-const store: CacheStore = isWorkersRuntime() ? kvCacheStore : redisCacheStore;
+const store: CacheStore = kvCacheStore;
 
 export function cacheStore(): CacheStore {
   return store;
@@ -46,14 +45,12 @@ export function cacheDelete(...keys: string[]): Promise<void> {
  * Read-through JSON cache. Stores `fetcher`'s result under `key` for
  * `ttlSeconds` and returns the cached copy next time.
  *
- * Moved here from `server/redis.ts` unchanged in shape, including its two
- * swallowed failure modes: unparseable JSON falls through to a refresh, and a
- * write that fails is ignored. A cache that throws is worse than a cache that
- * misses.
+ * Came from `server/redis.ts` unchanged in shape, including its two swallowed
+ * failure modes: unparseable JSON falls through to a refresh, and a write that
+ * fails is ignored. A cache that throws is worse than a cache that misses.
  *
- * The TTL floor is the one real difference between the backends — KV cannot
- * express anything below 60 seconds, so `{ ttlSeconds: 30 }` is 60 on Workers
- * and 30 under Node. See `kv-driver.ts`.
+ * `ttlSeconds` has a floor of 60 — KV cannot express anything shorter, so a
+ * caller asking for 30 gets 60. See `kv-driver.ts`.
  */
 export async function withCache<T>(
   key: string,

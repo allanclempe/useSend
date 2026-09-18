@@ -40,8 +40,9 @@ export type QueueProducer = CfQueue<unknown>;
  * point publishes them here for the duration of each request; `AsyncLocalStorage`
  * is the same mechanism `withLogger` and the Drizzle client already use.
  *
- * Returns `undefined` under Node, which is how `isStorageConfigured()` reports
- * that image upload is unavailable outside a Worker.
+ * Returns `undefined` outside a handler — which is how `isStorageConfigured()`
+ * reports that image upload is unavailable — unless a test has set the ambient
+ * bindings below.
  */
 const scope = new AsyncLocalStorage<WorkerBindings>();
 
@@ -49,6 +50,24 @@ export function withWorkerBindings<T>(bindings: WorkerBindings, fn: () => T): T 
   return scope.run(bindings, fn);
 }
 
+/**
+ * Bindings for code that is not inside a request, which is only ever a test.
+ *
+ * The integration suite runs under Node and drives services directly, so there
+ * is no handler to open a scope — but the drivers below the seams are the
+ * Worker ones now that the Redis half is gone (#12), and they need something to
+ * reach for. `src/test/integration/bindings.ts` sets this once per run and
+ * explains what it puts there. The Worker never calls it.
+ *
+ * Same shape as the Drizzle client in `server/drizzle/index.ts`: a request
+ * scope first, a process-wide fallback second.
+ */
+let ambient: WorkerBindings | undefined;
+
+export function setAmbientWorkerBindings(bindings: WorkerBindings | undefined) {
+  ambient = bindings;
+}
+
 export function getWorkerBindings(): WorkerBindings | undefined {
-  return scope.getStore();
+  return scope.getStore() ?? ambient;
 }

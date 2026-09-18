@@ -1,18 +1,10 @@
-import { isWorkersRuntime } from "../runtime";
 import { durableObjectRateLimiter } from "./durable-object-driver";
-import { redisRateLimiter } from "./redis-driver";
 import type { RateLimiter, RateLimitResult, RateLimitWindow } from "./types";
 
 export * from "./types";
 
-/**
- * The active rate limiter. A Durable Object inside a Worker, Redis under Node.
- *
- * Phase 10 (#12) deletes the Redis half.
- */
-const limiter: RateLimiter = isWorkersRuntime()
-  ? durableObjectRateLimiter
-  : redisRateLimiter;
+/** The rate limiter: one Durable Object per bucket. Redis is gone (#12). */
+const limiter: RateLimiter = durableObjectRateLimiter;
 
 export function consumeRateLimit(
   bucket: string,
@@ -33,7 +25,7 @@ export function consumeRateLimit(
  * failing closed would take out sign-in and the whole public API instead.
  *
  * The one exception is the waitlist, which stays fail-closed because it was: a
- * throw there surfaces as a tRPC error to one user submitting one form, and the
+ * throw there surfaces as an error to one user submitting one form, and the
  * thing it protects is the founder's inbox.
  *
  * Revisit this if abuse ever becomes the reason the limiter exists.

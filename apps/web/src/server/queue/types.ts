@@ -1,10 +1,11 @@
 /**
  * Driver-agnostic queue interface.
  *
- * Nothing outside `server/queue/` should import from `bullmq`. The surface here
- * is deliberately the intersection of what this codebase actually uses and what
- * Cloudflare Queues can provide, so the BullMQ driver can be swapped out without
- * touching call sites.
+ * The surface is deliberately the intersection of what this codebase actually
+ * uses and what Cloudflare Queues can provide. That is what let the BullMQ
+ * driver be swapped for the Workers one without touching a call site, and it
+ * is why the interface is still worth having with one driver left: it is the
+ * line nothing above may reach across.
  */
 
 /* eslint-disable no-unused-vars -- parameter names in type signatures */
@@ -83,10 +84,7 @@ export interface Worker {
 
 export type JobHandler<T> = (job: QueueJob<T>) => Promise<void>;
 
-/**
- * A queue backend. One implementation today (BullMQ); Cloudflare Queues will be
- * the second.
- */
+/** A queue backend. One implementation: `workers-driver.ts` (#12). */
 export interface QueueDriver {
   createQueue<T>(name: string, defaults?: EnqueueOptions): Queue<T>;
   createWorker<T>(

@@ -5,9 +5,7 @@ import {
   startTrace,
   withTraceContext,
 } from "../logger/trace-context";
-import { bullmqDriver } from "./bullmq-driver";
 import { workersDriver } from "./workers-driver";
-import { isWorkersRuntime } from "../runtime";
 import type {
   BulkJob,
   EnqueueOptions,
@@ -23,13 +21,15 @@ export * from "./types";
 export * from "./queue-constants";
 
 /**
- * The active queue backend. Swapping this for a Cloudflare Queues driver is the
- * whole point of the seam — see references/serverless-migration.md.
+ * The queue backend: Cloudflare Queues, plus Cron Triggers and Durable Object
+ * alarms for the things a queue cannot express.
  *
- * BullMQ on Node, and a Workers driver inside a Worker isolate, where BullMQ's
- * Redis sockets and blocking consumers cannot run at all.
+ * Swapping the driver was the whole point of the seam, and it has now been
+ * swapped: BullMQ was the other one, and it is deleted with Redis (#12).
+ * Call sites still say `createQueue(...).enqueue(...)` and
+ * `createWorker(name, fn)`, which is what made the swap a one-file change.
  */
-const driver = isWorkersRuntime() ? workersDriver : bullmqDriver;
+const driver = workersDriver;
 
 /**
  * Trace context rides on the message body as a W3C `traceparent`.
@@ -118,12 +118,11 @@ export function createWorker<T>(
       const { data, traceparent } = extractTrace(job.data);
 
       // A message that carries no traceparent falls back to whatever trace the
-      // caller is already in, and only starts a new one if there is none.
-      // BullMQ never has an ambient trace here — a worker callback has no
-      // caller — but the Worker runtime does: `scheduled()` opens a trace
-      // around a cron job before invoking its handler, and without this the
-      // handler's own log lines would land under a rival trace id from the
-      // start/finish lines wrapping them.
+      // caller is already in, and only starts a new one if there is none. That
+      // matters for cron: `scheduled()` opens a trace around a job before
+      // invoking its handler, and without this the handler's own log lines
+      // would land under a rival trace id from the start/finish lines wrapping
+      // them.
       const carrier = traceparent ?? currentTraceparent();
 
       return await withTraceContext(startTrace(carrier), () =>
