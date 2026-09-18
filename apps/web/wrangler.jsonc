@@ -32,14 +32,26 @@
 
   // Pooled Postgres. `localConnectionString` is dev-only and is what
   // `wrangler dev` proxies to; `id` is filled in once the account exists.
-  // The default below is the throwaway container from `pnpm test:infra:up`.
-  // Point it somewhere else for a session with
-  // WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://...
+  //
+  // The default below is Neon Local, the dev database from `pnpm dx:up`, and
+  // is character-for-character the `DATABASE_URL` in `.env.example` that
+  // `pnpm db:migrate` uses. That agreement is the point: the Worker builds its
+  // client from this binding, not from `DATABASE_URL` (see
+  // `src/server/drizzle/index.ts` — `env.DATABASE_URL` is only the Node
+  // fallback), so a different value here meant `pnpm dx` migrated one database
+  // and `pnpm dev` connected to another.
+  //
+  // No Neon account? Neon Local needs NEON_PROJECT_ID, NEON_API_KEY and
+  // NEON_BRANCH_ID, and without them `pnpm dx:up` will not start. Run
+  // `pnpm test:infra:up` and `pnpm --filter=web test:integration:prepare:local`
+  // instead, then point this binding at that throwaway container for the
+  // session with
+  // WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://usesend:password@127.0.0.1:54329/usesend_test
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
       "id": "REPLACE_WITH_HYPERDRIVE_ID",
-      "localConnectionString": "postgresql://usesend:password@127.0.0.1:54329/usesend_test"
+      "localConnectionString": "postgres://neon:npg@localhost:54320/neondb?sslmode=require"
     }
   ],
 

@@ -56,11 +56,22 @@ assembled from virtual modules only the Vite plugin provides — so
 `pnpm dev:worker` is `vite dev`. The three fixture Workers below keep their own
 configs and are still plain `wrangler dev`.
 
-1. `pnpm test:infra:up`, then `pnpm --filter=web test:integration:prepare:local`
-   once to migrate the throwaway `usesend_test` container. That is the database
-   `wrangler.jsonc` points Hyperdrive at locally. To use a different one for a
-   session, set
-   `WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://…`.
+1. `pnpm dx:up`, then `pnpm db:migrate`. Hyperdrive's `localConnectionString`
+   in `wrangler.jsonc` is the Neon Local database on 54320 — the same
+   `DATABASE_URL` the root `.env` migrates — so `dx:up` → `db:migrate` → `dev`
+   lands on one database. This matters because the Worker builds its client
+   from the Hyperdrive binding per request (`src/server/drizzle/index.ts`);
+   `DATABASE_URL` is only the Node fallback, so `.dev.vars` cannot redirect the
+   connection and the binding is the only thing that decides.
+
+   **No Neon account?** Neon Local needs `NEON_PROJECT_ID`, `NEON_API_KEY` and
+   `NEON_BRANCH_ID`, so `pnpm dx:up` will not start without them. Use the
+   throwaway container instead: `pnpm test:infra:up`, then
+   `pnpm --filter=web test:integration:prepare:local` once to migrate it, and
+   run the Worker with
+   `WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://usesend:password@127.0.0.1:54329/usesend_test`.
+   That env var overrides the binding for the session and is the general escape
+   hatch for pointing local dev at any other database.
 2. `cp apps/web/.dev.vars.example apps/web/.dev.vars` and fill it in. `.dev.vars`
    is gitignored. Under `nodejs_compat` these arrive as `process.env`, so
    `src/env.js` validates inside the Worker exactly as it does under Node — an

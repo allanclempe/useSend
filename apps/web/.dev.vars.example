@@ -5,7 +5,17 @@
 #
 # DATABASE_URL is only a fallback: when the Hyperdrive binding is present the
 # Worker uses its connection string instead. It still has to be set and valid,
-# because `src/env.js` validates it at module load.
+# because `src/env.js` validates it at module load. It is set to the same Neon
+# Local database as `wrangler.jsonc`'s `localConnectionString` and the root
+# `.env`, so the fallback and the real connection cannot disagree about which
+# database local dev uses.
+#
+# Running without a Neon account? `pnpm dx:up` needs NEON_PROJECT_ID,
+# NEON_API_KEY and NEON_BRANCH_ID. Without them, use the throwaway container
+# instead -- `pnpm test:infra:up`, then
+# `pnpm --filter=web test:integration:prepare:local` to migrate it -- and start
+# the Worker with
+# WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://usesend:password@127.0.0.1:54329/usesend_test
 #
 # NEXT_PUBLIC_* does NOT belong here, and setting it here does nothing useful.
 # Those are inlined into the browser bundle at build time, and this file is read
@@ -14,7 +24,7 @@
 # same page disagreed about whether this was a cloud install (#9). They come
 # from the repo-root `.env`, which Vite reads for both bundles.
 
-DATABASE_URL="postgresql://usesend:password@127.0.0.1:54329/usesend_test"
+DATABASE_URL="postgres://neon:npg@localhost:54320/neondb?sslmode=require"
 APP_URL="http://localhost:8788"
 APP_SECRET="cf-local-dev-secret"
 NODE_ENV="development"
