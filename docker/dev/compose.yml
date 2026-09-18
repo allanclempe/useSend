@@ -41,6 +41,10 @@ services:
     ports:
       - "5350:3000"
     environment:
-      WEBHOOK_URL: http://host.docker.internal:3000/api/ses_callback
+      # Where the simulator POSTs delivery and bounce notifications, in the
+      # shape SNS would. 8788 is the Vite dev server (`vite dev --port 8788`);
+      # it was 3000 for as long as the app was Next.js, which pointed these at
+      # a closed port. Override it if you run the dev server elsewhere.
+      WEBHOOK_URL: http://host.docker.internal:${USESEND_DEV_PORT:-8788}/api/ses_callback
     extra_hosts:
       - "host.docker.internal:host-gateway"

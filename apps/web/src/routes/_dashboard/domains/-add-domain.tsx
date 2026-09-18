@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
@@ -84,6 +84,18 @@ export default function AddDomain() {
 
   const showRegionSelect = (regionQuery.data?.length ?? 0) > 1;
 
+  /**
+   * No sending region exists at all — a fresh install nobody has configured.
+   *
+   * It needs saying out loud. The region field only renders when there is more
+   * than one region to choose between, so with none the dialog was a domain
+   * input and an Add button that set an error on a field that was not on
+   * screen: the submit aborted and nothing happened, which read as a broken
+   * button rather than as missing setup (#126).
+   */
+  const hasNoRegions =
+    regionQuery.isSuccess && (regionQuery.data?.length ?? 0) === 0;
+
   function onDomainAdd(values: z.infer<typeof domainSchema>) {
     const domain = tldts.getDomain(values.domain);
 
@@ -93,7 +105,15 @@ export default function AddDomain() {
     }
 
     if (!values.region && !singleRegion) {
-      domainForm.setError("region", { message: "Region is required" });
+      // Only the select can show a field error, and it is hidden unless there
+      // is a choice to make. Everything else has to be said in a toast.
+      if (showRegionSelect) {
+        domainForm.setError("region", { message: "Region is required" });
+      } else {
+        toast.error(
+          "No sending region is configured. An instance admin adds one under Admin.",
+        );
+      }
       return;
     }
 
@@ -134,82 +154,98 @@ export default function AddDomain() {
         <DialogHeader>
           <DialogTitle>Add a new domain</DialogTitle>
         </DialogHeader>
-        <div className="py-2">
-          <Form {...domainForm}>
-            <form
-              onSubmit={domainForm.handleSubmit(onDomainAdd)}
-              className="space-y-8"
-            >
-              <FormField
-                control={domainForm.control}
-                name="domain"
-                render={({ field, formState }) => (
-                  <FormItem>
-                    <FormLabel>Domain</FormLabel>
-                    <FormControl>
-                      <Input placeholder="subdomain.example.com" {...field} />
-                    </FormControl>
-                    {formState.errors.domain ? (
-                      <FormMessage />
-                    ) : (
-                      <FormDescription>
-                        Use subdomains to separate transactional and marketing
-                        emails.{" "}
-                      </FormDescription>
-                    )}
-                  </FormItem>
-                )}
-              />
-
-              {showRegionSelect && (
+        {hasNoRegions ? (
+          <div className="text-muted-foreground space-y-3 py-2 text-sm">
+            <p>
+              No sending region is configured, so there is nowhere to create
+              this domain: every domain belongs to one SES region.
+            </p>
+            <p>
+              An instance admin adds the first one under{" "}
+              <Link to="/admin" className="text-foreground underline">
+                Admin
+              </Link>
+              . Come back here once a region exists.
+            </p>
+          </div>
+        ) : (
+          <div className="py-2">
+            <Form {...domainForm}>
+              <form
+                onSubmit={domainForm.handleSubmit(onDomainAdd)}
+                className="space-y-8"
+              >
                 <FormField
                   control={domainForm.control}
-                  name="region"
+                  name="domain"
                   render={({ field, formState }) => (
                     <FormItem>
-                      <FormLabel>Region</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value}
-                        disabled={regionQuery.isLoading}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select region" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {regionQuery.data?.map((region) => (
-                            <SelectItem value={region} key={region}>
-                              {region}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {formState.errors.region ? (
+                      <FormLabel>Domain</FormLabel>
+                      <FormControl>
+                        <Input placeholder="subdomain.example.com" {...field} />
+                      </FormControl>
+                      {formState.errors.domain ? (
                         <FormMessage />
                       ) : (
                         <FormDescription>
-                          Select the region from where the email is sent{" "}
+                          Use subdomains to separate transactional and marketing
+                          emails.{" "}
                         </FormDescription>
                       )}
                     </FormItem>
                   )}
                 />
-              )}
 
-              <div className="flex justify-end">
-                <Button
-                  className="w-[100px]"
-                  type="submit"
-                  disabled={addDomain.isPending || limitsQuery.isLoading}
-                >
-                  {addDomain.isPending ? "Adding..." : "Add"}
-                </Button>
-              </div>
-            </form>
-          </Form>
-        </div>
+                {showRegionSelect && (
+                  <FormField
+                    control={domainForm.control}
+                    name="region"
+                    render={({ field, formState }) => (
+                      <FormItem>
+                        <FormLabel>Region</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value}
+                          disabled={regionQuery.isLoading}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select region" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {regionQuery.data?.map((region) => (
+                              <SelectItem value={region} key={region}>
+                                {region}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {formState.errors.region ? (
+                          <FormMessage />
+                        ) : (
+                          <FormDescription>
+                            Select the region from where the email is sent{" "}
+                          </FormDescription>
+                        )}
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                <div className="flex justify-end">
+                  <Button
+                    className="w-[100px]"
+                    type="submit"
+                    disabled={addDomain.isPending || limitsQuery.isLoading}
+                  >
+                    {addDomain.isPending ? "Adding..." : "Add"}
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

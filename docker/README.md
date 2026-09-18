@@ -18,6 +18,29 @@ pass `--project-directory .` so compose finds it. This is the database
 `pnpm db:migrate` migrates *and* the one `pnpm dev` connects to, through
 Hyperdrive's `localConnectionString` in `apps/web/wrangler.jsonc`.
 
+The SES/SNS simulator (`usesend/local-ses-sns`) answers both APIs on **5350**
+and posts SES notifications back to the app at `WEBHOOK_URL`, which is the dev
+server's `/api/ses_callback` on **8788** — override the port with
+`USESEND_DEV_PORT` in the root `.env` if you run the dev server elsewhere. The
+app reaches it through `AWS_SES_ENDPOINT` and `AWS_SNS_ENDPOINT` in
+`apps/web/.dev.vars`; unset, those go to real AWS, and `src/env.js` refuses to
+start outside production rather than let that happen silently (#126).
+
+Two things about that container are worth knowing before debugging it. It
+**exits** when a notification target refuses the connection, rather than logging
+and carrying on, so an unreachable callback URL looks like the SES call itself
+failing with `Network connection lost` — and `restart: always` hides it. And
+`host.docker.internal` only resolves from inside the container: the app, which
+has to fetch the same callback URL to validate it, resolves nothing under that
+name on Linux. The docker bridge address (`172.17.0.1`) is what both sides can
+reach, given a dev server started with `--host` and a firewall that allows the
+bridge. See AGENTS.md, "Local SES and SNS", for the rest of the loop.
+
+It is a third-party image published by upstream and pinned to `:latest`. There
+is no source for it here, so anything it gets wrong — such as the ISO-8601
+timestamps that make `GetEmailIdentity` undeserialisable — has to be fixed
+upstream or worked around locally.
+
 `docker/testing/compose.yml` — started by `pnpm test:infra:up`, stopped by
 `pnpm test:infra:down`. One throwaway `postgres:16` on port 54329 holding the
 `usesend_test` database that the integration suite runs against.
