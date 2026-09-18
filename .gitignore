@@ -52,3 +52,7 @@ __pycache__
 memory-profiles
 memory-baseline.json
 memory-analysis-report.html
+
+# Agent worktrees. Real git checkouts, so `git add -A` picks them up as
+# embedded repositories rather than files.
+.claude/worktrees/
