@@ -2,14 +2,14 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { z } from "zod";
 
 import { getSessionState } from "~/server/functions/session";
+import { JoinTeam } from "./-join-team";
 
 /**
  * `/join-team` — the target of the link in a team invitation email.
  *
- * The gate is here; the invitation list is not. It reads through the
- * `invitation` router, which has not moved yet, and arrives with that area.
- * The route exists now because the URL is already sitting in delivered inboxes
- * and because sign-in redirects to it with `?inviteId=`.
+ * `?inviteId=` is carried through sign-in, so someone who follows the link
+ * without a session gets sent to `/login` and back here afterwards with the
+ * parameter intact. That is why `/login` declares `inviteId` too.
  */
 export const Route = createFileRoute("/join-team")({
   validateSearch: z.object({ inviteId: z.string().optional() }),
@@ -18,17 +18,16 @@ export const Route = createFileRoute("/join-team")({
       throw redirect({ to: "/login", search: { inviteId: search.inviteId } });
     }
   },
-  component: JoinTeam,
+  component: JoinTeamPage,
 });
 
-function JoinTeam() {
+function JoinTeamPage() {
+  const { inviteId } = Route.useSearch();
+
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="max-w-lg rounded-lg border border-dashed p-8 text-center">
-        <p className="font-medium">Invitations have not moved yet</p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Accepting a team invitation still goes through the Next.js app.
-        </p>
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="flex w-[300px] flex-col gap-8">
+        <JoinTeam inviteId={inviteId} />
       </div>
     </div>
   );

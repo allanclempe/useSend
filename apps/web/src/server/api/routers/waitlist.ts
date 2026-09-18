@@ -9,7 +9,7 @@ import { consumeRateLimit, rateLimitBucket } from "~/server/rate-limit";
 import {
   WAITLIST_EMAIL_TYPES,
   waitlistSubmissionSchema,
-} from "~/app/wait-list/schema";
+} from "~/lib/zod/waitlist-schema";
 import { escapeHtml } from "~/server/utils/email-content";
 
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60 * 6; // 6 hours

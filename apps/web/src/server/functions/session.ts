@@ -25,6 +25,22 @@ export const getSessionState = createServerFn({ method: "GET" }).handler(
 );
 
 /**
+ * The signed-in user, for the pages that have to render something about them
+ * before better-auth's client store exists.
+ *
+ * Only `/wait-list` needs this: it shows the address the founders will reply
+ * to, and a blank field there while the session hydrates reads as a bug.
+ * Everything behind the dashboard gate uses `useSession()` instead, which is
+ * already warm by then.
+ */
+export const getSessionUser = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const session = await getServerAuthSession(getRequest().headers);
+    return session?.user ?? null;
+  },
+);
+
+/**
  * Which sign-in methods this installation has configured.
  *
  * A server function because it reads `env`: `GITHUB_ID`, `GOOGLE_CLIENT_ID`

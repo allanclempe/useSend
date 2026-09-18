@@ -19,14 +19,15 @@ import { toast } from "@usesend/ui/src/toaster";
 
 import { teamKeys } from "~/queries/team";
 import { createTeam } from "~/server/functions/team";
+import { JoinTeam } from "../-join-team";
 
 /**
  * Shown instead of the dashboard when the signed-in user belongs to no team.
  *
- * The "join an existing team" half of the Next.js version is missing here: it
- * lists pending invitations through the `invitation` router, which has not
- * moved yet, and it returns with that area. Creating a team still works, which
- * is the path a new installation takes.
+ * It offers both halves the Next.js version did: any pending invitations
+ * first, then the form to create a team. `JoinTeam` renders nothing when there
+ * are no invitations, so a first user on a fresh installation sees only the
+ * form.
  *
  * This is also the reference shape for a mutation in the ported dashboard:
  * `useMutation` with the server function as `mutationFn`, and invalidation
@@ -60,6 +61,7 @@ export function CreateTeam() {
   return (
     <div className="flex min-h-screen items-center justify-center">
       <div className="flex w-[400px] flex-col gap-8">
+        <JoinTeam showCreateTeam />
         <div>
           <h1 className="text-center font-semibold">Create Team</h1>
         </div>

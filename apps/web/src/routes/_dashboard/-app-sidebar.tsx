@@ -7,8 +7,8 @@
  * - `to` is typed against the generated route tree, so a link to a route that
  *   does not exist is a compile error rather than a 404 a user finds. That is
  *   also why the whole route tree lands before the pages do.
- * - There is no Feedback item. It opens a dialog that calls the `feedback`
- *   router, which has not moved yet; it comes back with that area.
+ * - The Feedback item is cloud only, as it was: a self-hosted install has no
+ *   founder to mail, and `functions/feedback.ts` refuses there too.
  */
 import {
   BookUser,
@@ -20,6 +20,7 @@ import {
   Server,
   Volume2,
   BookOpenText,
+  MessageSquare,
   BarChart3,
   LogOutIcon,
   MoreVerticalIcon,
@@ -44,8 +45,9 @@ import {
 } from "@usesend/ui/src/sidebar";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ThemeSwitcher } from "~/components/theme/ThemeSwitcher";
+import { FeedbackDialog } from "./-feedback-dialog";
 import { signOut, useSession } from "~/lib/auth-client";
-import { isSelfHosted } from "~/utils/common";
+import { isCloud, isSelfHosted } from "~/utils/common";
 import { Badge } from "@usesend/ui/src/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@usesend/ui/src/avatar";
 import {
@@ -131,6 +133,7 @@ const settingsItems = [
 
 export function AppSidebar() {
   const { data: session } = useSession();
+  const showFeedback = isCloud();
 
   const pathname = useLocation({ select: (l) => l.pathname });
 
@@ -246,6 +249,18 @@ export function AppSidebar() {
       <SidebarFooter>
         <SidebarGroupContent>
           <SidebarMenu>
+            {showFeedback ? (
+              <SidebarMenuItem>
+                <FeedbackDialog
+                  trigger={
+                    <SidebarMenuButton tooltip="Feedback">
+                      <MessageSquare />
+                      <span>Feedback</span>
+                    </SidebarMenuButton>
+                  }
+                />
+              </SidebarMenuItem>
+            ) : null}
             <SidebarMenuItem>
               <SidebarMenuButton asChild tooltip="Docs">
                 {/* An `<a>`, not a `Link`: the router's `to` is typed against

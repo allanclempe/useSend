@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import {
   waitlistSubmissionSchema,
   WAITLIST_EMAIL_TYPES,
-} from "~/app/wait-list/schema";
+} from "~/lib/zod/waitlist-schema";
 import { env } from "~/env";
 import { AppError } from "~/server/app-error";
 import { authedMiddleware } from "~/server/functions/middleware";
@@ -20,9 +20,8 @@ import { escapeHtml } from "~/server/utils/email-content";
  * submit this are the ones still on the waitlist, and `protectedMiddleware` is
  * precisely the rung that shuts them out.
  *
- * The submission schema is still imported from `src/app/wait-list`, which the
- * form shares. It is plain Zod with no React in it, so it is safe to reach for
- * from the server half; it moves out of `src/app` when that tree is deleted.
+ * The submission schema is shared with the form, from `~/lib/zod`, so the
+ * client's validation and the server's cannot drift.
  */
 
 const RATE_LIMIT_WINDOW_SECONDS = 60 * 60 * 6; // 6 hours
