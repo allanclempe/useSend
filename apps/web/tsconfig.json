@@ -1,5 +1,5 @@
 {
-  "extends": "@usesend/typescript-config/nextjs.json",
+  "extends": "@usesend/typescript-config/base.json",
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
@@ -7,25 +7,28 @@
         "./src/*"
       ]
     },
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ],
-    // `next dev` rewrites this to `preserve` on every start and says so in its
-    // output, so there is no point setting anything else while Next.js is in
-    // the tree. Vite compiles JSX itself and `tsc --noEmit` is happy either
-    // way, which is the only thing that reads it here.
-    "jsx": "preserve",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "noEmit": true,
+    // Vite compiles JSX with its own transform, so `react-jsx` is what the
+    // editor and `tsc --noEmit` should see. It was `preserve` while Next.js
+    // was in the tree only because `next dev` rewrote it on every start.
+    "jsx": "react-jsx",
+    // `base.json` turns declaration emit on for publishable packages. Nothing
+    // consumes types from this app, and with `noEmit` the files are never
+    // written -- but TypeScript still enforces that every inferred exported
+    // type is nameable from the importer, which fails for types reaching into
+    // a transitive dependency pnpm keeps out of this app's node_modules.
+    "declaration": false,
+    "declarationMap": false,
     "strictNullChecks": true
   },
   "include": [
-    "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
     "**/*.cjs",
     "**/*.js",
-    ".next/types/**/*.ts",
     ".eslintrc.cjs"
   ],
   "exclude": [
