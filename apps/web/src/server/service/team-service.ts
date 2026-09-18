@@ -1,4 +1,4 @@
-import { TRPCError } from "@trpc/server";
+import { badRequest, forbidden, notFound, unauthorized } from "~/server/app-error";
 import { env } from "~/env";
 import { publicEnv } from "~/env.public";
 import { and, eq } from "drizzle-orm";
@@ -76,7 +76,7 @@ export class TeamService {
     }
     const fresh = await TeamService.refreshTeamCache(teamId);
     if (!fresh) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
+      throw notFound("Team not found");
     }
     return fresh;
   }
@@ -100,10 +100,7 @@ export class TeamService {
     if (!publicEnv.NEXT_PUBLIC_IS_CLOUD) {
       const [_team] = await drizzleDb.select().from(schema.team).limit(1);
       if (_team) {
-        throw new TRPCError({
-          message: "Can't have multiple teams in self hosted version",
-          code: "UNAUTHORIZED",
-        });
+        throw unauthorized("Can't have multiple teams in self hosted version");
       }
     }
 
@@ -117,10 +114,7 @@ export class TeamService {
         .returning();
 
       if (!team) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to create team",
-        });
+        throw new Error("Failed to create team");
       }
 
       await tx
@@ -149,7 +143,7 @@ export class TeamService {
       .returning();
 
     if (!updated) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Team not found" });
+      throw notFound("Team not found");
     }
 
     await TeamService.refreshTeamCache(teamId);
@@ -196,10 +190,7 @@ export class TeamService {
     sendEmail: boolean = true,
   ): Promise<TeamInvite> {
     if (!email) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "Email is required",
-      });
+      throw badRequest("Email is required");
     }
 
     const { isLimitReached } = await LimitService.checkTeamMemberLimit(teamId);
@@ -222,10 +213,7 @@ export class TeamService {
     ).length;
 
     if (user && userTeamCount > 0) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "User already part of a team",
-      });
+      throw badRequest("User already part of a team");
     }
 
     const [teamInvite] = await drizzleDb
@@ -234,10 +222,7 @@ export class TeamService {
       .returning();
 
     if (!teamInvite) {
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: "Failed to create invite",
-      });
+      throw new Error("Failed to create invite");
     }
 
     const teamUrl = `${env.APP_URL}/join-team?inviteId=${teamInvite.id}`;
@@ -266,10 +251,7 @@ export class TeamService {
       .limit(1);
 
     if (!teamUser) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "Team member not found",
-      });
+      throw notFound("Team member not found");
     }
 
     // Check if this is the last admin
@@ -282,10 +264,7 @@ export class TeamService {
     );
 
     if (adminCount === 1 && teamUser.role === "ADMIN") {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "Need at least one admin",
-      });
+      throw forbidden("Need at least one admin");
     }
 
     const [updated] = await drizzleDb
@@ -300,10 +279,7 @@ export class TeamService {
       .returning();
 
     if (!updated) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "Team member not found",
-      });
+      throw notFound("Team member not found");
     }
     // Role updates might influence permissions; refresh cache to be safe
     await TeamService.invalidateTeamCache(teamId);
@@ -328,17 +304,11 @@ export class TeamService {
       .limit(1);
 
     if (!teamUser) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "Team member not found",
-      });
+      throw notFound("Team member not found");
     }
 
     if (requestorRole !== "ADMIN" && requestorId !== Number(userId)) {
-      throw new TRPCError({
-        code: "UNAUTHORIZED",
-        message: "You are not authorized to delete this team member",
-      });
+      throw unauthorized("You are not authorized to delete this team member");
     }
 
     // Check if this is the last admin
@@ -351,10 +321,7 @@ export class TeamService {
     );
 
     if (adminCount === 1 && teamUser.role === "ADMIN") {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "Need at least one admin",
-      });
+      throw forbidden("Need at least one admin");
     }
 
     const [deleted] = await drizzleDb
@@ -368,10 +335,7 @@ export class TeamService {
       .returning();
 
     if (!deleted) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "Team member not found",
-      });
+      throw notFound("Team member not found");
     }
     await TeamService.invalidateTeamCache(teamId);
     return deleted;
@@ -394,10 +358,7 @@ export class TeamService {
       .limit(1);
 
     if (!invite) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "Invite not found",
-      });
+      throw notFound("Invite not found");
     }
 
     const teamUrl = `${env.APP_URL}/join-team?inviteId=${invite.id}`;
@@ -420,10 +381,7 @@ export class TeamService {
       .limit(1);
 
     if (!invite) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "Invite not found",
-      });
+      throw notFound("Invite not found");
     }
 
     const [deleted] = await drizzleDb
@@ -437,7 +395,7 @@ export class TeamService {
       .returning();
 
     if (!deleted) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Invite not found" });
+      throw notFound("Invite not found");
     }
 
     return deleted;

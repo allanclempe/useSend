@@ -351,8 +351,8 @@ build, and `pnpm dev` still serves the Next.js copy of every page.
 ## Testing Guidelines
 
 - Web testing is configured with Vitest in `apps/web`; add tests when changes impact logic, APIs, or behavior.
-- Prefer targeted suites first: `pnpm test:web:unit`, `pnpm test:web:trpc`, `pnpm test:web:api`; use `pnpm test:web` for default non-integration coverage.
-- Test file conventions: `*.unit.test.ts`, `*.trpc.test.ts`, `*.api.test.ts`, `*.integration.test.ts`.
+- Prefer targeted suites first: `pnpm test:web:unit`, `pnpm test:web:api`; use `pnpm test:web` for default non-integration coverage.
+- Test file conventions: `*.unit.test.ts`, `*.api.test.ts`, `*.integration.test.ts`. The `*.trpc.test.ts` tier went with the routers it covered (#9).
 - Choose the suite by what is under test, not by what the code touches. Logic — branching, validation, defaults, which notification fires — belongs in a unit test with its edges faked. Queries belong in an integration test against the real database: a mocked query builder only ever asserts the arguments you passed it, never what the query did.
 - Do not assert on the shape of a database call (`expect(mockDb.x.update).toHaveBeenCalledWith(...)`). That restates the input and passes even when the query is wrong. Assert on the row that came back, or capture the payload the builder actually received.
 - Integration tests require infra and env (`RUN_INTEGRATION=true` with Postgres/Redis available). Root commands `pnpm test:web:all` and `pnpm test:web:integration:full` auto-manage infra lifecycle.

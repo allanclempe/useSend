@@ -37,9 +37,24 @@ minimumReleaseAgeExclude:
 # `linkify-it@<=5.0.0` is a security floor. It matches nothing today (the tree
 # resolves 5.0.2, already above the vulnerable range); it is here so a future
 # resolution cannot fall back into it.
+#
+# `lightningcss` is an optional peer of `vite`, so pnpm builds one `vite`
+# instance per distinct resolution of it. The tree had two — `vitest` on
+# 1.33.0, `@tanstack/react-start` on 1.32.0 — which means two structurally
+# identical but nominally different copies of vite's `Plugin` and `UserConfig`
+# types. `vitest.config.ts` passes a plugin from one into `defineConfig` from
+# the other, so whether `tsc` accepts it depends on which copy it happens to
+# anchor first, and that depends on the order files enter the program. Deleting
+# `src/app` and the tRPC routers (#9) changed that order and turned a latent
+# mismatch into six errors in files the change never touched.
+#
+# Pinning it collapses the two `vite` instances into one, which is the actual
+# fix: the configs are then typed against a single copy no matter the file
+# order.
 overrides:
   "linkify-it@<=5.0.0": "5.0.1"
   "pnpm@<11.11.0": "11.11.0"
+  lightningcss: "1.33.0"
 
 # `@hookform/resolvers` imports `zod` without declaring a dependency or a peer
 # on it, so it resolved to whatever happened to be hoisted. That was zod 3 until

@@ -143,20 +143,7 @@ export const updateCampaign = createServerFn({ method: "POST" })
     const { html: htmlInput, ...rest } = data;
 
     if (rest.contactBookId) {
-      const [contactBook] = await drizzleDb
-        .select({ id: schema.contactBook.id })
-        .from(schema.contactBook)
-        .where(
-          and(
-            eq(schema.contactBook.id, rest.contactBookId),
-            eq(schema.contactBook.teamId, team.id),
-          ),
-        )
-        .limit(1);
-
-      if (!contactBook) {
-        throw badRequest("Contact book not found");
-      }
+      await campaignService.assertContactBookInTeam(rest.contactBookId, team.id);
     }
 
     let domainId = campaignOld.domainId;
@@ -288,23 +275,7 @@ export const duplicateCampaign = createServerFn({ method: "POST" })
 
     const [newCampaign] = await drizzleDb
       .insert(schema.campaign)
-      .values(
-        withUpdatedAt({
-          id: createId(),
-          name: `${campaign.name} (Copy)`,
-          from: campaign.from,
-          replyTo: campaign.replyTo,
-          cc: campaign.cc,
-          bcc: campaign.bcc,
-          subject: campaign.subject,
-          previewText: campaign.previewText,
-          content: campaign.content,
-          html: campaign.html,
-          teamId: team.id,
-          domainId: campaign.domainId,
-          contactBookId: campaign.contactBookId,
-        }),
-      )
+      .values(campaignService.campaignCopyValues(campaign, team.id))
       .returning();
 
     if (!newCampaign) {
