@@ -1,9 +1,9 @@
 import { and, eq } from "drizzle-orm";
 
-import { env } from "~/env";
 import { publicEnv } from "~/env.public";
 import { notFound, unauthorized } from "~/server/app-error";
 import { getServerAuthSession } from "~/server/auth";
+import { isAdminEmail } from "~/server/better-auth";
 import { drizzleDb, schema } from "~/server/drizzle";
 
 /**
@@ -100,9 +100,7 @@ export async function requireTeam(headers: Headers): Promise<TeamContext> {
 }
 
 /** An `ADMIN` of the caller's team. `teamAdminProcedure`. */
-export async function requireTeamAdmin(
-  headers: Headers,
-): Promise<TeamContext> {
+export async function requireTeamAdmin(headers: Headers): Promise<TeamContext> {
   const context = await requireTeam(headers);
 
   if (context.teamUser.role !== "ADMIN") {
@@ -116,14 +114,30 @@ export async function requireTeamAdmin(
  * The person who runs this installation. `adminProcedure`.
  *
  * On a self-hosted install every signed-in user is the admin, because they
- * installed it. On cloud it is the one address in `ADMIN_EMAIL`.
+ * installed it. On cloud it is the one address in `ADMIN_EMAIL`, which is what
+ * `user.isAdmin` already means.
+ *
+ * Split into a predicate and a guard so the `/admin` route gate can ask the
+ * question without throwing. Two copies of "or self-hosted" is how a UI ends up
+ * offering a page the server refuses, or hiding one it would have allowed.
+ *
+ * The comparison is `isAdminEmail`, not `user.email === env.ADMIN_EMAIL`. A
+ * bare equality check is true when *both* sides are undefined, so a cloud
+ * install that had never set `ADMIN_EMAIL` handed instance admin to any user
+ * whose session carried no email. `isAdminEmail` requires both to be
+ * non-empty, and already existed for exactly this reason -- it was just not
+ * what this function called.
  */
+export function isInstanceAdmin(user: AppSessionUser) {
+  return !publicEnv.NEXT_PUBLIC_IS_CLOUD || isAdminEmail(user.email);
+}
+
 export async function requireInstanceAdmin(
   headers: Headers,
 ): Promise<AppSessionUser> {
   const user = await requireActiveUser(headers);
 
-  if (publicEnv.NEXT_PUBLIC_IS_CLOUD && user.email !== env.ADMIN_EMAIL) {
+  if (!isInstanceAdmin(user)) {
     throw unauthorized();
   }
 
@@ -181,7 +195,10 @@ export async function requireApiKey(teamId: number, id: number) {
   return apiKey;
 }
 
-export async function requireContactBook(teamId: number, contactBookId: string) {
+export async function requireContactBook(
+  teamId: number,
+  contactBookId: string,
+) {
   const [contactBook] = await drizzleDb
     .select()
     .from(schema.contactBook)

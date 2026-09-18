@@ -2,7 +2,7 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
 
 import { H1 } from "@usesend/ui";
 
-import { SettingsNavButton } from "./dev-settings/-settings-nav-button";
+import { SettingsNavButton } from "./-settings-nav-button";
 
 /**
  * The chrome shared by every developer-settings page (#9).

@@ -20,6 +20,7 @@ import { useSession } from "~/lib/auth-client";
 import { adminQueries } from "~/queries/admin";
 import { teamQueries } from "~/queries/team";
 import { getSessionState } from "~/server/functions/session";
+import { SesSettingsScreen } from "./_dashboard/admin/-ses-settings-form";
 import { AppSidebar } from "./_dashboard/-app-sidebar";
 import { CreateTeam } from "./_dashboard/-create-team";
 import { TeamProvider } from "./_dashboard/-team-context";
@@ -82,7 +83,7 @@ function DashboardLayout() {
   }
 
   if (mayConfigureSes && sesSettings.data?.length === 0) {
-    return <SesNotConfigured />;
+    return <SesSettingsScreen />;
   }
 
   if (!teams.data || teams.data.length === 0) {
@@ -131,26 +132,6 @@ function DashboardChrome() {
         </SidebarInset>
       </SidebarProvider>
       <UpgradeModal />
-    </div>
-  );
-}
-
-/**
- * The SES set-up screen has not moved yet — it writes through the `admin`
- * router, which is the largest one left. Until it does, this says where to go
- * rather than rendering an empty dashboard that cannot send anything.
- */
-function SesNotConfigured() {
-  return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="max-w-lg rounded-lg border border-dashed p-8 text-center">
-        <p className="font-medium">SES is not configured yet</p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The set-up form still lives in the Next.js app while the admin area is
-          ported. Run <code>pnpm dev</code> and add a region there; this app
-          picks it up immediately.
-        </p>
-      </div>
     </div>
   );
 }

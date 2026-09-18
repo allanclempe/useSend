@@ -14,6 +14,7 @@ import { Route as DashboardRouteImport } from './routes/_dashboard'
 import { Route as JoinTeamRouteImport } from './routes/join-team'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as WaitListRouteImport } from './routes/wait-list'
+import { Route as DashboardAdminRouteImport } from './routes/_dashboard/admin'
 import { Route as DashboardDashboardRouteImport } from './routes/_dashboard/dashboard'
 import { Route as DashboardDevSettingsRouteImport } from './routes/_dashboard/dev-settings'
 import { Route as DashboardPaymentsRouteImport } from './routes/_dashboard/payments'
@@ -75,6 +76,11 @@ const WaitListRoute = WaitListRouteImport.update({
   path: '/wait-list',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardAdminRoute = DashboardAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardDashboardRoute = DashboardDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -126,25 +132,25 @@ const LoginVerifyRoute = LoginVerifyRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardAdminIndexRoute = DashboardAdminIndexRouteImport.update({
-  id: '/admin/',
-  path: '/admin/',
-  getParentRoute: () => DashboardRoute,
+  id: '/',
+  path: '/',
+  getParentRoute: () => DashboardAdminRoute,
 } as any)
 const DashboardAdminEmailAnalyticsRoute =
   DashboardAdminEmailAnalyticsRouteImport.update({
-    id: '/admin/email-analytics',
-    path: '/admin/email-analytics',
-    getParentRoute: () => DashboardRoute,
+    id: '/email-analytics',
+    path: '/email-analytics',
+    getParentRoute: () => DashboardAdminRoute,
   } as any)
 const DashboardAdminTeamsRoute = DashboardAdminTeamsRouteImport.update({
-  id: '/admin/teams',
-  path: '/admin/teams',
-  getParentRoute: () => DashboardRoute,
+  id: '/teams',
+  path: '/teams',
+  getParentRoute: () => DashboardAdminRoute,
 } as any)
 const DashboardAdminWaitlistRoute = DashboardAdminWaitlistRouteImport.update({
-  id: '/admin/waitlist',
-  path: '/admin/waitlist',
-  getParentRoute: () => DashboardRoute,
+  id: '/waitlist',
+  path: '/waitlist',
+  getParentRoute: () => DashboardAdminRoute,
 } as any)
 const DashboardCampaignsIndexRoute = DashboardCampaignsIndexRouteImport.update({
   id: '/campaigns/',
@@ -273,6 +279,7 @@ export interface FileRoutesByFullPath {
   '/join-team': typeof JoinTeamRoute
   '/signup': typeof SignupRoute
   '/wait-list': typeof WaitListRoute
+  '/admin': typeof DashboardAdminRouteWithChildren
   '/dashboard': typeof DashboardDashboardRoute
   '/dev-settings': typeof DashboardDevSettingsRouteWithChildren
   '/payments': typeof DashboardPaymentsRoute
@@ -357,6 +364,7 @@ export interface FileRoutesById {
   '/join-team': typeof JoinTeamRoute
   '/signup': typeof SignupRoute
   '/wait-list': typeof WaitListRoute
+  '/_dashboard/admin': typeof DashboardAdminRouteWithChildren
   '/_dashboard/dashboard': typeof DashboardDashboardRoute
   '/_dashboard/dev-settings': typeof DashboardDevSettingsRouteWithChildren
   '/_dashboard/payments': typeof DashboardPaymentsRoute
@@ -401,6 +409,7 @@ export interface FileRouteTypes {
     | '/join-team'
     | '/signup'
     | '/wait-list'
+    | '/admin'
     | '/dashboard'
     | '/dev-settings'
     | '/payments'
@@ -484,6 +493,7 @@ export interface FileRouteTypes {
     | '/join-team'
     | '/signup'
     | '/wait-list'
+    | '/_dashboard/admin'
     | '/_dashboard/dashboard'
     | '/_dashboard/dev-settings'
     | '/_dashboard/payments'
@@ -575,6 +585,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WaitListRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_dashboard/admin': {
+      id: '/_dashboard/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof DashboardAdminRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/_dashboard/dashboard': {
       id: '/_dashboard/dashboard'
       path: '/dashboard'
@@ -647,31 +664,31 @@ declare module '@tanstack/react-router' {
     }
     '/_dashboard/admin/': {
       id: '/_dashboard/admin/'
-      path: '/admin'
+      path: '/'
       fullPath: '/admin/'
       preLoaderRoute: typeof DashboardAdminIndexRouteImport
-      parentRoute: typeof DashboardRoute
+      parentRoute: typeof DashboardAdminRoute
     }
     '/_dashboard/admin/email-analytics': {
       id: '/_dashboard/admin/email-analytics'
-      path: '/admin/email-analytics'
+      path: '/email-analytics'
       fullPath: '/admin/email-analytics'
       preLoaderRoute: typeof DashboardAdminEmailAnalyticsRouteImport
-      parentRoute: typeof DashboardRoute
+      parentRoute: typeof DashboardAdminRoute
     }
     '/_dashboard/admin/teams': {
       id: '/_dashboard/admin/teams'
-      path: '/admin/teams'
+      path: '/teams'
       fullPath: '/admin/teams'
       preLoaderRoute: typeof DashboardAdminTeamsRouteImport
-      parentRoute: typeof DashboardRoute
+      parentRoute: typeof DashboardAdminRoute
     }
     '/_dashboard/admin/waitlist': {
       id: '/_dashboard/admin/waitlist'
-      path: '/admin/waitlist'
+      path: '/waitlist'
       fullPath: '/admin/waitlist'
       preLoaderRoute: typeof DashboardAdminWaitlistRouteImport
-      parentRoute: typeof DashboardRoute
+      parentRoute: typeof DashboardAdminRoute
     }
     '/_dashboard/campaigns/': {
       id: '/_dashboard/campaigns/'
@@ -830,6 +847,24 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface DashboardAdminRouteChildren {
+  DashboardAdminEmailAnalyticsRoute: typeof DashboardAdminEmailAnalyticsRoute
+  DashboardAdminTeamsRoute: typeof DashboardAdminTeamsRoute
+  DashboardAdminWaitlistRoute: typeof DashboardAdminWaitlistRoute
+  DashboardAdminIndexRoute: typeof DashboardAdminIndexRoute
+}
+
+const DashboardAdminRouteChildren: DashboardAdminRouteChildren = {
+  DashboardAdminEmailAnalyticsRoute: DashboardAdminEmailAnalyticsRoute,
+  DashboardAdminTeamsRoute: DashboardAdminTeamsRoute,
+  DashboardAdminWaitlistRoute: DashboardAdminWaitlistRoute,
+  DashboardAdminIndexRoute: DashboardAdminIndexRoute,
+}
+
+const DashboardAdminRouteWithChildren = DashboardAdminRoute._addFileChildren(
+  DashboardAdminRouteChildren,
+)
+
 interface DashboardDevSettingsRouteChildren {
   DashboardDevSettingsApiKeysRoute: typeof DashboardDevSettingsApiKeysRoute
   DashboardDevSettingsSmtpRoute: typeof DashboardDevSettingsSmtpRoute
@@ -861,17 +896,14 @@ const DashboardSettingsRouteWithChildren =
   DashboardSettingsRoute._addFileChildren(DashboardSettingsRouteChildren)
 
 interface DashboardRouteChildren {
+  DashboardAdminRoute: typeof DashboardAdminRouteWithChildren
   DashboardDashboardRoute: typeof DashboardDashboardRoute
   DashboardDevSettingsRoute: typeof DashboardDevSettingsRouteWithChildren
   DashboardPaymentsRoute: typeof DashboardPaymentsRoute
   DashboardSettingsRoute: typeof DashboardSettingsRouteWithChildren
   DashboardSuppressionsRoute: typeof DashboardSuppressionsRoute
-  DashboardAdminEmailAnalyticsRoute: typeof DashboardAdminEmailAnalyticsRoute
-  DashboardAdminTeamsRoute: typeof DashboardAdminTeamsRoute
-  DashboardAdminWaitlistRoute: typeof DashboardAdminWaitlistRoute
   DashboardDomainsDomainIdRoute: typeof DashboardDomainsDomainIdRoute
   DashboardWebhooksWebhookIdRoute: typeof DashboardWebhooksWebhookIdRoute
-  DashboardAdminIndexRoute: typeof DashboardAdminIndexRoute
   DashboardCampaignsIndexRoute: typeof DashboardCampaignsIndexRoute
   DashboardContactsIndexRoute: typeof DashboardContactsIndexRoute
   DashboardDomainsIndexRoute: typeof DashboardDomainsIndexRoute
@@ -886,17 +918,14 @@ interface DashboardRouteChildren {
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardAdminRoute: DashboardAdminRouteWithChildren,
   DashboardDashboardRoute: DashboardDashboardRoute,
   DashboardDevSettingsRoute: DashboardDevSettingsRouteWithChildren,
   DashboardPaymentsRoute: DashboardPaymentsRoute,
   DashboardSettingsRoute: DashboardSettingsRouteWithChildren,
   DashboardSuppressionsRoute: DashboardSuppressionsRoute,
-  DashboardAdminEmailAnalyticsRoute: DashboardAdminEmailAnalyticsRoute,
-  DashboardAdminTeamsRoute: DashboardAdminTeamsRoute,
-  DashboardAdminWaitlistRoute: DashboardAdminWaitlistRoute,
   DashboardDomainsDomainIdRoute: DashboardDomainsDomainIdRoute,
   DashboardWebhooksWebhookIdRoute: DashboardWebhooksWebhookIdRoute,
-  DashboardAdminIndexRoute: DashboardAdminIndexRoute,
   DashboardCampaignsIndexRoute: DashboardCampaignsIndexRoute,
   DashboardContactsIndexRoute: DashboardContactsIndexRoute,
   DashboardDomainsIndexRoute: DashboardDomainsIndexRoute,

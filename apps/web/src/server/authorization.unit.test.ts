@@ -190,6 +190,16 @@ describe("authorization", () => {
       });
     });
 
+    it("refuses everyone on cloud when ADMIN_EMAIL is not set", async () => {
+      // A bare `user.email === env.ADMIN_EMAIL` is true when both are
+      // undefined, which handed instance admin to any session without an email
+      // on an install that had never configured one.
+      mocks.adminEmail = undefined;
+      signedInAs({ email: undefined });
+
+      expect(await codeOf(requireInstanceAdmin(headers))).toBe("UNAUTHORIZED");
+    });
+
     it("admits anyone signed in when self-hosted", async () => {
       mocks.isCloud = false;
       mocks.adminEmail = "founder@usesend.com";

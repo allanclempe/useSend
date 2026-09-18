@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 
+import { isInstanceAdmin } from "~/server/authorization";
 import { getServerAuthSession } from "~/server/auth";
 import { getEnabledAuthProviders } from "~/server/better-auth";
 
@@ -12,6 +13,14 @@ import { getEnabledAuthProviders } from "~/server/better-auth";
  * SSR payload of a page that is about to redirect is how a user's email ends
  * up in the HTML of a page they never see. The browser gets the full session
  * from better-auth's own client once it is past the gate.
+ *
+ * `mayAdminister` is whoever runs the installation, not whoever runs a team.
+ * It is here for the same reason the other two are: `/admin`'s gate is a
+ * `beforeLoad` redirect, and a gate that has to wait for the browser to fetch a
+ * session is a gate that renders the page first. It is `isInstanceAdmin` --
+ * the predicate `instanceAdminMiddleware` enforces -- rather than
+ * `user.isAdmin`, which is only the `ADMIN_EMAIL` half of it and would lock a
+ * self-hosted operator out of their own admin screens.
  */
 export const getSessionState = createServerFn({ method: "GET" }).handler(
   async () => {
@@ -20,6 +29,7 @@ export const getSessionState = createServerFn({ method: "GET" }).handler(
     return {
       signedIn: Boolean(session?.user),
       isWaitlisted: Boolean(session?.user.isWaitlisted),
+      mayAdminister: session?.user ? isInstanceAdmin(session.user) : false,
     };
   },
 );

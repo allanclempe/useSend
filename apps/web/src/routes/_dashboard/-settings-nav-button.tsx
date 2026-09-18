@@ -2,7 +2,8 @@ import { Link, type LinkProps } from "@tanstack/react-router";
 import React from "react";
 
 /**
- * One tab in the developer-settings strip (#9).
+ * One tab in a settings tab strip -- developer settings and admin both have
+ * one (#9).
  *
  * The Next.js version compared `usePathname()` to its own `href` to decide
  * whether it was the current tab. `Link` already knows — it is the thing that
