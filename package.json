@@ -2,13 +2,14 @@
   "name": "usesend",
   "private": true,
   "scripts": {
-    "build": "turbo build",
-    "build:editor": "turbo build --filter=@usesend/email-editor",
-    "build:web": "turbo build --filter=@usesend/email-editor  --filter=web ",
-    "build:marketing": "turbo build --filter=@usesend/email-editor --filter=marketing",
-    "build:smtp": "turbo build --filter=smtp-server",
-    "build:web:local": "pnpm load-env -- turbo build --filter=@usesend/email-editor  --filter=web ",
-    "dev": "pnpm load-env -- turbo dev",
+    "build": "pnpm -r build",
+    "build:editor": "pnpm --filter=@usesend/email-editor build",
+    "build:web": "pnpm --filter=web build",
+    "build:marketing": "pnpm --filter=marketing build",
+    "build:smtp": "pnpm --filter=smtp-server build",
+    "build:sdk": "pnpm --filter=usesend-js build",
+    "build:web:local": "pnpm load-env -- pnpm --filter=web build",
+    "dev": "pnpm load-env -- pnpm --filter=web dev",
     "test:web": "pnpm --filter=web test",
     "test:web:all": "pnpm test:infra:up && (pnpm --filter=web test:all; code=$?; pnpm test:infra:down; exit $code)",
     "test:web:all:raw": "pnpm --filter=web test:all",
@@ -20,8 +21,9 @@
     "test:infra:down": "docker compose -f docker/testing/compose.yml down -v",
     "dev:worker": "pnpm --filter=web dev:worker",
     "dev:docs": "cd apps/docs && mintlify dev",
-    "dev:marketing": "cd apps/marketing && turbo dev",
-    "lint": "turbo lint",
+    "dev:marketing": "pnpm --filter=marketing dev",
+    "dev:editor": "pnpm --filter=@usesend/email-editor dev",
+    "lint": "pnpm -r --no-bail lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "db:generate": "pnpm db db:generate",
     "db:migrate": "pnpm db db:migrate",
@@ -44,8 +46,5 @@
   "packageManager": "pnpm@11.11.0",
   "engines": {
     "node": ">=22.13"
-  },
-  "dependencies": {
-    "turbo": "^2.5.2"
   }
 }

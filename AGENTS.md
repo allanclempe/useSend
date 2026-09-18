@@ -17,10 +17,31 @@
 ## Build, Test, and Development Commands
 
 - `pnpm i`: Install workspace deps (Node >= 20).
-- `pnpm dev`: Turbo dev for all relevant apps (loads `.env`). For `apps/web` this is the same
-  `vite dev` that `pnpm dev:worker` runs — a Worker has no separate `start`, so there is no
-  `start:web:local` any more.
-- `pnpm build`: Turbo build across the monorepo.
+- `pnpm dev`: the app, `vite dev` on :8788. Same server `pnpm dev:worker` runs — a Worker has no
+  separate `start`, so there is no `start:web:local` any more. `pnpm dev:marketing` (:3001),
+  `pnpm dev:docs` and `pnpm dev:editor` are separate; `pnpm dev` no longer starts them.
+  **It needs `apps/web/.dev.vars`** (step 2 under "Running the Worker locally"). Without that file
+  the isolate dies at startup with `Invalid environment variables` listing `DATABASE_URL`,
+  `APP_URL` and `API_KEY_HMAC_SECRET` — which reads like "the env is not loading" but is only ever
+  "`.dev.vars` does not exist". Neither half of the app reads the shell's environment: the Worker's
+  env is `wrangler` reading `.dev.vars` from disk, and the browser bundle's `NEXT_PUBLIC_*` is Vite
+  reading the repo-root `.env` from disk via `envDir`. Verified by running `vite dev` with the
+  process environment emptied to six variables: it starts, validates and serves unchanged.
+- `pnpm build`: `pnpm -r build` across the workspace. Per-app: `build:web`, `build:marketing`,
+  `build:smtp`, `build:sdk`, `build:editor`.
+- **There is no Turborepo.** `turbo.json` and the `turbo` dependency are gone: every script is a
+  plain `pnpm --filter` / `pnpm -r` invocation. Turbo's task graph was ordering a dependency that
+  does not exist — `@usesend/email-editor`, `@usesend/lib` and `@usesend/ui` publish TypeScript
+  source (`main`/`types` point at `src/index.ts`), so Vite compiles them directly and their `dist`
+  is never consumed. `marketing` builds green with `packages/email-editor/dist` deleted, which is
+  the proof. Only `usesend-js` and `smtp-server` emit artifacts anyone uses, both independently,
+  and `apps/web/workspace-aliases.ts` already resolves `usesend-js` to source — so the one real
+  edge `dependsOn: ["^build"]` had is already handled without it. Do not add it back; `pnpm -r`
+  is topological, which is all the ordering this workspace needs.
+  Turbo 2 defaults to `envMode: "strict"` and the `dev` task declared no `env`, so it did strip
+  the whole environment before Vite started — but that broke nothing and was never why `pnpm dev`
+  failed, because neither the Worker's env nor the client bundle's comes from the process
+  environment. See the `pnpm dev` bullet.
 - `pnpm dx` / `pnpm dx:up` / `pnpm dx:down`: Spin up/down local infra via Docker Compose, then run migrations.
 - `pnpm dev:worker`: Run the whole Worker — dashboard and public API — on a local `workerd`
   via `vite dev` (see below).
@@ -248,8 +269,9 @@ never hydrates. `tsc` and every test still pass. The only way to catch it is to 
   that is deliberately unused is prefixed with `_` (`_job`, `_target`, `_request`) — that is the
   configured escape hatch (`argsIgnorePattern`/`varsIgnorePattern`/`caughtErrorsIgnorePattern`), not
   an `eslint-disable` comment.
-- `pnpm lint` stops at the first failing package, so it undercounts. For a repo-wide number run
-  `turbo lint --continue --force` (nothing in CI runs lint today; see #87).
+- `pnpm lint` is `pnpm -r --no-bail lint`, so it lints every package that has a `lint` script and
+  reports all of them rather than stopping at the first failure — the repo-wide number, in one run.
+  It exits non-zero if any package failed. Nothing in CI runs lint today; see #87.
 
 ## Dependencies
 
@@ -314,16 +336,18 @@ never hydrates. `tsc` and every test still pass. The only way to catch it is to 
   under Node and ~14ms in a `workerd` isolate, against Workers' **10ms Free-tier
   CPU budget per request** (issue #48). Use a keyed HMAC for tokens we generate;
   keep the KDF for secrets a human chose.
-- **Every new secret has to be declared in four places** or something breaks
-  quietly: `apps/web/src/env.js` (schema *and* `runtimeEnv`), `turbo.json`'s
-  `env` list, `.env.example` — with the command that generates it — and
-  `apps/web/.dev.vars.example`, which is what a local Worker reads. Add a
-  placeholder to `apps/web/src/test/setup/setup-env.ts` if it is required rather
-  than optional. Never commit a real value. On a deployed Worker a secret is
+- **Every new secret has to be declared in three places** or something breaks
+  quietly: `apps/web/src/env.js` (schema *and* `runtimeEnv`), `.env.example` —
+  with the command that generates it — and `apps/web/.dev.vars.example`, which
+  is what a local Worker reads. There used to be a fourth, `turbo.json`'s `env`
+  allowlist; Turborepo is gone, so `.env` now reaches the dev server unfiltered
+  and there is no second list to keep in sync. Add a placeholder to
+  `apps/web/src/test/setup/setup-env.ts` if it is required rather than optional.
+  Never commit a real value. On a deployed Worker a secret is
   `wrangler secret put`, not a file, so `apps/docs/self-hosting/overview.mdx`
   lists them too; `apps/web/.env.test.example`, `.github/workflows/test-web.yml`
   and `CONTRIBUTION.md` carry their own copies. Renaming one is wider than the
-  four places above.
+  three places above.
 - **There is no web container.** Self-hosting useSend is `wrangler deploy`
   (#12). `docker/Dockerfile`, `docker/start.sh`, `docker/build.sh`,
   `docker/prod/compose.yml`, `.env.selfhost.example` and `nixpacks.toml` are
