@@ -11,15 +11,27 @@ What is left here is local infrastructure and one shipped image.
 ## Local development infrastructure
 
 `docker/dev/compose.yml` — started by `pnpm dx:up`, stopped by `pnpm dx:down`.
-It runs Neon Local (a proxy to a real Neon branch, not a local Postgres) and
-the local SES/SNS simulator. It reads `NEON_PROJECT_ID`, `NEON_API_KEY`
-and `NEON_BRANCH_ID` from the repo-root `.env`; the `dx` scripts pass
-`--project-directory .` so compose finds it.
+It runs Neon Local (a proxy to a real Neon branch, not a local Postgres) on
+port 54320 and the local SES/SNS simulator. It reads `NEON_PROJECT_ID`,
+`NEON_API_KEY` and `NEON_BRANCH_ID` from the repo-root `.env`; the `dx` scripts
+pass `--project-directory .` so compose finds it. This is the database
+`pnpm db:migrate` migrates *and* the one `pnpm dev` connects to, through
+Hyperdrive's `localConnectionString` in `apps/web/wrangler.jsonc`.
 
 `docker/testing/compose.yml` — started by `pnpm test:infra:up`, stopped by
 `pnpm test:infra:down`. One throwaway `postgres:16` on port 54329 holding the
-`usesend_test` database that the integration suite and `pnpm dev:worker`
-(through the local Hyperdrive binding) run against.
+`usesend_test` database that the integration suite runs against.
+
+Neon Local needs a Neon account. Without one, `pnpm dx:up` will not start, and
+the 54329 container doubles as the dev database: migrate it with
+`pnpm --filter=web test:integration:prepare:local`, then run the Worker with
+
+```bash
+WRANGLER_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://usesend:password@127.0.0.1:54329/usesend_test pnpm dev
+```
+
+That variable overrides the Hyperdrive binding for the session and is how you
+point local dev at any other database.
 
 Neither is a shipped artifact. Neither is published anywhere.
 
