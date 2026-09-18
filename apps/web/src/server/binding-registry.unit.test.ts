@@ -6,6 +6,10 @@ import {
   DURABLE_OBJECT_CLASSES,
   KV_BINDINGS,
 } from "./binding-registry";
+import {
+  DURABLE_OBJECT_MIGRATIONS,
+  migratedDurableObjectClasses,
+} from "./durable-object-migrations";
 
 /**
  * `binding-registry.ts` and `wrangler.jsonc` have to agree, and nothing else
@@ -52,5 +56,33 @@ describe("wrangler.jsonc agrees with the binding registry", () => {
   it("gives every migration a distinct tag", () => {
     const tags = migrations.map((migration) => migration.tag);
     expect(new Set(tags).size).toBe(tags.length);
+  });
+
+  it("carries the migration ledger verbatim, in order", () => {
+    // `durable-object-migrations.ts` is the one ledger. `sst.config.ts` passes
+    // it to the Worker as `migrations`; this file spells the same thing in
+    // snake_case. Cloudflare keys its own state on the tags, so the *order*
+    // is as load bearing as the contents -- hence `toEqual` on the list rather
+    // than a set comparison.
+    expect(migrations).toEqual(
+      DURABLE_OBJECT_MIGRATIONS.map((migration) => ({
+        tag: migration.tag,
+        ...(migration.newSqliteClasses
+          ? { new_sqlite_classes: [...migration.newSqliteClasses] }
+          : {}),
+        ...(migration.deletedClasses
+          ? { deleted_classes: [...migration.deletedClasses] }
+          : {}),
+        ...(migration.renamedClasses
+          ? { renamed_classes: migration.renamedClasses.map((r) => ({ ...r })) }
+          : {}),
+      })),
+    );
+  });
+
+  it("leaves the ledger and the binding registry naming the same classes", () => {
+    expect([...migratedDurableObjectClasses()].sort()).toEqual(
+      [...DURABLE_OBJECT_CLASSES].sort(),
+    );
   });
 });

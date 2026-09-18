@@ -53,3 +53,7 @@ memory-analysis-report.html
 # Agent worktrees. Real git checkouts, so `git add -A` picks them up as
 # embedded repositories rather than files.
 .claude/worktrees/
+
+# SST downloads its platform (and generates `platform/config.d.ts`, which
+# `sst.config.ts` references) into here on `sst install`.
+.sst/

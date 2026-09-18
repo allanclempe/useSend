@@ -58,6 +58,10 @@ export function parseJsonc(source: string): unknown {
 }
 
 export type WranglerConfig = {
+  name?: string;
+  compatibility_date?: string;
+  compatibility_flags?: string[];
+  observability?: { enabled: boolean };
   triggers?: { crons?: string[] };
   kv_namespaces?: Array<{ binding: string; id: string }>;
   durable_objects?: {
