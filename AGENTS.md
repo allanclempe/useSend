@@ -217,9 +217,11 @@ Rules that are not style:
   belongs — not in a component that renders a login form at someone else's URL.
 - Errors are `AppError` from `~/server/app-error`. Only the message crosses the wire.
 
-While the migration runs, a dashboard area that has not moved renders `NotPortedYet` and is
-still served by Next.js at `pnpm dev`. The number of files importing that component is how
-much of #9 is left.
+**Every dashboard area has moved.** `NotPortedYet` -- the placeholder an unported area
+rendered, and the count of files importing it that tracked how much of #9 was left -- is gone
+with the last of them. What remains of #9 is the teardown: deleting `src/app`, `src/trpc` and
+`src/server/api`, and dropping `next` and `@trpc/*`. Until that lands both frameworks still
+build, and `pnpm dev` still serves the Next.js copy of every page.
 
 ## Coding Style & Naming Conventions
 
