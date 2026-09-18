@@ -25,6 +25,7 @@
     "@usesend/eslint-config": "workspace:*",
     "@usesend/lib": "workspace:*",
     "@usesend/typescript-config": "workspace:*",
+    "eslint": "^8.57.1",
     "openapi-typescript": "^7.6.1",
     "tsup": "^8.4.0",
     "typescript": "^5.8.3"
