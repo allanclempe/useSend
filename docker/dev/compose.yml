@@ -44,20 +44,3 @@ services:
       WEBHOOK_URL: http://host.docker.internal:3000/api/ses_callback
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  minio:
-    image: minio/minio
-    container_name: unsend-storage-dev
-    ports:
-      - 9002:9002
-      - 9001:9001
-    volumes:
-      - minio:/data
-    environment:
-      MINIO_ROOT_USER: unsend
-      MINIO_ROOT_PASSWORD: password
-    entrypoint: sh
-    command: -c 'mkdir -p /data/unsend && minio server /data --console-address ":9001" --address ":9002"'
-
-volumes:
-  minio:
